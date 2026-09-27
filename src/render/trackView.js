@@ -72,7 +72,8 @@ export function buildTrackView(track, tex) {
   tex.ground.repeat.set(groundSize / 8, groundSize / 8);
   mesh(ground, new THREE.MeshLambertMaterial({ map: tex.ground })); // no vertex snap: see retroMaterial.js
 
-  if (track.closed) group.add(buildStartLine(track, tex, at));
+  // Start/finish line: at the start of a loop, or the finish of a point-to-point.
+  group.add(buildStartLine(track, tex, at, track.closed ? 0 : track.indexAtDistance(track.finishS ?? track.length - 25)));
   group.add(buildLamps(track, tex, at));
   return group;
 }
@@ -104,11 +105,12 @@ function ribbon(track, pointA, pointB, { uA = 0, uB = 1, vLength = 8, swapUV = f
   return g;
 }
 
-function buildStartLine(track, tex, at) {
+function buildStartLine(track, tex, at, i0 = 0) {
+  const i1 = track.wrap(i0 + 1);
   const group = new THREE.Group();
   const hw = track.halfWidth;
 
-  const positions = [...at(0, -hw, 0.03), ...at(0, hw, 0.03), ...at(1, -hw, 0.03), ...at(1, hw, 0.03)];
+  const positions = [...at(i0, -hw, 0.03), ...at(i0, hw, 0.03), ...at(i1, -hw, 0.03), ...at(i1, hw, 0.03)];
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, (hw * 2) / 8, 0, 0, 1, (hw * 2) / 8, 1], 2));
@@ -143,9 +145,9 @@ function buildStartLine(track, tex, at) {
 
   const gantry = new THREE.Group();
   gantry.add(frame, signMesh, strip);
-  gantry.position.set(track.x[0], track.y[0], track.z[0]);
+  gantry.position.set(track.x[i0], track.y[i0], track.z[i0]);
   // Face the sign toward cars approaching the line (they travel along +tangent).
-  gantry.lookAt(track.x[0] - track.tx[0], track.y[0], track.z[0] - track.tz[0]);
+  gantry.lookAt(track.x[i0] - track.tx[i0], track.y[i0], track.z[i0] - track.tz[i0]);
   group.add(gantry);
   return group;
 }

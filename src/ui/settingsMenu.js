@@ -33,8 +33,8 @@ export class SettingsMenu {
         <div class="menu-actions"></div>
         <div class="menu-help">
           <b>KEYBOARD</b> W/S throttle &amp; brake/reverse &middot; A/D steer &middot; SPACE handbrake &middot;
-          SHIFT nitro &middot; LEFT CLICK fire &middot; RIGHT CLICK secondary &middot; E utility &middot; Q look back &middot; R reset car &middot; ESC pause<br>
-          <b>GAMEPAD</b> RT/LT throttle &amp; brake &middot; stick steer &middot; A handbrake &middot; B nitro &middot; RB fire &middot; LB secondary &middot; Y utility &middot;
+          SHIFT nitro &middot; LEFT CLICK fire &middot; RIGHT CLICK secondary &middot; E utility &middot; F shift up (drag) &middot; Q look back &middot; R reset car &middot; ESC pause<br>
+          <b>GAMEPAD</b> RT/LT throttle &amp; brake &middot; stick steer &middot; A handbrake &middot; B nitro &middot; RB fire &middot; LB secondary &middot; Y utility &middot; X shift up (drag) &middot;
           R3 look back &middot; BACK reset &middot; START pause
         </div>
       </div>`;

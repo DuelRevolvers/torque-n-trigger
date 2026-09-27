@@ -28,6 +28,7 @@ export class TouchControls {
       <div class="t-top">
         <button class="t-btn t-small" data-action="lookBack">LOOK</button>
         <button class="t-btn t-small" data-action="utility">UTIL</button>
+        <button class="t-btn t-small" data-action="shiftUp">SHIFT</button>
         <button class="t-btn t-small" data-action="reset">RESET</button>
       </div>`;
 
@@ -93,5 +94,6 @@ export class TouchControls {
     frame.fire1 ||= this.held.has('fire1');
     frame.fire2 ||= this.held.has('fire2');
     frame.utility ||= this.held.has('utility');
+    frame.shiftUp ||= this.held.has('shiftUp');
   }
 }

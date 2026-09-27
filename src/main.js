@@ -13,6 +13,7 @@ import { loadCareer, clearCareer } from './career/career.js';
 import { StarterScreen } from './screens/starterScreen.js';
 import { GarageScreen } from './screens/garageScreen.js';
 import { RaceScreen } from './screens/raceScreen.js';
+import { EventScreen } from './screens/eventScreen.js';
 
 // App shell: shared renderer, input and settings, plus a current screen
 // (starter selection, garage or race). Screens return the scene to render.
@@ -48,7 +49,7 @@ const app = {
     app.current?.exit();
     const screens = app.screens;
     // Screens are built on first use; the race city is the expensive one.
-    if (!screens[name]) screens[name] = new { starter: StarterScreen, garage: GarageScreen, race: RaceScreen }[name](app);
+    if (!screens[name]) screens[name] = new { starter: StarterScreen, garage: GarageScreen, events: EventScreen, race: RaceScreen }[name](app);
     app.current = screens[name];
     hud.clear();
     app.current.enter(data);

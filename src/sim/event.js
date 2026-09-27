@@ -1,0 +1,216 @@
+// Event rules on top of the world: countdown and launches, finishing (sprint,
+// circuit, drag), arena scoring (last standing / most takedowns), pit zone,
+// arena hazards, drag restrictions, and style bonuses. All state is plain data in
+// world.state.event and on each car.
+
+import { neutralInput } from './input.js';
+import { quatRotate } from './math.js';
+import { applyDamage } from './combat.js';
+
+const HOLD = { ...neutralInput(), handbrake: true };
+const COUNTDOWN = 3;
+const STYLE = { driftPerSecond: 25, airPerSecond: 60, nearMiss: 40 };
+
+// def: { type: 'sprint'|'circuit'|'arena'|'drag', laps?, mode?, timeLimit?, pit?, finishS? }
+export function createEventState(def, track) {
+  return {
+    type: def.type,
+    mode: def.mode || null,
+    laps: def.laps || 0,
+    timeLimit: def.timeLimit || 0,
+    pit: def.pit || null,
+    finishS: def.finishS ?? (track.isArena ? 0 : track.length - 25),
+    weapons: def.type === 'drag' ? 'rear' : 'all',
+    manualShift: def.type === 'drag',
+    phase: 'countdown',
+    timer: COUNTDOWN,
+    time: 0,
+    finished: [],
+    finishTime: {},
+    eliminated: [],
+    done: false,
+  };
+}
+
+export function initEventCar(car, ev) {
+  car.manual = ev.manualShift;
+  car.launch = { jumped: false, done: false };
+  car.lockTime = 0;
+  car.launchBoost = 0;
+  car.inPit = false;
+  car.style = { drift: 0, air: 0, cash: 0, nm: {} };
+  car.race.penalty = 0;
+}
+
+// Grid positions per event type.
+export function gridPoses(track, def, count) {
+  if (track.isArena) return Array.from({ length: count }, (_, i) => track.spawnPose(i));
+  const pose = (s, lateral) => {
+    const i = track.indexAtDistance(s);
+    return {
+      pos: { x: track.x[i] + track.rx[i] * lateral, y: track.y[i] + 0.9, z: track.z[i] + track.rz[i] * lateral },
+      yaw: Math.atan2(-track.tx[i], -track.tz[i]),
+    };
+  };
+  if (def.type === 'drag') {
+    const lanes = count <= 2 ? [-3, 3] : [-6, -2, 2, 6];
+    return Array.from({ length: count }, (_, i) => pose(12, lanes[i % lanes.length]));
+  }
+  const back = track.closed ? track.length - 10 : 40;
+  return Array.from({ length: count }, (_, i) => pose(back - Math.floor(i / 2) * 8, (i % 2 ? 1 : -1) * track.halfWidth * 0.35));
+}
+
+// Filters a car's input through the event: held at the line during the
+// countdown, locked after a false start, and a boost for a perfect launch.
+export function eventInput(world, i, raw) {
+  const ev = world.state.event;
+  const car = world.state.cars[i];
+  if (ev.phase === 'countdown') {
+    if (ev.timer < 0.5 && raw.throttle > 0.5) car.launch.jumped = true;
+    return HOLD;
+  }
+  if (car.lockTime > 0) return HOLD;
+  if (!car.launch.done && raw.throttle > 0.5) {
+    car.launch.done = true;
+    if (ev.time < 0.3) {
+      car.launchBoost = 1.5;
+      world.events.push({ type: 'launch', car: i });
+    }
+  }
+  return raw;
+}
+
+const progress = (track, car) => (track.closed ? car.race.lap * track.length + car.trackS : car.trackS);
+
+function finish(world, i) {
+  const ev = world.state.event;
+  if (ev.finishTime[i] !== undefined) return;
+  ev.finished.push(i);
+  ev.finishTime[i] = ev.time + (world.state.cars[i].race.penalty || 0);
+  world.events.push({ type: 'finish', car: i, place: ev.finished.length });
+}
+
+export function updateEvent(world, dt) {
+  const { state, track } = world;
+  const ev = state.event;
+  if (ev.phase === 'countdown') {
+    const before = Math.ceil(ev.timer);
+    ev.timer -= dt;
+    if (Math.ceil(ev.timer) !== before && ev.timer > 0) world.events.push({ type: 'countdown', n: Math.ceil(ev.timer) });
+    if (ev.timer <= 0) {
+      ev.phase = 'racing';
+      ev.time = 0;
+      world.events.push({ type: 'go' });
+      state.cars.forEach((car, i) => {
+        if (car.launch.jumped) {
+          car.lockTime = 1;
+          world.events.push({ type: 'falseStart', car: i });
+        }
+      });
+    }
+    return;
+  }
+  ev.time += dt;
+
+  state.cars.forEach((car, i) => {
+    car.lockTime = Math.max(0, car.lockTime - dt);
+    car.launchBoost = Math.max(0, car.launchBoost - dt);
+    if (car.wrecked) {
+      if (ev.type === 'arena' && ev.mode === 'lastStanding' && !ev.eliminated.includes(i)) ev.eliminated.push(i);
+      return;
+    }
+    updateStyle(world, i, dt);
+
+    // Finishing.
+    if (ev.type === 'sprint' || ev.type === 'drag') {
+      if (car.trackS >= ev.finishS) finish(world, i);
+    } else if (ev.type === 'circuit') {
+      if (car.race.lap > ev.laps) finish(world, i);
+    }
+
+    // Pit zone: a slow drive-through on the right of the start straight heals.
+    if (ev.pit) {
+      const speed = Math.hypot(car.vel.x, car.vel.z);
+      car.inPit = car.trackS > ev.pit.s0 && car.trackS < ev.pit.s1 && car.lateral > ev.pit.lateral && speed < 16;
+      if (car.inPit) car.hp = Math.min(car.maxHp, car.hp + car.maxHp * 0.1 * dt);
+    }
+
+    // Arena floor hazards.
+    const hazard = track.hazardAt?.(car.pos.x, car.pos.z);
+    if (hazard) {
+      applyDamage(world, i, hazard.dps * dt, car.pos, -1, true);
+      if (state.tick % 6 === 0) world.events.push({ type: 'spark', pos: { ...car.pos } });
+    }
+  });
+
+  // End conditions.
+  const n = state.cars.length;
+  if (ev.type === 'arena') {
+    const alive = state.cars.filter((c) => !c.wrecked).length;
+    if ((ev.mode === 'lastStanding' && alive <= 1) || (ev.timeLimit && ev.time >= ev.timeLimit)) ev.done = true;
+  } else if (ev.finished.length === n || (ev.timeLimit && ev.time >= ev.timeLimit)) {
+    ev.done = true;
+  }
+}
+
+// Drift, air time and near misses, paid out as cash at the end of the event.
+function updateStyle(world, i, dt) {
+  const { state } = world;
+  const car = state.cars[i];
+  const st = car.style;
+  const fwd = quatRotate(car.quat, { x: 0, y: 0, z: -1 });
+  const speed = Math.hypot(car.vel.x, car.vel.z);
+  const grounded = car.wheels.some((w) => w.contact);
+  const award = (kind, amount) => {
+    amount = Math.round(amount);
+    if (amount <= 0) return;
+    st.cash += amount;
+    world.events.push({ type: 'style', car: i, kind, amount });
+  };
+
+  const slip = speed > 12 ? Math.acos(Math.max(-1, Math.min(1, (fwd.x * car.vel.x + fwd.z * car.vel.z) / speed))) : 0;
+  if (grounded && slip > 0.35) st.drift += dt;
+  else if (slip < 0.2) {
+    if (st.drift > 0.8) award('DRIFT', st.drift * STYLE.driftPerSecond);
+    st.drift = 0;
+  }
+  if (!grounded) st.air += dt;
+  else {
+    if (st.air > 0.6) award('AIR', st.air * STYLE.airPerSecond);
+    st.air = 0;
+  }
+  for (const key of Object.keys(st.nm)) {
+    st.nm[key] -= dt;
+    if (st.nm[key] <= 0) delete st.nm[key];
+  }
+  state.cars.forEach((o, j) => {
+    if (j === i || o.wrecked || st.nm[j] !== undefined) return;
+    const d = Math.hypot(o.pos.x - car.pos.x, o.pos.z - car.pos.z);
+    const rel = Math.hypot(o.vel.x - car.vel.x, o.vel.z - car.vel.z);
+    if (d > 2.3 && d < 3.2 && rel > 12) {
+      st.nm[j] = 3;
+      award('NEAR MISS', STYLE.nearMiss);
+    }
+  });
+}
+
+// Final order. Finished cars first (by time), then the rest by progress;
+// arenas rank by survival or takedowns.
+export function standings(world) {
+  const { state, track } = world;
+  const ev = state.event;
+  const rows = state.cars.map((c, i) => ({
+    id: i,
+    time: ev.finishTime[i],
+    finished: ev.finishTime[i] !== undefined,
+    progress: progress(track, c),
+    takedowns: c.takedowns,
+    hp: c.wrecked ? 0 : c.hp / c.maxHp,
+    eliminated: ev.eliminated.indexOf(i),
+  }));
+  if (ev.type === 'arena' && ev.mode === 'lastStanding') {
+    return rows.sort((a, b) => (b.eliminated === -1) - (a.eliminated === -1) || b.eliminated - a.eliminated || b.hp - a.hp);
+  }
+  if (ev.type === 'arena') return rows.sort((a, b) => b.takedowns - a.takedowns || b.hp - a.hp);
+  return rows.sort((a, b) => (b.finished - a.finished) || (a.finished ? a.time - b.time : b.progress - a.progress));
+}

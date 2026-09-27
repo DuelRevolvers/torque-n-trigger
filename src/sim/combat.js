@@ -215,6 +215,8 @@ function fireWeapon(world, i, slot, pressed, dt) {
   }
   const cf = cfOf(car, slot === 'primary' ? 'primaryWeapon' : 'secondaryWeapon');
   if (!pressed || cf <= 0) return;
+  // Drag races allow only rear-facing weapons.
+  if (world.state.event?.weapons === 'rear' && !(slot === 'secondary' && w.type === 'mines')) return;
   if (w.heatPerShot && car.overheated) return;
   if (w.ammo !== null && (ws.ammo <= 0 || ws.reload > 0)) return;
   const beh = WEAPON_BEHAVIOR[w.type];
@@ -450,6 +452,7 @@ export function updateCombat(world, inputs, dt, respawn) {
           const w = p.weapons?.[slot];
           if (w) car.weapons[slot] = { cooldown: 0, ammo: w.ammo, reload: 0 };
         }
+        car.race.penalty = (car.race.penalty || 0) + 2; // wreck time penalty (seconds)
         world.events.push({ type: 'respawn', car: i });
       }
       return;

@@ -32,7 +32,7 @@ export class Hud {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  draw({ car, params, tick, fps, showFps, touchLayout, label, units = 'kmh', markers = [], position = null }) {
+  draw({ car, params, tick, fps, showFps, touchLayout, label, units = 'kmh', markers = [], position = null, eventInfo = null }) {
     const { ctx, canvas } = this;
     // Layout is in 270-line units, scaled up by an integer so the pixel font stays
     // crisp and readable at any internal resolution.
@@ -52,9 +52,9 @@ export class Hud {
     const r = car.race;
     const current = r.lapStart >= 0 ? tick - r.lapStart : -1;
     panel(4, 4, 92, 38);
-    text(`LAP ${Math.max(1, r.lap)}`, 8, 8, { color: PALETTE.cyan });
-    text(formatTime(current), 8, 18, { color: '#ffffff' });
-    text(`BEST ${formatTime(r.bestLap)}`, 8, 30, { color: PALETTE.amber });
+    text(eventInfo?.title ?? `LAP ${Math.max(1, r.lap)}`, 8, 8, { color: PALETTE.cyan });
+    text(formatTime(eventInfo ? eventInfo.timeTicks : current), 8, 18, { color: '#ffffff' });
+    text(eventInfo?.sub ?? `BEST ${formatTime(r.bestLap)}`, 8, 30, { color: PALETTE.amber });
 
     // Nitro charges under the lap panel.
     const n = car.nitro;
@@ -120,6 +120,18 @@ export class Hud {
     }
 
     if (position) text(`POS ${position.pos}/${position.total}`, 104, 8, { scale: touchLayout ? 1 : 2, color: '#ffffff' });
+
+    // Event overlays: countdown, GO, popups, shift light, finish and pit.
+    if (eventInfo) {
+      if (eventInfo.countdown) text(String(eventInfo.countdown), W / 2, H / 2 - 50, { scale: 6, color: PALETTE.amber, align: 'center' });
+      if (eventInfo.go) text('GO!', W / 2, H / 2 - 50, { scale: 6, color: PALETTE.green, align: 'center' });
+      eventInfo.popups.forEach((p, k) => text(p.text, W / 2, Math.round(H * 0.6 - k * 12 - p.age * 12), { color: p.color, align: 'center' }));
+      if (eventInfo.manual && car.rpm > params.engine.redline * 0.9 && Math.floor(tick / 6) % 2 === 0) {
+        text('SHIFT!', bx + blockW / 2, touchLayout ? by + blockH + 4 : by - 16, { color: PALETTE.pink, align: 'center', scale: 2 });
+      }
+      if (eventInfo.finishedText) text(eventInfo.finishedText, W / 2, 64, { color: PALETTE.cyan, align: 'center', scale: 2 });
+      if (eventInfo.inPit) text('PIT - REPAIRING', W / 2, 84, { color: PALETTE.cyan, align: 'center' });
+    }
 
     // Combat panel: health, heat, weapons and utility.
     const cx = 8;

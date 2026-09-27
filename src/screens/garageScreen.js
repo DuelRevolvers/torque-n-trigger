@@ -173,8 +173,8 @@ export class GarageScreen {
 
     this.root.innerHTML = `<div class="screen garage">
       <div class="g-head">
-        <div><h1>GARAGE</h1><div class="car-name">${esc(car.name)} <span class="tag">${ARCHETYPES[car.archetype]?.name || ''}</span></div></div>
-        <button class="btn primary race">RACE &#9654;</button>
+        <div><h1>GARAGE</h1><div class="car-name">${esc(car.name)} <span class="tag">${ARCHETYPES[car.archetype]?.name || ''}</span> <span class="cash">$${career.cash ?? 0}</span></div></div>
+        <button class="btn primary race">EVENTS &#9654;</button>
       </div>
       <div class="g-slots">${slotButtons}</div>
       <div class="g-side">
@@ -185,7 +185,7 @@ export class GarageScreen {
 
     const on = (sel, fn) => this.root.querySelectorAll(sel).forEach((el) => el.addEventListener('click', () => fn(el)));
     on('.slot-btn', (el) => this.select(el.dataset.slot));
-    on('.race', () => this.app.go('race', { build: this.car.build, car: this.car }));
+    on('.race', () => this.app.go('events', { car: this.car }));
     on('.repair', () => {
       for (const p of Object.values(car.build.parts)) if (p) p.condition = 100;
       this.save();

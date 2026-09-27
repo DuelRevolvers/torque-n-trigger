@@ -83,6 +83,7 @@ export function stepCar(car, params, input, track, dt) {
 
   updateWheelSpin(car, params, control, dt);
   car.prevNitro = input.nitro;
+  car.prevShift = input.shiftUp;
 }
 
 export const carUp = (car) => quatRotate(car.quat, LOCAL_UP);
@@ -153,6 +154,13 @@ function updateDrivetrain(car, p, input, dt) {
   car.shiftTimer = Math.max(0, car.shiftTimer - dt);
   if (car.reverse) {
     car.gear = 1;
+  } else if (car.manual) {
+    // Manual gearbox (drag races): the driver shifts up; stopping drops to 1st.
+    if (Math.abs(vLong) < 2) car.gear = 1;
+    else if (input.shiftUp && !car.prevShift && car.gear < t.gears.length && car.shiftTimer === 0) {
+      car.gear++;
+      car.shiftTimer = t.shiftTime;
+    }
   } else if (car.shiftTimer === 0) {
     const rpmNow = wheelRpm(ratioOf(car.gear));
     if (rpmNow > t.shiftUpRpm && car.gear < t.gears.length) {

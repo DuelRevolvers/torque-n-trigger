@@ -10,6 +10,8 @@ Genre: real-time vehicular combat racing with part-built cars, career mode, and 
 
 Torque & Trigger is a real-time racing game set in a neon-soaked future megacity. Every car is assembled from individual parts, and every race allows combat. The player starts with a cheap, randomly generated car, enters sprints, circuits, drag races and arena deathmatches across the city's districts, earns cash, and rebuilds the car one part at a time into something fast, dangerous, and recognisably theirs. Players can take their cars into local split-screen or online matches against friends.
 
+**Inspiration:** the game is a cross between the **Burnout** series (high-speed racing, aggressive driving, takedowns and spectacular crashes) and the **Twisted Metal** series (weaponised cars, arena combat and colourful named drivers).
+
 The fantasy is the garage as much as the track. A player should be able to look at their car and see every decision they made: the reactor-block engine sticking out of a cut hood, the mismatched wheels, the rail gun bolted to the roof, and every dent and scorch mark from the last race.
 
 ### Design pillars

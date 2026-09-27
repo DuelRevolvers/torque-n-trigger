@@ -27,6 +27,7 @@ name breaks npm's Windows command shims (`npx vite` fails here for that reason).
 | Reset car | R | Back | RESET |
 | Primary / secondary weapon | Left / right click | RB / LB | FIRE / ALT |
 | Utility | E | Y | UTIL |
+| Shift up (drag races) | F | X | SHIFT |
 | Pause & settings | Esc | Start | II button |
 
 ## Code layout
@@ -37,14 +38,16 @@ src/
   sim/                simulation: plain data, no three.js or DOM
     world.js          world state, stepWorld(), snapshot/restore, laps, respawn
     combat.js         weapons, projectiles, mines, utility, damage, part wear, heat, collisions, wrecks
+    event.js          event rules: countdown/launch, finishing, laps, pit, arena scoring, drag rules, style bonuses
+    arena.js          enclosed arena venue (same query interface as tracks)
     ai.js             AI drivers: racing line, overtaking, weapons, utility, recovery (same InputFrames as players)
     vehicle.js        raycast vehicle physics
     track.js          spline track + nearest-point query
     input.js          InputFrame, InputQueue
     carParams.js      hand-tuned reference car used by the physics tests
-    tracks/           track definitions
-  career/             career save, garage operations (install, remove, repaint)
-  screens/            starter selection, garage, race
+    tracks/           track and arena definitions (venues.js)
+  career/             career save, garage operations, event list, rewards and salvage
+  screens/            starter selection, garage, event select, race/results
   parts/              part catalog, named AI drivers, starter generation,, quality/traits/condition, fitting rules, stats + PR, physics params, generator
   core/fixedLoop.js   fixed-timestep loop with render interpolation
   input/              keyboard, gamepad, touch -> InputFrame

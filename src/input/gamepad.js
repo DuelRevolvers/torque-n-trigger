@@ -41,6 +41,7 @@ export class Gamepads {
       frame.utility ||= b(BTN.Y).pressed;
       frame.lookBack ||= b(BTN.R3).pressed;
       frame.reset ||= b(BTN.BACK).pressed;
+      frame.shiftUp ||= b(BTN.X).pressed;
       if (pad.buttons.some((x) => x.pressed) || pad.axes.some((a) => Math.abs(a) > 0.3)) this.active = true;
     }
   }

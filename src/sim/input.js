@@ -13,6 +13,7 @@ export function neutralInput() {
     utility: false,
     lookBack: false,
     reset: false,
+    shiftUp: false, // manual gearbox (drag races)
   };
 }
 
@@ -31,6 +32,7 @@ export function sanitizeInput(frame) {
     utility: !!frame.utility,
     lookBack: !!frame.lookBack,
     reset: !!frame.reset,
+    shiftUp: !!frame.shiftUp,
   };
 }
 

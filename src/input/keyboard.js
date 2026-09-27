@@ -2,7 +2,7 @@
 
 const GAME_KEYS = new Set([
   'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-  'Space', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyQ', 'KeyR',
+  'Space', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyQ', 'KeyR', 'KeyF',
 ]);
 
 export class Keyboard {
@@ -39,5 +39,6 @@ export class Keyboard {
     frame.reset ||= this.held('KeyR');
     frame.fire1 ||= this.mouse.has(0);
     frame.fire2 ||= this.mouse.has(2);
+    frame.shiftUp ||= this.held('KeyF');
   }
 }

@@ -9,7 +9,9 @@ const KEY = 'tt.career.v1';
 export function loadCareer() {
   try {
     const data = JSON.parse(localStorage.getItem(KEY) || 'null');
-    return data && data.version === 1 ? data : null;
+    if (!data || data.version !== 1) return null;
+    data.cash ??= 1000; // saves from before M5
+    return data;
   } catch {
     return null;
   }
@@ -35,6 +37,7 @@ export function newCareer(starter, seed) {
   return {
     version: 1,
     seed,
+    cash: 1000,
     cars: [{ id: 'car-1', name: starter.name, archetype: starter.archetype, build: starter.build }],
     activeCar: 'car-1',
     inventory: sparePartsBin(seed),

@@ -6,6 +6,7 @@ import { createCarState, placeCar, stepCar, carUp, carSpeed } from './vehicle.js
 import { yawFromDirection } from './math.js';
 import { initCombat, initCombatWorld, updateMods, updateCombat, collideCars } from './combat.js';
 import { neutralInput } from './input.js';
+import { initEventCar, eventInput, updateEvent } from './event.js';
 
 const NEUTRAL = neutralInput();
 
@@ -14,30 +15,42 @@ const SPAWN_HEIGHT = 0.9; // centre of mass above the road when (re)spawning
 // cars: [{ params, conditions? }]. Wrecked cars respawn unless respawnOnWreck is
 // false (deathmatch elimination). world.events collects visual events for the
 // renderer; it is not part of the snapshot state.
-export function createWorld({ track, cars, respawnOnWreck = true }) {
+// poses: optional start pose per car. event: optional createEventState(...) result.
+export function createWorld({ track, cars, respawnOnWreck = true, poses = null, event = null }) {
   const params = cars.map((c) => c.params);
   const state = {
     tick: 0,
-    cars: cars.map((c, i) => createCarState(i, c.params, gridPose(track, i))),
+    cars: cars.map((c, i) => createCarState(i, c.params, poses?.[i] ?? (track.spawnPose ? track.spawnPose(i) : gridPose(track, i)))),
   };
   initCombatWorld(state);
   state.cars.forEach((car, i) => initCombat(car, params[i], cars[i].conditions));
+  if (event) {
+    state.event = event;
+    state.cars.forEach((car) => initEventCar(car, event));
+  }
   return { track, params, state, respawnOnWreck, events: [] };
 }
 
 // Advances the world one tick. `inputs[i]` is the InputFrame for car i.
 export function stepWorld(world, inputs) {
   const { track, params, state } = world;
+  const effective = state.cars.map((c, i) => {
+    if (c.wrecked) return NEUTRAL;
+    const raw = inputs[i] || NEUTRAL;
+    return state.event ? eventInput(world, i, raw) : raw;
+  });
   for (let i = 0; i < state.cars.length; i++) {
     const car = state.cars[i];
-    const input = car.wrecked ? NEUTRAL : inputs[i] || NEUTRAL;
+    const input = effective[i];
     updateMods(world, i);
+    if (car.launchBoost > 0) car.mods.torque *= 1.3;
     stepCar(car, params[i], input, track, SIM_DT);
     if (!car.wrecked) updateRecovery(world, car, params[i], input);
-    updateLap(track, car, state.tick);
+    if (!track.isArena) updateLap(track, car, state.tick);
   }
   collideCars(world);
-  updateCombat(world, state.cars.map((c, i) => (c.wrecked ? NEUTRAL : inputs[i] || NEUTRAL)), SIM_DT, respawnCar);
+  updateCombat(world, effective, SIM_DT, respawnCar);
+  if (state.event) updateEvent(world, SIM_DT);
   state.tick++;
 }
 
@@ -83,6 +96,21 @@ export function respawnCar(world, id) {
   const { track } = world;
   const car = world.state.cars[id];
   const params = world.params[id];
+  if (track.spawnPose) {
+    // Arenas: the spawn point furthest from every other car.
+    let best = 0;
+    let bestD = -1;
+    for (let k = 0; k < track.def.spawns; k++) {
+      const p = track.spawnPose(k).pos;
+      const d = Math.min(...world.state.cars.filter((c) => c !== car).map((c) => Math.hypot(c.pos.x - p.x, c.pos.z - p.z)), 1e9);
+      if (d > bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    placeCar(car, params, track.spawnPose(best));
+    return;
+  }
   const i = car.trackIndex >= 0 ? car.trackIndex : 0;
   placeCar(car, params, poseAt(track, i));
   car.trackIndex = i;
