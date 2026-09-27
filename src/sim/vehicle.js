@@ -69,7 +69,7 @@ export function placeCar(car, params, pose) {
 }
 
 export function stepCar(car, params, input, track, dt) {
-  const center = track.query(car.pos.x, car.pos.z, car.trackIndex);
+  const center = track.query(car.pos.x, car.pos.z, car.trackIndex, car.pos.y);
   car.trackIndex = center.index;
   car.trackS = center.s;
   car.lateral = center.lateral;
@@ -210,7 +210,7 @@ function physicsSubstep(car, p, ctl, track, h) {
     const w = p.wheels[i];
     const rMount = quatRotate(q, w);
     const mount = add(car.pos, rMount);
-    const g = track.query(mount.x, mount.z, car.trackIndex);
+    const g = track.query(mount.x, mount.z, car.trackIndex, mount.y);
     const n = v3(g.nx, g.ny, g.nz);
     const upDotN = dot(up, n);
     let comp = 0;
@@ -435,7 +435,7 @@ function resolveBodyContacts(car, p, track) {
       for (const sz of [-1, 1]) {
         const r = quatRotate(car.quat, v3(sx * hx, offsetY + sy * hy, sz * hz));
         const pt = add(car.pos, r);
-        const g = track.query(pt.x, pt.z, car.trackIndex);
+        const g = track.query(pt.x, pt.z, car.trackIndex, pt.y);
         const pen = (g.height - pt.y) * g.ny;
         if (pen > 0) {
           const n = v3(g.nx, g.ny, g.nz);
@@ -456,7 +456,7 @@ function resolveBodyContacts(car, p, track) {
     for (const sz of [-1, 1]) {
       const r = quatRotate(car.quat, v3(sx * hx, offsetY, sz * hz));
       const pt = add(car.pos, r);
-      const g = track.query(pt.x, pt.z, car.trackIndex);
+      const g = track.query(pt.x, pt.z, car.trackIndex, pt.y);
       const excess = Math.abs(g.lateral) - track.wallDist;
       if (excess > 0) {
         const side = -Math.sign(g.lateral);

@@ -15,13 +15,13 @@ import { shopStock, buyPart, sellPart, buyPrice, repairCost, repairParts } from 
 import { newCareer, addCar } from '../src/career/career.js';
 import { generateStarters } from '../src/parts/starters.js';
 
-const venueTrack = (id) => {
-  const v = getVenue(id);
+const venueTrack = (id, def) => {
+  const v = getVenue(id, def);
   return v.kind === 'arena' ? buildArena(v.def) : buildTrack(v.def);
 };
 
 function aiEvent(def, n = 4) {
-  const track = venueTrack(def.venue);
+  const track = venueTrack(def.venue, def);
   const entries = DRIVERS.slice(0, n).map((d, k) => buildDriver(d, def.tier ?? 1, 70 + k));
   const world = createWorld({
     track,
@@ -44,7 +44,7 @@ test('every district venue generates and every event is well formed', () => {
     const events = districtEvents(d);
     assert.equal(events.filter((e) => e.boss).length, 1);
     for (const e of events) {
-      const track = venueTrack(e.venue);
+      const track = venueTrack(e.venue, e);
       assert.ok(track, e.id);
       assert.ok(e.entryFee >= 0 && e.purse > 0);
     }
@@ -58,6 +58,55 @@ test('AI can race a generated circuit and a generated sprint to the finish', () 
     run(world, 240);
     assert.ok(world.state.event.finished.length >= 3, `${key}: only ${world.state.event.finished.length} finished`);
   }
+});
+
+test('districts: long sprints, and shortcuts through side streets and special lots', () => {
+  const kinds = new Set();
+  for (const d of DISTRICTS) {
+    for (const e of districtEvents(d)) {
+      const v = getVenue(e.venue, e);
+      if (v.kind !== 'track') continue;
+      const t = buildTrack(v.def);
+      if (e.type === 'sprint') assert.ok(t.length > 2400, `${e.id} only ${Math.round(t.length)} m`);
+      for (const b of t.branches || []) {
+        kinds.add(b.kind);
+        const saving = b.s1 - b.s0 - b.track.length;
+        assert.ok(saving > 0 && saving < 320, `${e.id} shortcut saves ${Math.round(saving)} m`);
+      }
+    }
+  }
+  assert.ok(kinds.has('street'));
+  assert.ok([...kinds].some((k) => k !== 'street'), 'expected a lot shortcut (construction, alley, car park or plaza)');
+});
+
+test('arenas: big, with decks you can drive up onto and moving parts', () => {
+  const d = DISTRICTS[0];
+  const e = districtEvents(d).find((x) => x.type === 'arena');
+  const def = getVenue(e.venue, e).def;
+  assert.ok(def.sizeX >= 150 && def.sizeZ >= 150, `${def.sizeX} x ${def.sizeZ}`);
+  assert.ok(def.platforms.length >= 2 && def.lifts.length >= 1 && def.sweepers.length >= 1);
+  const arena = buildArena(def);
+  // Drive at a deck ramp and end up on top.
+  const ramp = def.ramps.find((r) => !r.base && r.height >= 3);
+  const world = createWorld({ track: arena, cars: [{ params: computeBuild(buildDriver(DRIVERS[1], 2, 1).build).params }] });
+  const car = world.state.cars[0];
+  const sx = arena.cx + ramp.x - ramp.dirX * 30;
+  const sz = arena.cz + ramp.z - ramp.dirZ * 30;
+  const yaw = Math.atan2(-ramp.dirX, -ramp.dirZ);
+  car.pos = { x: sx, y: arena.y0 + 0.9, z: sz };
+  car.quat = { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) };
+  car.vel = { x: ramp.dirX * 14, y: 0, z: ramp.dirZ * 14 };
+  let top = 0;
+  for (let t = 0; t < 150; t++) {
+    stepWorld(world, [{ ...neutralInput(), throttle: 0.5 }]);
+    top = Math.max(top, car.pos.y - arena.y0);
+  }
+  assert.ok(top > ramp.height, `only reached ${top.toFixed(1)} m (deck ${ramp.height.toFixed(1)} m)`);
+  // Lifts move with time.
+  arena.setTime(0);
+  const h0 = arena.liftTop(def.lifts[0]);
+  arena.setTime(def.lifts[0].period / 2);
+  assert.notEqual(Math.round(h0 * 10), Math.round(arena.liftTop(def.lifts[0]) * 10));
 });
 
 test('shortcuts: a car on the branch reports progress between its ends', () => {

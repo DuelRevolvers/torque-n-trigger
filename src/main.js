@@ -7,8 +7,10 @@ import { TouchControls } from './input/touch.js';
 import { LocalInput } from './input/localInput.js';
 import { RetroRenderer } from './render/retroRenderer.js';
 import { createTextures, createEnvMap } from './render/textures.js';
+import { createCityTextures } from './render/cityTextures.js';
 import { Hud } from './ui/hud.js';
 import { SettingsMenu } from './ui/settingsMenu.js';
+import { setCrtWarp } from './ui/crtWarp.js';
 import { loadCareer, clearCareer } from './career/career.js';
 import { StarterScreen } from './screens/starterScreen.js';
 import { GarageScreen } from './screens/garageScreen.js';
@@ -28,8 +30,9 @@ const localInput = new LocalInput({ keyboard, gamepads, touch, settings });
 const hudCanvas = document.createElement('canvas');
 const renderer = new RetroRenderer(canvas, hudCanvas, settings);
 renderer.applySettings();
+setCrtWarp(settings.crt);
 const hud = new Hud(hudCanvas);
-const tex = createTextures();
+const tex = { ...createTextures(), ...createCityTextures() };
 tex.env = createEnvMap(renderer.renderer);
 
 const app = {
@@ -90,6 +93,7 @@ const menu = new SettingsMenu(
   (key) => {
     if (key === 'resolution') onResize();
     if (key === 'touchControls') updateTouchVisibility();
+    if (key === 'crt') setCrtWarp(settings.crt);
     renderer.applySettings();
   },
   [

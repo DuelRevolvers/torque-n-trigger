@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
-import { PALETTE } from './textures.js';
+import { PALETTE, makeRng } from './textures.js';
 
 const BARRIER_HEIGHT = 1.1;
 const LAMP_SPACING = 36;
@@ -9,15 +9,17 @@ const LAMP_SPACING = 36;
 // Builds the road, curbs, shoulders, barriers, ground, start/finish gantry,
 // street lamps, jump kickers and shortcut branches from the simulation's track
 // data, so what you see is what you drive on.
-export function buildTrackView(track, tex) {
+// opts.city: the route runs through a district (districtView draws the ground,
+// buildings and lamps); opts.sidewalk / opts.barrierColor restyle it.
+export function buildTrackView(track, tex, opts = {}) {
   const group = new THREE.Group();
   const groundY = track.minY - 0.6;
   const doubleSided = { side: THREE.DoubleSide };
   const mats = {
     road: standardMaterial({ map: tex.road, roughness: 0.45, metalness: 0.0, envMap: tex.env, envMapIntensity: 0.5, ...doubleSided }),
     curb: litMaterial({ map: tex.curb, ...doubleSided }),
-    shoulder: litMaterial({ map: tex.shoulder, ...doubleSided }),
-    barrier: litMaterial({ map: tex.wall, ...doubleSided }),
+    shoulder: litMaterial({ map: opts.sidewalk || tex.shoulder, ...doubleSided }),
+    barrier: litMaterial({ map: tex.wall, color: opts.barrierColor || '#ffffff', ...doubleSided }),
     skirt: litMaterial({ color: PALETTE.wallDark, ...doubleSided }),
     chevron: litMaterial({ map: tex.wall, ...doubleSided, polygonOffset: true, polygonOffsetFactor: -2 }),
   };
@@ -31,18 +33,25 @@ export function buildTrackView(track, tex) {
   const inMain = (x, z) => Math.abs(track.queryMain(x, z, -1).lateral) < track.wallDist - 0.5;
 
   buildRoad(group, track, mats, groundY, { wallSkip: branches.length ? inBranch : null });
-  for (const { track: b } of branches) buildRoad(group, b, mats, groundY, { lift: 0.03, wallSkip: inMain });
+  for (const br of branches) {
+    buildRoad(group, br.track, mats, groundY, { lift: 0.03, wallSkip: inMain, roadMat: branchMaterial(br.kind, tex, mats) });
+    group.add(beacons(br.track));
+  }
 
   const groundSize = 3000;
   const ground = new THREE.PlaneGeometry(groundSize, groundSize);
   ground.rotateX(-Math.PI / 2);
   ground.translate((track.bounds.minX + track.bounds.maxX) / 2, groundY, (track.bounds.minZ + track.bounds.maxZ) / 2);
   tex.ground.repeat.set(groundSize / 8, groundSize / 8);
-  group.add(new THREE.Mesh(ground, new THREE.MeshLambertMaterial({ map: tex.ground }))); // no vertex snap: see retroMaterial.js
+  if (!opts.city) group.add(new THREE.Mesh(ground, new THREE.MeshLambertMaterial({ map: tex.ground }))); // no vertex snap: see retroMaterial.js
 
   const at = pointAt(track);
   group.add(buildStartLine(track, tex, at, track.closed ? 0 : track.indexAtDistance(track.finishS ?? track.length - 25)));
-  group.add(buildLamps(track, tex, at));
+  if (!opts.city) group.add(buildLamps(track, tex, at));
+  if (tex.puddles) {
+    group.add(buildPuddles(track, tex, 0));
+    for (const br of branches) if (br.kind === 'street' || br.kind === 'alley' || br.kind === 'parking') group.add(buildPuddles(br.track, tex, 0.03));
+  }
   return group;
 }
 
@@ -54,14 +63,14 @@ const pointAt = (track) => (i, lateral, dy = 0) => [
 
 // One road: surface, curbs, shoulders, barriers (with optional gaps), skirts
 // down to the ground, and chevrons on its jump kickers.
-function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null } = {}) {
+function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roadMat = null } = {}) {
   const hw = track.halfWidth;
   const curbOuter = hw + track.curbWidth;
   const wall = track.wallDist;
   const at = pointAt(track);
   const add = (geometry, material) => group.add(new THREE.Mesh(geometry, material));
 
-  add(ribbon(track, (i) => at(i, -hw, lift), (i) => at(i, hw, lift), { vLength: 16 }), mats.road);
+  add(ribbon(track, (i) => at(i, -hw, lift), (i) => at(i, hw, lift), { vLength: 16 }), roadMat || mats.road);
   add(ribbon(track, (i) => at(i, -curbOuter, lift), (i) => at(i, -hw, lift), { vLength: 3 }), mats.curb);
   add(ribbon(track, (i) => at(i, hw, lift), (i) => at(i, curbOuter, lift), { vLength: 3 }), mats.curb);
   const shoulderU = (wall - curbOuter) / 4;
@@ -162,6 +171,79 @@ function buildStartLine(track, tex, at, i0 = 0) {
   gantry.lookAt(track.x[i0] - track.tx[i0], track.y[i0], track.z[i0] - track.tz[i0]);
   group.add(gantry);
   return group;
+}
+
+// Shortcut surfaces: dirt through construction sites, tiles across plazas,
+// painted tarmac through car parks, plain road down side streets and alleys.
+function branchMaterial(kind, tex, mats) {
+  if (kind === 'construction' && tex.dirt) return litMaterial({ map: tex.dirt, side: THREE.DoubleSide });
+  if (kind === 'plaza' && tex.tiles) return litMaterial({ map: tex.tiles, side: THREE.DoubleSide });
+  if (kind === 'parking' && tex.parking) return litMaterial({ map: tex.parking, side: THREE.DoubleSide });
+  return mats.road;
+}
+
+// Flashing amber beacons either side of a shortcut's entrance and exit.
+function beacons(track) {
+  const geos = [];
+  const at = pointAt(track);
+  for (const i of [Math.min(4, track.count - 1), Math.max(0, track.count - 5)]) {
+    for (const side of [-1, 1]) {
+      const p = at(i, side * (track.halfWidth + 1.2), 0);
+      geos.push(new THREE.BoxGeometry(0.2, 1.4, 0.2).translate(p[0], p[1] + 0.7, p[2]));
+      geos.push(new THREE.BoxGeometry(0.45, 0.35, 0.45).translate(p[0], p[1] + 1.55, p[2]));
+    }
+  }
+  return new THREE.Mesh(mergeGeometries(geos), glowMaterial({ color: '#ffb000', intensity: 3 }));
+}
+
+// Wet patches: irregular shapes scattered at random - lots of small ones, a
+// few big ones, some in clusters - each following the road surface.
+function buildPuddles(track, tex, lift) {
+  const rng = makeRng(Math.round(track.length * 97 + track.x[0] * 13));
+  const pos = [];
+  const uv = [];
+  const idx = [];
+  const hw = track.halfWidth - 0.6;
+  const count = Math.round((track.length / 18) * (0.6 + rng() * 0.8));
+  let s = rng() * 20;
+  for (let k = 0; k < count; k++) {
+    s += rng() < 0.3 ? rng() * 6 : 4 + rng() * 60; // sometimes clustered
+    if (s > track.length) s -= track.length;
+    const i = track.indexAtDistance(s);
+    const big = rng() < 0.12;
+    const len = big ? 8 + rng() * 10 : 1.2 + Math.pow(rng(), 2) * 6;
+    const wid = len * (0.25 + rng() * 0.6);
+    const lat = (rng() * 2 - 1) * Math.max(0, hw - wid / 2);
+    const cx = track.x[i] + track.rx[i] * lat;
+    const cz = track.z[i] + track.rz[i] * lat;
+    const yaw = Math.atan2(track.tx[i], track.tz[i]) + (rng() - 0.5) * 1.2;
+    const q = Math.floor(rng() * 4);
+    const u0 = (q % 2) * 0.5;
+    const v0 = Math.floor(q / 2) * 0.5;
+    const flip = rng() < 0.5;
+    const base = pos.length / 3;
+    for (const [a, b, u, v] of [[-1, -1, 0, 0], [1, -1, 1, 0], [1, 1, 1, 1], [-1, 1, 0, 1]]) {
+      const lx = (a * wid) / 2;
+      const lz = (b * len) / 2;
+      const x = cx + lx * Math.cos(yaw) + lz * Math.sin(yaw);
+      const z = cz - lx * Math.sin(yaw) + lz * Math.cos(yaw);
+      pos.push(x, track.queryMain(x, z, i).height + lift + 0.035, z);
+      uv.push(u0 + (flip ? 1 - u : u) * 0.5, v0 + v * 0.5);
+    }
+    idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  const mat = standardMaterial({
+    color: '#05050a', roughness: 0.1, metalness: 0.3, envMap: tex.env, envMapIntensity: 0.55,
+    alphaMap: tex.puddles, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3, side: THREE.DoubleSide,
+  });
+  const m = new THREE.Mesh(g, mat);
+  m.renderOrder = 1;
+  return m;
 }
 
 export function setUvRect(geometry, rect) {

@@ -136,7 +136,7 @@ function arenaInput(world, i, dt, input) {
     const s = Math.sin(a);
     const dx = fwd.x * c - fwd.z * s;
     const dz = fwd.x * s + fwd.z * c;
-    const g = track.query(car.pos.x + dx * dist, car.pos.z + dz * dist);
+    const g = track.query(car.pos.x + dx * dist, car.pos.z + dz * dist, -1, car.pos.y);
     return Math.abs(g.lateral) - track.wallDist; // > -2 means close to or inside a wall
   };
   const look = 6 + speed * 0.4;

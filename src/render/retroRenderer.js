@@ -80,9 +80,11 @@ const POST_FRAGMENT = /* glsl */ `
     vec4 hud = texture2D(tHud, sampleUv);
     color = mix(color, linearToOutputTexel(vec4(hud.rgb, 1.0)).rgb, hud.a);
 
-    if (uScanlines > 0.5 && uScale >= 2.0) {
-      float row = fract(uv.y * uInternal.y);
-      color *= row < 0.5 ? 0.72 : 1.0;
+    if (uScanlines > 0.5) {
+      // Lines in screen pixels: one dark row per game pixel, or every other
+      // screen row when the game renders at native resolution.
+      float period = max(2.0, uScale);
+      color *= mod(gl_FragCoord.y, period) < period * 0.5 ? 0.62 : 1.0;
     }
     if (uCrt > 0.5) {
       vec2 c = uv * 2.0 - 1.0;

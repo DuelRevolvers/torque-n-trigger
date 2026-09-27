@@ -55,6 +55,16 @@
       .pair figcaption.new { color: var(--cyan); }
       .pair figure { max-width: 100%; }
       .pair canvas { display: block; max-width: 100%; height: auto; image-rendering: pixelated; background: repeating-conic-gradient(#1c1530 0% 25%, #140f24 0% 50%) 0 0 / 12px 12px; border: 1px solid #000; }
+      .card.wide { grid-column: 1 / -1; }
+      .showroom { background: var(--panel); border: 2px solid var(--line); padding: 10px; margin-top: 8px; }
+      .sr-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; color: var(--dim); margin-bottom: 8px; }
+      .sr-head b { color: var(--amber); }
+      .sr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 14px; }
+      .sr-row { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+      .sr-row label { color: var(--dim); font-size: 11px; text-transform: uppercase; }
+      .sr-row select { width: 140px; padding: 4px 6px; text-transform: none; font-weight: normal; }
+      .sr-row select.bad { border-color: var(--pink); }
+      .sr-msg { margin-top: 8px; font-size: 12px; color: var(--pink); min-height: 1em; }
       .notes { background: var(--panel); border: 2px solid var(--line); padding: 10px 14px; color: var(--dim); max-width: 900px; }
       .notes b { color: var(--ink); }
       .notes li { margin: 4px 0; }
@@ -76,13 +86,22 @@
       </div>
 
       <div class="controls">
+        <div class="group"><span>Scene</span><button data-scene="street" class="on">Street</button><button data-scene="showroom">Showroom</button></div>
         <div class="group"><span>Textures</span><button data-set="current">Current</button><button data-set="proposed" class="on">Proposed</button><button id="flip" title="Switches every 1.5 s">Flip A/B</button></div>
         <div class="group"><span>Paint</span><span id="paints"></span></div>
-        <div class="group"><span>Finish</span><button data-finish="armor" class="on">Armored</button><button data-finish="junk">Junk / rust</button></div>
         <div class="group"><span>Glass</span><button data-glass="clean" class="on">Clean</button><button data-glass="cracked">Cracked</button></div>
         <div class="group"><span>Barrier</span><button data-barrier="chevron" class="on">Chevron</button><button data-barrier="concrete">Concrete</button></div>
         <div class="group"><span>Lines</span><select id="res"><option value="270">270p</option><option value="360" selected>360p</option><option value="540">540p</option></select></div>
         <div class="group"><span>Camera</span><button data-cam="chase" class="on">Chase</button><button data-cam="side">Side</button><button data-cam="street">Street</button></div>
+      </div>
+
+      <div id="showroom" class="showroom" hidden>
+        <div class="sr-head">
+          <b>Showroom</b>: the game's own car models (CarView). Pick any part per slot; the camera focuses on what you change.
+          <span class="group"><button id="sr-random">Random</button><button id="sr-all">Fill all slots</button><button id="sr-strip">Bare</button><button id="sr-whole">Whole car</button><button id="sr-spin">Spin</button></span>
+        </div>
+        <div class="sr-grid" id="sr-grid"></div>
+        <div class="sr-msg" id="sr-msg"></div>
       </div>
 
       <h2>Texture sheets</h2>
@@ -96,7 +115,7 @@
       <div class="notes">
         <ul>
           <li><b>Car body textures are greyscale on purpose.</b> They multiply the paint colour, so the garage paint picker keeps working. The rust sheet is the exception: it is in colour and replaces the paint look on Junk parts.</li>
-          <li><b>The car shell has no UVs yet.</b> <code>extrudeProfile</code> in carView.js would need the planar UVs this page generates (sides projected in metres, windows fitted to 0..1).</li>
+          <li><b>Showroom textures follow material tags.</b> carView.js tags every material with its kind (paint, part, trim, steel, glass, tyre, plate) and quality. The body shell maps one livery sheet in metres, so stripes and roundels land in the same place on every chassis. Every car surface has UVs in metres and every car texture is drawn at 64 px per metre, so body, parts, wheels and glass all show the same pixel size.</li>
           <li><b>Road, barrier and building sheets keep the current sizes and layouts</b> (128x256 road with the same lane lines, 64x32 barrier, 64x128 facade with 4 px window cells), so the track and city UVs don't change.</li>
           <li><b>The road adds a roughness map</b> so puddles and tyre tracks look glossier than the dry asphalt. Use it with <code>roughness: 1</code> on the road material.</li>
           <li><b>This preview skips the game's dither, scanlines and rain.</b> Bloom and vertex snap are the same as in the game.</li>
@@ -114,6 +133,10 @@
       import { standardMaterial, litMaterial, glowMaterial, additiveMaterial, retroUniforms } from '/src/render/retroMaterial.js';
       import { SHELLS } from '/src/render/carShells.js';
       import { drawText, textWidth, GLYPH_H } from '/src/ui/bitmapFont.js';
+      import { CarView } from '/src/render/carView.js';
+      import { SLOTS, SLOT_NAMES, REQUIRED_SLOTS, PART_TYPES, QUALITIES, PAINT_COLORS, LIGHT_COLORS } from '/src/parts/catalog.js';
+      import { makePart } from '/src/parts/generate.js';
+      import { computeBuild, canFit } from '/src/parts/build.js';
 
       // ------------------------------------------------------------------------
       // Pixel helpers
@@ -488,7 +511,7 @@
         }
 
         // Concrete jersey barrier (concept 2), 64x32: cast segments with a joint,
-        // bevel line, rain streaks, reflective strip and the odd graffiti tag.
+        // bevel line, rain streaks and a reflective strip.
         {
           const rng = makeRng(417);
           const w = 64;
@@ -522,18 +545,6 @@
           for (let x = 2; x < w - 1; x++) {
             if (rng() < 0.12) continue;
             p.set(x, 24, rgb(rng() < 0.2 ? '#8a6e00' : '#e8b800'));
-          }
-          // Graffiti tag.
-          {
-            const col = rgb(PALETTE.pink);
-            let x = 38;
-            let y = 17;
-            for (let s = 0; s < 34; s++) {
-              p.blend(x, y, col, 0.85);
-              x += rng() < 0.7 ? 1 : 0;
-              y += Math.round(Math.sin(s * 0.9) * 1.2 + (rng() - 0.5));
-              y = Math.max(14, Math.min(21, y));
-            }
           }
           for (let x = 0; x < w; x++) for (let y = h - 2; y < h; y++) p.set(x, y, rgb('#0a090e'));
           T.wallConcrete = canvasTexture(w, h, (ctx) => p.flush(ctx));
@@ -1050,6 +1061,918 @@
       // Scene
       // ------------------------------------------------------------------------
 
+      // ------------------------------------------------------------------------
+      // Quality sets for cars and parts, all drawn at one pixel density: 64 px per
+      // metre. carView.js gives every car surface UVs in metres, so a w x h tile
+      // repeats every w/64 x h/64 metres: nothing looks stretched, or sharper than
+      // its neighbour. The body livery is one 320 x 240 sheet at the same density.
+      // Each quality has its own look, not just a tint: livery, part tiles (plus
+      // detail per kind of part), trim, steel, tyres, glass and plates. Textures
+      // bake in the material's own colour, so its colour is set to white.
+      // ------------------------------------------------------------------------
+      const PPM = 64;
+      const TAU = Math.PI * 2;
+      const Q = QUALITIES.map((q) => q.id);
+      const texCache = new Map();
+      const cached = (key, make) => {
+        if (!texCache.has(key)) texCache.set(key, make());
+        return texCache.get(key);
+      };
+      const lum = (c) => (c[0] * 0.3 + c[1] * 0.59 + c[2] * 0.11) / 255;
+      const contrast = (c) => rgb(lum(c) > 0.5 ? '#16141c' : '#eeeef4');
+      const GOLD = rgb('#d8a838');
+      const px = (m) => Math.max(1, Math.round(m * PPM)); // metres to pixels
+      // A tiling texture at PPM (UVs are in metres).
+      const tiled = (w, h, draw) => {
+        const tex = canvasTexture(w, h, draw);
+        tex.repeat.set(PPM / w, PPM / h);
+        return tex;
+      };
+
+      // Drawing on the livery sheet, clipped to it.
+      function painter(p) {
+        const put = (x, y, c, t = 1) => {
+          x = Math.round(x);
+          y = Math.round(y);
+          if (x >= 0 && y >= 0 && x < p.w && y < p.h) p.blend(x, y, c, t);
+        };
+        const rect = (x0, y0, w, h, c, t = 1) => {
+          for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) put(x, y, c, t);
+        };
+        const hline = (x0, x1, y, c, t = 1) => {
+          for (let x = x0; x <= x1; x++) put(x, y, c, t);
+        };
+        const disc = (cx, cy, r, c, t = 1) => {
+          for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) if (x * x + y * y <= r * r + r) put(cx + x, cy + y, c, t);
+        };
+        const text = (str, x, y, c, s = 1) => {
+          const m = textMask(str);
+          for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) if (m.on(i, j)) rect(x + i * s, y + j * s, s, s, c);
+        };
+        return { put, rect, hline, disc, text };
+      }
+      // Drawing on a tile: Pix wraps, so shapes carry over the edges seamlessly.
+      function tilePainter(p) {
+        const dot = (x, y, c, t = 1) => p.blend(Math.round(x), Math.round(y), c, t);
+        const rect = (x0, y0, w, h, c, t = 1) => {
+          for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) dot(x0 + x, y0 + y, c, t);
+        };
+        const disc = (cx, cy, r, c, t = 1) => {
+          for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) if (x * x + y * y <= r * r + r) dot(cx + x, cy + y, c, t);
+        };
+        const text = (str, x, y, c) => {
+          const m = textMask(str);
+          for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) if (m.on(i, j)) dot(x + i, y + j, c);
+        };
+        const bolt = (x, y, c = rgb('#c8c8d0')) => {
+          dot(x, y, c);
+          dot(x + 1, y, scale(c, 0.7));
+          dot(x, y + 1, scale(c, 0.6));
+          dot(x + 1, y + 1, rgb('#101014'));
+        };
+        const scratch = (rng, len, c) => {
+          let x = rng() * p.w;
+          let y = rng() * p.h;
+          const a = rng() * TAU;
+          for (let i = 0; i < len; i++) {
+            dot(x, y, c, 0.8);
+            dot(x, y + 1, [0, 0, 0], 0.25);
+            x += Math.cos(a);
+            y += Math.sin(a) * 0.4;
+          }
+        };
+        return { dot, rect, disc, text, bolt, scratch };
+      }
+
+      // Livery sheet coordinates, matching liverySide / liveryPlan in carView.js:
+      // left flank rows 0-95 (y 1.05 down to -0.45), right flank rows 96-191,
+      // plan view from row 192. Designs draw the side view in the left rows; it is
+      // copied to the right flank before damage goes on.
+      const PLAN0 = 192;
+      const lvCol = (z) => Math.round((z + 2.5) * PPM);
+      const lvSide = (y) => Math.max(0, Math.min(95, Math.round((1.05 - y) * PPM)));
+      const lvPlan = (x) => Math.max(PLAN0, Math.min(335, Math.round(PLAN0 + (1.1 - x) * PPM)));
+
+      // Damage over a livery. With `marks` (where CarView crushed, dented, holed or
+      // tore the shell) the paint is damaged right there: cracked along the folds
+      // of a crush and scraped bare towards its impact, crazed round a dent,
+      // stripped and scorched round a hole, ragged round a lost door skin, and
+      // burnt under a buckled bonnet from critical on. Without marks (the gallery)
+      // a generic spread is drawn. Wrecked chars the lot either way.
+      function damageLivery(p, stage, rng, marks) {
+        const { put, rect, hline } = painter(p);
+        const w = p.w;
+        const bare = rgb('#b4b4bc');
+        const primer = rgb('#8a8a92');
+        const dark = rgb('#0a0a0e');
+        const soot = rgb('#0a0806');
+        const rust = rgb('#6a3418');
+        const patch = fbm(w, p.h, rng, [16, 8, 4]);
+        const sill = lvSide(-0.42);
+        // Texel of a body point on its flank, or on the plan view.
+        const sideCR = (x, y, z) => [Math.round((x > 0 ? 2.5 - z : z + 2.5) * PPM), Math.round((x > 0 ? 96 : 0) + (1.05 - y) * PPM)];
+        const planCR = (x, z) => [Math.round((z + 2.5) * PPM), Math.round(PLAN0 + (1.1 - x) * PPM)];
+        // Visits texels within `reach` of a mark on the views it shows on, with the
+        // body point each texel paints and a falloff of 1 at the centre.
+        const around = (m, reach, views, fn) => {
+          const [cx, cy, cz] = m.center;
+          const R = Math.ceil(reach * PPM);
+          const off = cx > 0 ? 96 : 0;
+          for (const v of views) {
+            const [c0, r0] = v === 'side' ? sideCR(cx, cy, cz) : planCR(cx, cz);
+            for (let row = r0 - R; row <= r0 + R; row++)
+              for (let col = c0 - R; col <= c0 + R; col++) {
+                if (col < 0 || col >= w) continue;
+                let pos;
+                if (v === 'side') {
+                  if (row < off || row >= off + 96) continue;
+                  pos = [cx, 1.05 - (row - off) / PPM, cx > 0 ? 2.5 - col / PPM : col / PPM - 2.5];
+                } else {
+                  if (row < PLAN0 || row >= p.h) continue;
+                  pos = [1.1 - (row - PLAN0) / PPM, cy, col / PPM - 2.5];
+                }
+                const d = Math.hypot(pos[0] - cx, pos[1] - cy, pos[2] - cz) / reach;
+                if (d < 1) fn(col, row, pos, 1 - d);
+              }
+          }
+        };
+        const centres = (m, views) => views.map((v) => (v === 'side' ? sideCR(...m.center) : planCR(m.center[0], m.center[2])));
+        // Flank marks show on their side view; crushes and top hits on the plan view.
+        const viewsFor = (m) => [...(Math.abs(m.center[0]) > 0.3 ? ['side'] : []), ...(m.type === 'crush' || Math.abs(m.dir?.[1] ?? 0) > 0.5 ? ['plan'] : [])];
+        // Patchy bare metal with a primer rim, more of it where f is higher.
+        const scraped = (col, row, f, amount) => {
+          const k = patch[row * w + col];
+          if (k < f * amount) put(col, row, bare);
+          else if (k < f * amount + 0.05) put(col, row, primer);
+        };
+        const streak = (col, row, len) => {
+          for (let i = 0; i < len; i++) {
+            put(col + i, row, bare, 0.9);
+            put(col + i, row + 1, dark, 0.35);
+          }
+        };
+        const crack = (col, row, len) => {
+          let a = rng() * TAU;
+          let [x, y] = [col, row];
+          for (let s = 0; s < len; s++) {
+            put(x, y, dark, 0.55);
+            a += (rng() - 0.5) * 0.5;
+            x += Math.cos(a);
+            y += Math.sin(a);
+          }
+        };
+        if (marks) {
+          for (const m of marks) {
+            const views = viewsFor(m);
+            if (m.type === 'crush') {
+              const mag = Math.hypot(...m.push) || 1;
+              const dir = m.push.map((v) => v / mag);
+              around(m, m.radius, views, (col, row, pos, f) => {
+                // The shell folds with sin(along * 38): crack the paint on its ridges and valleys.
+                const s = Math.sin(((pos[0] - m.center[0]) * dir[0] + (pos[1] - m.center[1]) * dir[1] + (pos[2] - m.center[2]) * dir[2]) * 38);
+                if (f > 0.15 && s > 0.94) put(col, row, [255, 255, 255], 0.35 * f);
+                else if (f > 0.15 && s < -0.94) put(col, row, dark, 0.7 * f);
+                scraped(col, row, f, 0.75);
+              });
+              for (const [c0, r0] of centres(m, views))
+                for (let i = 0; i < Math.round(m.radius * 24); i++) {
+                  const a = rng() * TAU;
+                  const d = Math.sqrt(rng()) * m.radius * PPM * 0.7;
+                  streak(Math.round(c0 + Math.cos(a) * d), Math.round(r0 + Math.sin(a) * d * 0.6), px(0.08 + rng() * 0.25));
+                }
+              if (stage >= 3 && m.push[1] > 0.05) around(m, m.radius * 0.8, ['plan'], (col, row, pos, f) => put(col, row, soot, f * 0.8)); // engine fire under the bonnet
+            } else if (m.type === 'dent') {
+              around(m, m.radius, views, (col, row, pos, f) => {
+                if (f > 0.25 && ((1 - f) * 5) % 1 < 0.14) put(col, row, dark, 0.45 * f);
+                scraped(col, row, Math.max(0, f - 0.4), 1.2);
+              });
+              for (const [c0, r0] of centres(m, views)) for (let k = 0; k < 5; k++) crack(c0, r0, m.radius * PPM * 0.8);
+            } else if (m.type === 'hole') {
+              around(m, m.radius * 2.6, views, (col, row, pos, f) => {
+                const d = (1 - f) * 2.6; // in hole radii
+                if (d < 1.45) put(col, row, d < 1.05 ? dark : bare);
+                else put(col, row, soot, Math.max(0, (2.6 - d) / 1.15) * 0.75);
+              });
+            } else if (m.type === 'tear') {
+              around(m, m.radius * 1.3, views, (col, row, pos) => {
+                const edge = Math.max(Math.abs(pos[1] - m.center[1]) - 0.13, Math.abs(pos[2] - m.center[2]) - 0.23);
+                if (edge > -0.01 && edge < 0.03 + patch[row * w + col] * 0.04) put(col, row, bare);
+              });
+            }
+          }
+        } else {
+          // Generic spread, for previews without a car.
+          const between = (a, b) => a + Math.floor(rng() * Math.max(1, b - a));
+          const sideSpot = (hi = 0.22) => [between(lvCol(-2.2), lvCol(2.2)), between(lvSide(hi), sill - 2)];
+          const cornerSpot = () => [rng() < 0.5 ? between(lvCol(-2.3), lvCol(-1.5)) : between(lvCol(1.5), lvCol(2.3)), between(lvSide(0.15), sill - 2)];
+          const planSpot = () => [between(lvCol(-2.2), lvCol(2.2)), between(lvPlan(0.8), lvPlan(-0.8))];
+          const chip = ([x, y]) => {
+            const [cw, ch] = [3 + Math.floor(rng() * 4), 2 + Math.floor(rng() * 3)];
+            rect(x, y, cw, ch, primer);
+            rect(x + 1, y + 1, Math.max(1, cw - 2), Math.max(1, ch - 2), bare);
+            hline(x, x + cw - 1, y - 1, dark, 0.4);
+          };
+          const holes = ([cx, cy], count) => {
+            for (let k = 0; k < count; k++) {
+              const x = cx + Math.round((rng() - 0.5) * 18);
+              const y = cy + Math.round((rng() - 0.5) * 10);
+              rect(x - 2, y - 2, 5, 5, bare);
+              rect(x - 1, y - 1, 3, 3, dark);
+            }
+          };
+          const scorch = ([cx, cy], r) => {
+            for (let y = -r; y <= r; y++)
+              for (let x = -2 * r; x <= 2 * r; x++) {
+                const d = Math.hypot(x / 2, y) / r;
+                if (d < 1) put(cx + x, cy + y, d > 0.8 ? rgb('#3a2010') : soot, (1 - d) * 0.85 + 0.1);
+              }
+          };
+          if (stage >= 1) {
+            for (let i = 0; i < 14; i++) streak(...cornerSpot(), px(0.12 + rng() * 0.3));
+            for (let i = 0; i < 8; i++) chip(sideSpot());
+          }
+          if (stage >= 2) {
+            for (let i = 0; i < 2; i++) holes(sideSpot(), 6);
+            holes(planSpot(), 5);
+            for (let i = 0; i < 10; i++) chip(planSpot());
+            for (let i = 0; i < 6; i++) crack(...sideSpot(), px(0.2));
+          }
+          if (stage >= 3) for (const spot of [cornerSpot(), cornerSpot(), [lvCol(-2.0), lvPlan(0.3)], [lvCol(-1.8), lvPlan(-0.2)]]) scorch(spot, 7 + Math.floor(rng() * 5));
+        }
+        if (stage >= 4) {
+          // Charred: burnt browns and blacks with a little paint left where the
+          // fire didn't reach, ash streaks, a few ember cracks.
+          const n = fbm(w, p.h, rng, [16, 8]);
+          for (let y = 0; y < p.h; y++)
+            for (let x = 0; x < w; x++) {
+              const k = n[y * w + x];
+              if (k > 0.72) continue;
+              p.set(x, y, mix(p.get(x, y), mix(rgb('#1a1412'), rgb('#3a2418'), clamp(k * 1.6)), 0.85));
+            }
+          for (let i = 0; i < 12; i++) {
+            const x = Math.floor(rng() * w);
+            hline(x, x + px(0.2 + rng() * 0.3), Math.floor(rng() * p.h), rgb('#5a5650'), 0.5); // ash streaks
+          }
+          for (let k = 0; k < 8; k++) {
+            let [x, y] = [Math.floor(rng() * w), Math.floor(rng() * 190)];
+            for (let s = 0; s < 14; s++) {
+              put(x, y, rgb('#ff7a1a'), 0.9);
+              x += 1;
+              y += Math.round(rng() * 2 - 1);
+            }
+          }
+        }
+      }
+
+      // Body livery. Both flanks get the same design (the right one mirrored in
+      // UV so both read left to right), so side features are placed symmetrically
+      // along the car. `marks` (from CarView) put damage where the shell was hit.
+      function liveryTex(q, baseHex, stage = 0, marks = null) {
+        const markKey = marks ? marks.map((m) => [m.type, ...m.center, m.radius].map((v) => (typeof v === 'number' ? v.toFixed(2) : v)).join(',')).join(';') : '';
+        return cached(`livery|${q}|${baseHex}|${stage}|${markKey}`, () =>
+          canvasTexture(
+            320,
+            336,
+            (ctx, w, h) => {
+              const rng = makeRng(1400 + Q.indexOf(q));
+              const base = rgb(baseHex);
+              const p = new Pix(w, h);
+              const { put, rect, hline, disc, text } = painter(p);
+              const n = fbm(w, h, rng, [40, 20, 10, 5]);
+              p.fill((x, y) => scale(base, 0.93 + n[y * w + x] * 0.12));
+              const sc = contrast(base);
+              const sill = lvSide(-0.42);
+              const mid = lvPlan(0);
+              const both = (z, fn) => {
+                fn(lvCol(z));
+                fn(lvCol(-z));
+              };
+              switch (q) {
+                case 'junk': {
+                  // Rust eating up from the sills and round the arches, primer and
+                  // odd-colour panels, tape, dents, holes and scratches.
+                  const rust = fbm(w, h, rng, [20, 10, 5]);
+                  const arches = [lvCol(-1.4), lvCol(1.4)];
+                  for (let y = 0; y < h; y++)
+                    for (let x = 0; x < w; x++) {
+                      let k = rust[y * w + x];
+                      if (y < 96) {
+                        const low = clamp((y - lvSide(0.1)) / (sill - lvSide(0.1)));
+                        const arch = Math.max(0, 1 - Math.min(...arches.map((c) => Math.abs(x - c))) / px(0.5));
+                        k += low * 0.3 + arch * low * 0.25;
+                      }
+                      if (k > 0.8) p.set(x, y, mix(rgb('#7a3c1a'), rgb('#3a1a0c'), clamp((k - 0.8) * 4)));
+                      else if (k > 0.76) p.set(x, y, rgb(rng() < 0.5 ? '#9a5a28' : '#c8c0b0'));
+                    }
+                  ['#6a6a70', '#7a3a2a', '#8a8a80', '#4a5a4a', '#5a5a64', '#8a6a3a'].forEach((c, i) => {
+                    const pw = px(0.35 + rng() * 0.6);
+                    const ph = px(0.15 + rng() * 0.2);
+                    const x0 = Math.floor(rng() * (w - pw));
+                    const y0 = i < 3 ? lvSide(0.25) + Math.floor(rng() * Math.max(1, sill - lvSide(0.25) - ph)) : PLAN0 + 2 + Math.floor(rng() * (136 - ph));
+                    for (let y = y0; y < y0 + ph; y++) for (let x = x0; x < x0 + pw; x++) put(x, y, scale(rgb(c), 0.85 + rng() * 0.2));
+                    hline(x0, x0 + pw - 1, y0, rgb('#1a1612'));
+                    hline(x0, x0 + pw - 1, y0 + ph - 1, rgb('#1a1612'));
+                  });
+                  for (let i = 0; i < 5; i++) {
+                    const x0 = Math.floor(rng() * (w - 34));
+                    const y0 = i < 2 ? lvSide(0.2) + Math.floor(rng() * 20) : PLAN0 + 4 + Math.floor(rng() * 120);
+                    for (let k = 0; k < 32; k++) for (let t = 0; t < 3; t++) put(x0 + k, y0 + t + (k >> 3), rgb(t === 1 ? '#b0b0ac' : '#8a8a86'));
+                  }
+                  for (let i = 0; i < 60; i++) {
+                    const x = rng() * w;
+                    const y = rng() * h;
+                    put(x, y, [0, 0, 0], 0.4);
+                    put(x + 1, y, [0, 0, 0], 0.3);
+                    put(x - 1, y - 1, [255, 255, 255], 0.3);
+                  }
+                  for (let i = 0; i < 14; i++) {
+                    const x = Math.floor(rng() * w);
+                    const y = Math.floor(rng() * h);
+                    rect(x - 2, y - 2, 7, 7, rgb('#6a3418'), 0.8);
+                    rect(x, y, 3, 3, rgb('#080604'));
+                  }
+                  for (let i = 0; i < 40; i++) {
+                    let x = rng() * w;
+                    let y = rng() * h;
+                    const a = rng() * TAU;
+                    for (let k = 0; k < 6 + rng() * 20; k++) {
+                      put(x, y, [220, 220, 220], 0.7);
+                      x += Math.cos(a);
+                      y += Math.sin(a) * 0.3;
+                    }
+                  }
+                  break;
+                }
+                case 'stock': {
+                  // Factory plain: door shut lines and handles, bonnet and boot lines,
+                  // a badge, road dust along the sills.
+                  const top = lvSide(0.26);
+                  const shut = (x) => {
+                    for (let y = top; y <= sill - 3; y++) {
+                      put(x, y, [0, 0, 0], 0.5);
+                      put(x + 1, y, [255, 255, 255], 0.12);
+                    }
+                  };
+                  both(1.0, shut);
+                  shut(lvCol(0));
+                  both(0.2, (x) => {
+                    rect(x - 4, lvSide(0.12), 8, 2, rgb('#d0d0d8'), 0.85);
+                    hline(x - 4, x + 3, lvSide(0.12) + 2, [0, 0, 0], 0.4);
+                  });
+                  for (const z of [-1.0, 1.6]) for (let y = PLAN0 + 3; y < PLAN0 + 140; y++) put(lvCol(z), y, [0, 0, 0], 0.45);
+                  rect(lvCol(-2.15) - 2, mid - 2, 5, 5, rgb('#c8c8d0'));
+                  for (let i = 0; i < 1800; i++) put(rng() * w, sill - Math.abs(rng() - rng()) * px(0.3), rgb('#a09880'), 0.35);
+                  break;
+                }
+                case 'street': {
+                  // Street tuner: smooth gloss with a soft sheen, two-tone with a
+                  // darker lower body under a neon keyline, angular slashes rising
+                  // from both arches, bonnet chevrons, neon roof-edge keylines.
+                  const neon = rgb(lum(base) > 0.6 ? '#1a7ac8' : PALETTE.cyan);
+                  const belt = lvSide(0.02);
+                  p.fill((x, y) => mix(base, [255, 255, 255], y < 96 ? (1 - y / 96) * 0.1 : 0.04));
+                  for (let y = belt + 2; y < 96; y++) hline(0, w - 1, y, scale(base, 0.55));
+                  hline(0, w - 1, belt, neon);
+                  hline(0, w - 1, belt + 1, rgb('#0c0b10'), 0.6);
+                  const top = lvSide(0.24);
+                  for (const s of [-1, 1]) {
+                    const arch = lvCol(s * 1.4);
+                    for (let y = top; y < belt; y++)
+                      for (let x = 0; x < w; x++) {
+                        const d = (x - arch) * -s - (belt - y) * 1.5; // in from the arch, leaning towards the doors
+                        if (d >= 8 && d < 22) put(x, y, sc);
+                        else if (d >= 22 && d < 24) put(x, y, neon);
+                        else if (d >= 30 && d < 34) put(x, y, sc, 0.8);
+                      }
+                  }
+                  for (let k = 0; k < 3; k++) {
+                    const apex = lvCol(-2.15) + k * 12;
+                    for (let r = mid - 24; r <= mid + 24; r++) {
+                      const c = Math.round(apex + Math.abs(r - mid) * 0.7);
+                      rect(c, r, 4, 1, sc);
+                      put(c + 4, r, neon);
+                    }
+                  }
+                  for (const x0 of [0.62, -0.62]) hline(lvCol(-2.2), lvCol(2.2), lvPlan(x0), neon, 0.9);
+                  break;
+                }
+                case 'sport': {
+                  // Twin racing stripes with keylines over bonnet, roof and boot; a
+                  // halftone fade along the sills; bonnet vent slats.
+                  for (const [a, b] of [[-0.32, -0.12], [0.12, 0.32]]) for (let r = lvPlan(b); r <= lvPlan(a); r++) hline(0, w - 1, r, sc);
+                  for (const x0 of [-0.36, -0.08, 0.08, 0.36]) hline(0, w - 1, lvPlan(x0), sc, 0.8);
+                  const bayer = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+                  for (let y = lvSide(-0.05); y <= sill - 2; y++)
+                    for (let x = 0; x < w; x++) {
+                      const t = clamp((Math.abs(x / PPM - 2.5) - 0.2) / 2) * clamp((y - lvSide(-0.05)) / px(0.2) + 0.3);
+                      if (t * 16 > bayer[(y % 4) * 4 + (x % 4)]) put(x, y, sc);
+                    }
+                  for (const s of [-1, 1]) for (let k = 0; k < 5; k++) hline(lvCol(-1.8), lvCol(-1.5), lvPlan(s * 0.5) + k * 3 - 6, rgb('#0c0b10'));
+                  break;
+                }
+                case 'race': {
+                  // Race livery: accent centre stripe, number roundels on the doors and
+                  // roof, sponsor panels, checkered tail.
+                  const accent = rgb(Math.abs(base[0] - 242) + Math.abs(base[1] - 194) + base[2] < 160 ? PALETTE.pink : '#f2c200');
+                  for (let r = lvPlan(0.2); r <= lvPlan(-0.2); r++) hline(0, w - 1, r, r <= lvPlan(0.2) + 1 || r >= lvPlan(-0.2) - 1 ? rgb('#101014') : accent);
+                  const num = String(1 + Math.floor(rng() * 9));
+                  const cy = lvSide(0.0);
+                  disc(lvCol(0), cy, px(0.3), rgb('#101014'));
+                  disc(lvCol(0), cy, px(0.3) - 2, rgb('#f4f4f4'));
+                  text(num, lvCol(0) - 7, cy - 10, rgb('#101014'), 3);
+                  both(1.05, (x) => {
+                    const y0 = lvSide(0.16);
+                    rect(x - px(0.2), y0, px(0.4), px(0.14), rgb('#f4f4f4'));
+                    for (let i = 2; i < px(0.4) - 2; i++) if (rng() < 0.7) rect(x - px(0.2) + i, y0 + 3 + (i % 3 === 0 ? 1 : 0), 1, 3, rgb('#202028'));
+                    rect(x - px(0.2), lvSide(-0.06), px(0.4), 5, accent);
+                  });
+                  disc(lvCol(0.35), mid, px(0.2), rgb('#101014'));
+                  disc(lvCol(0.35), mid, px(0.2) - 2, rgb('#f4f4f4'));
+                  text(num, lvCol(0.35) - 5, mid - 7, rgb('#101014'), 2);
+                  for (let x = lvCol(1.95); x < w; x++) for (let y = PLAN0 + 2; y < PLAN0 + 142; y++) p.set(x, y, ((x >> 2) + (y >> 2)) % 2 ? rgb('#101014') : rgb('#f4f4f4'));
+                  break;
+                }
+                case 'elite': {
+                  // Pearl drifting in hue along the car, chrome double pinstripe, neon
+                  // circuit inlays along the sills, gold rocker lines, bonnet crest.
+                  const shifted = [base[2], base[0], base[1]];
+                  for (let y = 0; y < h; y++)
+                    for (let x = 0; x < w; x++) {
+                      const t = 0.18 + 0.14 * Math.sin((x / w) * TAU + (y < 96 ? 0 : 1.5));
+                      p.set(x, y, mix(mix(p.get(x, y), shifted, t), [255, 255, 255], y < 96 ? (1 - y / 96) * 0.12 : 0.06));
+                    }
+                  for (const yy of [0.18, 0.14]) for (let x = lvCol(-2.1); x <= lvCol(2.1); x++) put(x, lvSide(yy), x % 9 ? rgb('#d8dce8') : [255, 255, 255]);
+                  hline(lvCol(-2.2), lvCol(2.2), sill - 1, GOLD);
+                  hline(lvCol(-2.2), lvCol(2.2), sill - 2, GOLD, 0.5);
+                  const sym = (x, y, c) => {
+                    put(x, y, c);
+                    put(w - 1 - x, y, c);
+                  };
+                  const [b0, b1] = [lvSide(-0.12), sill - 5];
+                  for (let k = 0; k < 9; k++) {
+                    let x = 10 + Math.floor(rng() * 140);
+                    let y = b0 + Math.floor(rng() * (b1 - b0));
+                    const col = rgb(k % 3 ? PALETTE.cyan : PALETTE.pink);
+                    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) sym(x + dx, y + dy, col);
+                    for (let s = 0; s < 4; s++) {
+                      const len = 5 + Math.floor(rng() * 12);
+                      for (let i = 0; i < len; i++) sym(x++, y, col);
+                      const dy = (rng() < 0.5 ? -1 : 1) * (2 + Math.floor(rng() * 3));
+                      for (let i = 0; i < Math.abs(dy); i++) {
+                        y = Math.max(b0, Math.min(b1, y + Math.sign(dy)));
+                        sym(x, y, col);
+                      }
+                    }
+                    sym(x, y, [255, 255, 255]);
+                    sym(x + 1, y, [255, 255, 255]);
+                  }
+                  for (const x0 of [0.7, -0.7]) for (let x = lvCol(-2.2); x <= lvCol(2.2); x++) if ((x >> 4) % 3 !== 2) put(x, lvPlan(x0), rgb(PALETTE.cyan), 0.8);
+                  const cx = lvCol(-1.95);
+                  for (let d = 0; d < 8; d++) {
+                    hline(cx - (7 - d), cx + (7 - d), mid - d, GOLD);
+                    hline(cx - (7 - d), cx + (7 - d), mid + d, GOLD);
+                  }
+                  disc(cx, mid, 2, rgb('#fff0b0'));
+                  break;
+                }
+              }
+              for (let y = 0; y < 96; y++) for (let x = 0; x < w; x++) p.set(x, y + 96, p.get(x, y)); // right flank
+              if (stage) damageLivery(p, stage, makeRng(2100 + Q.indexOf(q)), marks);
+              p.flush(ctx);
+            },
+            { repeat: false },
+          ),
+        );
+      }
+
+      // Part surfaces, 64 x 64 tiles (one metre). Layers: the finish by quality,
+      // how the kind of part is built (fins, seams, rivets, welds), then wear.
+      // Construction lines sit 16 px in from the tile's corner and every 32 px
+      // after: each face's UVs start at its corner, so small faces stay clean and
+      // bigger ones get panelled a quarter metre in, not framed at every edge.
+      // Markings are real pieces on the models (hazardTex, stencilTex, labelTex),
+      // exhaust heat and contact shading come from CarView's vertex colours.
+      const PART_KIND = {
+        primaryWeapon: 'weapon', secondaryWeapon: 'weapon', engine: 'engine', turbo: 'engine', cooling: 'engine', transmission: 'engine',
+        suspension: 'engine', armor: 'armor', bodyKit: 'armor', exhaust: 'exhaust', fuelTank: 'tank', nitrous: 'tank', utility: 'tank',
+        wheels: 'wheel', spoiler: 'aero',
+      };
+      const LINES = [16, 48];
+      function partTex(q, slot, baseHex) {
+        const kind = PART_KIND[slot] || 'plain';
+        return cached(`part|${q}|${slot}|${baseHex}`, () =>
+          tiled(64, 64, (ctx) => {
+            const rng = makeRng(1500 + Q.indexOf(q) * 31 + kind.length);
+            const base = rgb(baseHex);
+            const p = new Pix(64, 64);
+            const { dot, rect, disc, bolt, scratch } = tilePainter(p);
+            const n = fbm(64, 64, rng, [32, 16, 8]);
+            const each = (fn) => {
+              for (let i = 0; i < 4096; i++) p.set(i % 64, i >> 6, fn(p.get(i % 64, i >> 6), i));
+            };
+            p.fill((x, y) => scale(base, 0.93 + n[y * 64 + x] * 0.12));
+
+            // Finish.
+            switch (q) {
+              case 'street': // clean, smooth paint
+                each((c) => mix(c, base, 0.6));
+                break;
+              case 'sport': // anodised: a cool sheen over a brushed grain
+                each((c, i) => scale(mix(c, mix(base, [200, 220, 255], 0.25), 0.3 + n[i] * 0.2), 0.97 + ((i >> 6) % 3) * 0.02));
+                break;
+              case 'race': // carbon-fibre twill
+                each((c, i) => mix(rgb((((i % 64) + ((i >> 6) >> 1)) >> 1) % 2 ? '#2c2c34' : '#141418'), base, 0.3));
+                break;
+              case 'elite': // polished, with an engraved brick-hex pattern
+                each((c, i) => {
+                  const [x, y] = [i % 64, i >> 6];
+                  const lit = mix(c, [255, 255, 255], 0.1 + n[i] * 0.12);
+                  return y % 8 === 0 || (x + (Math.floor(y / 8) % 2) * 8) % 16 === 0 ? mix(lit, scale(base, 0.55), 0.35) : lit;
+                });
+                break;
+            }
+
+            // Construction, by kind. Seams and fixings take the quality's style:
+            // gold on elite, quick-release fasteners on race, steel bolts otherwise.
+            const seam = (horizontal, at) => {
+              for (let i = 0; i < 64; i++) {
+                const [x, y] = horizontal ? [i, at] : [at, i];
+                if (q === 'elite') p.set(x, y, GOLD);
+                else {
+                  p.blend(x, y, [0, 0, 0], 0.5);
+                  p.blend(horizontal ? x : x + 1, horizontal ? y + 1 : y, [255, 255, 255], 0.22);
+                }
+              }
+            };
+            const fixing = (x, y) => {
+              if (q === 'race') {
+                disc(x, y, 1, rgb('#d8d8e0'));
+                dot(x, y, rgb('#202028'));
+              } else bolt(x, y, q === 'elite' ? GOLD : q === 'junk' ? rgb('#8a6a4a') : rgb('#c8c8d0'));
+            };
+            const weld = (row) => {
+              for (let x = 0; x < 64; x++) {
+                p.blend(x, row, (x >> 1) % 2 ? [255, 255, 255] : [0, 0, 0], 0.3);
+                p.blend(x, row + 1, [0, 0, 0], 0.25);
+              }
+            };
+            switch (kind) {
+              case 'engine': {
+                // Cast metal with cooling fins, split by bolted casting seams.
+                const cast = fbm(64, 64, rng, [8, 4]);
+                each((c, i) => {
+                  const y = i >> 6;
+                  const fin = y % 4 === 0 ? 1.12 : y % 4 === 1 ? 0.88 : 1;
+                  return scale(c, (0.92 + cast[i] * 0.14) * fin);
+                });
+                for (const at of LINES) {
+                  seam(false, at);
+                  for (let y = 4; y < 64; y += 8) fixing(at - 3, y);
+                }
+                break;
+              }
+              case 'weapon':
+                // Machined gunmetal: fine grain, panel lines, screws where they cross.
+                for (let y = 0; y < 64; y++) {
+                  const k = 0.95 + rng() * 0.08;
+                  for (let x = 0; x < 64; x++) p.set(x, y, scale(p.get(x, y), k));
+                }
+                for (const at of LINES) {
+                  seam(true, at);
+                  seam(false, at);
+                }
+                for (const x of LINES) for (const y of LINES) for (const [ox, oy] of [[3, 3], [-4, 3], [3, -4], [-4, -4]]) fixing(x + ox, y + oy);
+                break;
+              case 'armor':
+                // Hammered plate with riveted seams.
+                for (let k = 0; k < 40; k++) {
+                  const [cx, cy, r] = [rng() * 64, rng() * 64, 3 + rng() * 3];
+                  for (let y = -r; y <= r; y++)
+                    for (let x = -r; x <= r; x++) {
+                      const d = Math.hypot(x, y) / r;
+                      if (d < 1) dot(cx + x, cy + y, y < 0 ? [0, 0, 0] : [255, 255, 255], (1 - d) * 0.12);
+                    }
+                }
+                for (const at of LINES) {
+                  seam(true, at);
+                  seam(false, at);
+                  for (let i = 4; i < 64; i += 8) {
+                    fixing(i, at + 3);
+                    fixing(at + 3, i);
+                  }
+                }
+                break;
+              case 'exhaust':
+                // Brushed pipe with weld beads at its joints (rings round a pipe).
+                for (let y = 0; y < 64; y++) {
+                  const k = 0.95 + rng() * 0.08;
+                  for (let x = 0; x < 64; x++) p.set(x, y, scale(p.get(x, y), k));
+                }
+                for (const at of LINES) weld(at);
+                break;
+              case 'tank':
+                // Rolled and welded: weld rings and a seam along the tank.
+                for (const at of LINES) weld(at);
+                seam(false, 16);
+                break;
+              case 'aero':
+                // Panel lines along the wing's chord.
+                for (const at of LINES) seam(true, at);
+                break;
+              case 'wheel':
+                // Lathe rings round the axle (wheel faces map outwards from it).
+                for (let y = 0; y < 64; y++)
+                  for (let x = 0; x < 64; x++) if (Math.round(Math.hypot(Math.min(x, 64 - x), Math.min(y, 64 - y))) % 3 === 0) p.blend(x, y, mix(base, [255, 255, 255], 0.45), 0.3);
+                break;
+              default:
+                for (const at of LINES) {
+                  seam(true, at);
+                  seam(false, at);
+                }
+                for (const x of LINES) for (const y of LINES) fixing(x + 3, y + 3);
+            }
+
+            // Wear.
+            if (q === 'junk') {
+              const rust = fbm(64, 64, rng, [16, 8, 4]);
+              each((c, i) => {
+                const k = rust[i] + n[i] * 0.2;
+                return k > 0.7 ? mix(rgb('#8a4a20'), rgb('#3a1a0c'), clamp((k - 0.7) * 3)) : k > 0.66 ? rgb('#b06a30') : c;
+              });
+              // A welded-on repair patch.
+              const [px0, py0] = [Math.floor(rng() * 64), Math.floor(rng() * 64)];
+              rect(px0, py0, 18, 12, rgb('#6a6a70'));
+              for (let i = 0; i < 18; i++) for (const y of [py0, py0 + 11]) dot(px0 + i, y, (i + y) % 2 ? rgb('#c8c0a8') : rgb('#5a5040'));
+              for (let i = 0; i < 12; i++) for (const x of [px0, px0 + 17]) dot(x, py0 + i, (i + x) % 2 ? rgb('#c8c0a8') : rgb('#5a5040'));
+              for (let k = 0; k < 3; k++) {
+                // Dents.
+                const [cx, cy] = [rng() * 64, rng() * 64];
+                for (let y = -4; y <= 4; y++)
+                  for (let x = -6; x <= 6; x++) {
+                    const e = (x * x) / 36 + (y * y) / 16;
+                    if (e <= 1) dot(cx + x, cy + y, y < 0 ? [0, 0, 0] : [255, 255, 255], (1 - e) * 0.3);
+                  }
+              }
+              for (let i = 0; i < 6; i++) scratch(rng, 6 + rng() * 10, rgb('#d8d0c0'));
+            } else if (q === 'stock') {
+              for (let i = 0; i < 3; i++) scratch(rng, 5 + rng() * 8, mix(base, [255, 255, 255], 0.5));
+              // Road dust settling along the bottom of each face.
+              for (let y = 50; y < 64; y++) for (let x = 0; x < 64; x++) p.blend(x, y, rgb('#a09880'), ((y - 50) / 14) * 0.18 * (0.6 + n[y * 64 + x] * 0.8));
+            }
+            p.flush(ctx);
+          }),
+        );
+      }
+
+      // Markings, for the decal pieces CarView puts where they belong.
+      // Hazard stripes (turret rings, rocket-pod bands), a 16 x 8 tile.
+      const hazardTex = (q) =>
+        cached(`hazard|${q}`, () =>
+          tiled(16, 8, (ctx) => {
+            const p = new Pix(16, 8);
+            const wear = fbm(16, 8, makeRng(2200), [8, 4]);
+            const c1 = q === 'elite' ? GOLD : rgb('#f2c200');
+            p.fill((x, y) => {
+              const c = (x + y) % 8 < 4 ? c1 : rgb('#141418');
+              return q === 'junk' ? mix(c, rgb('#5a4a3a'), clamp(wear[y * 16 + x] * 1.2 - 0.3)) : c;
+            });
+            p.flush(ctx);
+          }),
+        );
+      // Stencilled mark plate, 19 x 9 px: MK1 (junk) to MK6 (elite).
+      const stencilTex = (q) =>
+        cached(`stencil|${q}`, () =>
+          canvasTexture(19, 9, (ctx) => {
+            const p = new Pix(19, 9);
+            const [bg, fg] = q === 'elite' ? [rgb('#101014'), GOLD] : q === 'junk' ? [rgb('#3a3430'), rgb('#a89878')] : [rgb('#1e1e24'), rgb('#e8e8e0')];
+            p.fill(() => bg);
+            const m = textMask(`MK${Q.indexOf(q) + 1}`);
+            for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) if (m.on(i, j)) p.set(1 + i, 1 + j, fg);
+            p.flush(ctx);
+          }),
+        );
+      // Wrap-around label band: text and a gap, 9 px tall; CarView wraps it round
+      // a tank a whole number of times.
+      const LABELS = { FUEL: ['#c82020', '#f4f4f0'], NOS: ['#2050c8', '#f4f4f0'], OIL: ['#141418', '#f2c200'], SMK: ['#6a6a70', '#f4f4f0'], FIRE: ['#ff7a1a', '#141418'] };
+      const labelTex = (text, q) =>
+        cached(`label|${text}|${q}`, () => {
+          const m = textMask(text);
+          const w = m.w + 3;
+          return canvasTexture(w, 9, (ctx) => {
+            const rng = makeRng(2300 + Q.indexOf(q));
+            const p = new Pix(w, 9);
+            let [bg, fg] = (LABELS[text] || ['#6a6a70', '#f4f4f0']).map(rgb);
+            if (q === 'elite') [bg, fg] = [rgb('#101014'), GOLD];
+            p.fill((x, y) => (y === 0 || y === 8 ? scale(bg, 0.6) : bg));
+            for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) if (m.on(i, j)) p.set(1 + i, 1 + j, fg);
+            if (q === 'junk') {
+              // Faded and torn.
+              for (let x = 0; x < w; x++) for (let y = 0; y < 9; y++) p.set(x, y, mix(p.get(x, y), rgb('#6a5a48'), 0.35));
+              for (let k = 0; k < 3; k++) {
+                const [cx, cy] = [Math.floor(rng() * w), Math.floor(rng() * 9)];
+                for (let y = 0; y < 3; y++) for (let x = 0; x < 3; x++) p.set(cx + x, cy + y, rgb('#3a2a1c'));
+              }
+            }
+            p.flush(ctx);
+          });
+        });
+
+      // Black trim (bumpers, sills, wells, arches), 64 x 64: cracked, sun-bleached
+      // plastic up to carbon with gold thread.
+      function trimTex(q, baseHex) {
+        return cached(`trim|${q}|${baseHex}`, () =>
+          tiled(64, 64, (ctx) => {
+            const rng = makeRng(1600 + Q.indexOf(q));
+            const base = rgb(baseHex);
+            const p = new Pix(64, 64);
+            const { dot } = tilePainter(p);
+            switch (q) {
+              case 'junk': {
+                const n = fbm(64, 64, rng, [16, 8, 4]);
+                p.fill((x, y) => mix(base, rgb('#5a5860'), clamp(n[y * 64 + x] * 1.4 - 0.3)));
+                for (let k = 0; k < 10; k++) {
+                  let x = rng() * 64;
+                  let y = rng() * 64;
+                  for (let s = 0; s < 16; s++) {
+                    dot(x, y, rgb('#050506'));
+                    x += rng() * 2 - 0.5;
+                    y += rng() * 2 - 1;
+                  }
+                }
+                break;
+              }
+              case 'stock': // stippled plastic
+                p.fill(() => scale(base, 0.85 + rng() * 0.35));
+                break;
+              case 'street': // satin with soft sheen bands
+                p.fill((x, y) => mix(base, [255, 255, 255], 0.06 + 0.05 * Math.sin((y / 64) * TAU * 2)));
+                break;
+              case 'sport': // honeycomb mesh
+                p.fill((x, y) => ((x + (Math.floor(y / 4) % 2) * 2) % 4 === 0 || y % 4 === 0 ? mix(base, [255, 255, 255], 0.18) : scale(base, 0.5)));
+                break;
+              default: // race / elite: carbon twill, elite with gold thread
+                p.fill((x, y) => rgb(((x + (y >> 1)) >> 1) % 2 ? '#2a2a32' : '#121216'));
+                if (q === 'elite')
+                  for (let i = 0; i < 64; i++) {
+                    dot(i, i * 2, GOLD);
+                    dot(i, i * 2 + 32, GOLD);
+                  }
+            }
+            p.flush(ctx);
+          }),
+        );
+      }
+
+      // Bare steel (cages, bumpers, barrels, spikes), 64 x 64: rusty, pitted,
+      // brushed, then polished bands.
+      function steelTex(q, baseHex) {
+        return cached(`steel|${q}|${baseHex}`, () =>
+          tiled(64, 64, (ctx) => {
+            const rng = makeRng(1700 + Q.indexOf(q));
+            const base = rgb(baseHex);
+            const p = new Pix(64, 64);
+            const rows = Array.from({ length: 64 }, () => 0.85 + rng() * 0.3);
+            const polish = Q.indexOf(q) / 5;
+            p.fill((x, y) => {
+              const band = Math.abs(y - 20) < 3 || Math.abs(y - 44) < 2 ? polish * 0.5 : 0;
+              return mix(scale(base, rows[y]), [255, 255, 255], band);
+            });
+            if (q === 'junk') {
+              const n = fbm(64, 64, rng, [16, 8, 4]);
+              for (let i = 0; i < 4096; i++) if (n[i] > 0.6) p.set(i % 64, i >> 6, mix(rgb('#7a3c1a'), rgb('#3a1a0c'), clamp((n[i] - 0.6) * 4)));
+            }
+            if (q === 'stock') for (let i = 0; i < 90; i++) p.blend(Math.floor(rng() * 64), Math.floor(rng() * 64), rgb('#2a2a30'), 0.4);
+            p.flush(ctx);
+          }),
+        );
+      }
+
+      // Tyres, 32 x 16 (half a metre round the tread, a quarter across): bald junk,
+      // stock tread, sport deep tread with yellow sidewall marks, race slicks,
+      // elite deep tread with neon in the grooves.
+      function tyreTex(q) {
+        return cached(`tyre|${q}`, () =>
+          tiled(32, 16, (ctx) => {
+            const rng = makeRng(1800 + Q.indexOf(q));
+            const p = new Pix(32, 16);
+            p.fill((x, y) => {
+              const chevron = (x + Math.abs((y % 16) - 7.5) * 0.8) % 8;
+              if (q === 'junk') return chevron < 0.8 ? rgb('#0c0c0e') : rgb(rng() < 0.1 ? '#2e2e34' : '#1e1e24');
+              if (q === 'race') return rgb(rng() < 0.06 ? '#222228' : '#16161a');
+              const deep = q === 'sport' || q === 'elite' ? 2.4 : 1.6;
+              if (chevron < deep) return q === 'elite' && chevron < 0.8 && x % 4 === 0 ? rgb(PALETTE.cyan) : rgb('#060608');
+              return rgb('#18181e');
+            });
+            if (q === 'race' || q === 'sport') for (let x = 2; x < 32; x += 8) p.rect(x, 1, 2, 1, rgb('#f2c200'));
+            p.flush(ctx);
+          }),
+        );
+      }
+
+      // Window glass, 128 x 64 (2 x 1 m): diagonal reflection streaks. Level 1 has
+      // a bullet hole with a spider-web of cracks; level 2 is shattered, with more
+      // impacts and chunks missing.
+      function glassTex(level) {
+        return cached(`glass|${level}`, () =>
+          tiled(128, 64, (ctx) => {
+            const rng = makeRng(707);
+            const p = new Pix(128, 64);
+            const { dot } = tilePainter(p);
+            const n = fbm(128, 64, rng, [32, 16]);
+            p.fill((x, y) => mix(rgb('#0a0d18'), rgb('#141a2c'), n[y * 128 + x]));
+            for (let y = 0; y < 64; y++)
+              for (let x = 0; x < 128; x++) {
+                const d = (x + y) % 64;
+                if (d >= 10 && d < 18) p.blend(x, y, rgb('#34405e'), 0.55);
+                else if (d >= 30 && d < 33) p.blend(x, y, rgb('#2a3450'), 0.45);
+              }
+            const crack = rgb('#b8c4dc');
+            const web = (cx, cy, reach) => {
+              for (let k = 0; k < 13; k++) {
+                let a = (k / 13) * TAU + (rng() - 0.5) * 0.4;
+                let [x, y] = [cx, cy];
+                const len = reach * (0.4 + rng() * 0.6);
+                for (let s = 0; s < len; s++) {
+                  dot(x, y, rng() < 0.15 ? [255, 255, 255] : crack);
+                  a += (rng() - 0.5) * 0.3;
+                  x += Math.cos(a);
+                  y += Math.sin(a) * 0.8;
+                }
+              }
+              for (const r of [reach * 0.17, reach * 0.37, reach * 0.6])
+                for (let a = 0; a < TAU; a += 0.05) if (Math.sin(a * 3 + r) <= 0.35) dot(cx + Math.cos(a) * r * 1.25, cy + Math.sin(a) * r, crack);
+              for (let y = -2; y <= 2; y++) for (let x = -2; x <= 2; x++) dot(cx + x, cy + y, rgb('#dfe6f5'));
+              for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) dot(cx + x, cy + y, [0, 0, 0]);
+            };
+            // A missing chunk: jagged dark hole with a bright broken edge.
+            const chunk = (cx, cy, r) => {
+              for (let y = -r - 2; y <= r + 2; y++)
+                for (let x = -2 * r; x <= 2 * r; x++) {
+                  const edge = r * (1 + 0.25 * Math.sin(Math.atan2(y, x) * 5 + cx));
+                  const d = Math.hypot(x / 1.4, y);
+                  if (d < edge * 0.8) dot(cx + x, cy + y, rgb('#020308'));
+                  else if (d < edge * 0.8 + 1) dot(cx + x, cy + y, crack);
+                }
+            };
+            if (level >= 1) web(84, 30, 30);
+            if (level >= 2) {
+              web(28, 16, 22);
+              web(112, 50, 20);
+              chunk(84, 30, 7);
+              chunk(30, 15, 5);
+            }
+            p.flush(ctx);
+          }),
+        );
+      }
+
+      // Lamps (emissive maps): tail lights as 4 px LED cells, headlights as one
+      // reflector bowl per 14 x 7 px (a 0.42 m lamp shows two).
+      const tailTex = () =>
+        cached('tail', () =>
+          tiled(4, 4, (ctx) => {
+            const p = new Pix(4, 4);
+            p.fill((x, y) => rgb(x === 0 || y === 0 ? '#4a040c' : x === 2 && y === 2 ? '#ff8090' : '#ff2a3a'));
+            p.flush(ctx);
+          }),
+        );
+      const headTex = () =>
+        cached('head', () =>
+          tiled(14, 7, (ctx) => {
+            const p = new Pix(14, 7);
+            p.fill((x, y) => {
+              const d = Math.hypot(x + 0.5 - 7, y + 0.5 - 3.5);
+              return rgb(d < 1.5 ? '#fffaf0' : d < 2.6 ? '#b8d4ff' : d < 3.4 ? '#4a5a78' : '#10121a');
+            });
+            p.flush(ctx);
+          }),
+        );
+
+      // Number plate, 34 x 9 px: exactly the 0.53 x 0.14 m plate at 64 px/m.
+      const PLATE_TEXT = { junk: 'RUST0', stock: 'TNT01', street: 'STR33', sport: 'SPD77', race: 'R4Z0R', elite: 'ELITE' };
+      function plateTex(q) {
+        return cached(`plate|${q}`, () =>
+          tiled(34, 9, (ctx) => {
+            const rng = makeRng(1900 + Q.indexOf(q));
+            const p = new Pix(34, 9);
+            const [bg, fg] = q === 'elite' ? [rgb('#101014'), GOLD] : q === 'junk' ? [rgb('#a89878'), rgb('#2a2018')] : [rgb('#dcdcd0'), rgb('#141418')];
+            p.fill(() => bg);
+            for (let x = 0; x < 34; x++) {
+              p.set(x, 0, fg);
+              p.set(x, 8, fg);
+            }
+            for (let y = 0; y < 9; y++) {
+              p.set(0, y, fg);
+              p.set(33, y, fg);
+            }
+            const m = textMask(PLATE_TEXT[q]);
+            for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) if (m.on(i, j)) p.set(2 + i, 1 + j, fg);
+            if (q === 'junk') for (let i = 0; i < 25; i++) p.blend(Math.floor(rng() * 34), Math.floor(rng() * 9), rgb('#6a3418'), 0.7);
+            p.flush(ctx);
+          }),
+        );
+      }
+
       const canvas = document.getElementById('view');
       const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
       renderer.setPixelRatio(1);
@@ -1278,8 +2201,7 @@
         sky.renderOrder = -1;
         g.add(sky);
 
-        // Cars: the player's and one rival ahead.
-        g.add(makeCar(isNew, true, 0, 0));
+        // A rival ahead. The player's car is the showroom build (see buildShowroom).
         g.add(makeCar(isNew, false, 4.5, -16));
         return g;
       }
@@ -1386,7 +2308,8 @@
       // --- Rendering at a low internal resolution with bloom ---
       const camera = new THREE.PerspectiveCamera(68, 16 / 9, 0.3, 1500);
       const composer = new EffectComposer(renderer);
-      composer.addPass(new RenderPass(scene, camera));
+      const renderPass = new RenderPass(scene, camera);
+      composer.addPass(renderPass);
       const bloom = new UnrealBloomPass(new THREE.Vector2(640, 360), 0.55, 0.35, 0.9);
       composer.addPass(bloom);
       composer.addPass(new OutputPass());
@@ -1403,6 +2326,7 @@
         chase: { yaw: 0, pitch: 0.22, dist: 7.8, target: [0, 1.0, 0] },
         side: { yaw: 1.15, pitch: 0.12, dist: 5.2, target: [0, 0.8, 0] },
         street: { yaw: -0.35, pitch: 0.05, dist: 11, target: [0, 3.5, -12] },
+        showroom: { yaw: 0.9, pitch: 0.3, dist: 6, target: [0, 0.7, 0] },
       };
       const cam = { ...CAMS.chase };
       function placeCamera() {
@@ -1434,10 +2358,194 @@
         document.getElementById('badge').textContent = state.set === 'current' ? 'CURRENT' : 'PROPOSED';
         document.getElementById('badge').style.borderColor = state.set === 'current' ? '#a89fd0' : '';
         document.getElementById('badge').style.color = state.set === 'current' ? '#a89fd0' : '';
+        buildShowroom(false);
       }
 
+      // --- Showroom: the game's CarView on a turntable, every part selectable ---
+      const showroom = new THREE.Scene();
+      showroom.background = new THREE.Color('#07050d');
+      showroom.fog = new THREE.Fog('#07050d', 18, 45);
+      showroom.add(new THREE.HemisphereLight('#5a5aa0', '#120a1e', 1.2));
+      const key = new THREE.DirectionalLight('#c8d0ff', 1.4);
+      key.position.set(3, 6, 4);
+      showroom.add(key);
+      for (const [c, x] of [[PALETTE.pink, -4], [PALETTE.cyan, 4]]) {
+        const l = new THREE.PointLight(c, 30, 14, 1.6);
+        l.position.set(x, 2.5, 1);
+        showroom.add(l);
+      }
+      const floorTex = cur.ground.clone();
+      floorTex.repeat.set(12, 12);
+      showroom.add(new THREE.Mesh(new THREE.PlaneGeometry(40, 40).rotateX(-Math.PI / 2), standardMaterial({ map: floorTex, roughness: 0.3, metalness: 0.3, envMap: cur.env, envMapIntensity: 0.8 })));
+      const table = new THREE.Mesh(new THREE.CylinderGeometry(3.4, 3.4, 0.06, 32), standardMaterial({ color: '#1a1826', metalness: 0.6, roughness: 0.35, envMap: cur.env }));
+      table.position.y = 0.03;
+      showroom.add(table);
+      const tableRing = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.03, 4, 48).rotateX(Math.PI / 2), glowMaterial({ color: PALETTE.pink, intensity: 2 }));
+      tableRing.position.y = 0.06;
+      showroom.add(tableRing);
+      const stand = new THREE.Group(); // y = 0 is the turntable top, as CarView.showcase() expects
+      stand.position.y = 0.06;
+      showroom.add(stand);
+
+      const sr = { types: {}, quality: 'race', damage: 0, paintColor: state.paint, lightColor: LIGHT_COLORS[0], spin: false, car: null };
+      const typesOf = (slot) => Object.keys(PART_TYPES[slot]);
+      const typeName = (slot, t) => PART_TYPES[slot][t].name || t;
+      const labRng = makeRng(77);
+      function randomize(fillChance) {
+        for (const slot of SLOTS) {
+          const req = REQUIRED_SLOTS.includes(slot) || slot === 'paint' || slot === 'lights';
+          sr.types[slot] = req || labRng() < fillChance ? typesOf(slot)[Math.floor(labRng() * typesOf(slot).length)] : null;
+        }
+      }
+      randomize(1);
+
+      // Proposed textures on the real models, picked by each material's tag (kind
+      // and quality, set in carView.js). Colour is baked into the texture.
+      function texturize(car) {
+        const seen = new Set();
+        const stage = car.stage ?? 0;
+        car.group.traverse((o) => {
+          if (!o.isMesh) return;
+          for (const mt of Array.isArray(o.material) ? o.material : [o.material]) {
+            if (seen.has(mt)) continue;
+            seen.add(mt);
+            const { kind, quality, slot } = mt.userData;
+            const base = (mt.userData.base ??= `#${mt.color.getHexString()}`);
+            let map = null;
+            if (mt === car.tailMat) {
+              mt.map = tailTex();
+              if (stage < 4) mt.color.set('#ffffff').multiplyScalar(1.5);
+            } else if (!kind && car.headlights.some((h) => h.material === mt)) mt.map = headTex();
+            else if (kind === 'paint') map = liveryTex(quality, base, stage, stage ? car.damageMarks : null);
+            else if (kind === 'part') map = partTex(quality, slot, base);
+            else if (kind === 'trim') map = trimTex(quality, base);
+            else if (kind === 'steel') map = steelTex(quality, base);
+            else if (kind === 'glass') map = glassTex(stage >= 3 ? 2 : stage >= 1 || quality === 'junk' || state.glass === 'cracked' ? 1 : 0);
+            else if (kind === 'tire') map = tyreTex(quality);
+            else if (kind === 'plate') map = plateTex(quality);
+            else if (kind === 'decal') map = mt.userData.decal === 'hazard' ? hazardTex(quality) : mt.userData.decal === 'stencil' ? stencilTex(quality) : labelTex(mt.userData.text, quality);
+            if (map) {
+              mt.map = map;
+              mt.color.set(stage >= 4 && kind !== 'paint' ? '#5a4c46' : '#ffffff'); // wrecks: sooted parts, charred livery
+            }
+            mt.needsUpdate = true;
+          }
+        });
+      }
+      // Damage stages by HP, as in CarView.damageState; each is shown just under its threshold.
+      const DAMAGE_STAGES = ['Pristine', 'Scuffed (75% HP)', 'Battered (50% HP)', 'Critical (25% HP)', 'Wrecked'];
+      const DAMAGE_HP = [1, 0.7, 0.45, 0.2, 0];
+      function applyDamage(car) {
+        if (sr.damage) car.damageState({ hp: DAMAGE_HP[sr.damage] * 100, maxHp: 100, wrecked: sr.damage === 4, condition: {} });
+      }
+      const qualityFor = (slot) => (sr.quality === 'mixed' ? Q[SLOTS.indexOf(slot) % Q.length] : sr.quality);
+
+      function buildShowroom(focusSlot) {
+        const parts = {};
+        for (const slot of SLOTS) {
+          const type = sr.types[slot];
+          if (!type) {
+            parts[slot] = null;
+            continue;
+          }
+          const part = makePart(makeRng(slot.length * 131 + type.length), slot, type, qualityFor(slot));
+          if (slot === 'paint') part.color = sr.paintColor;
+          if (slot === 'lights') part.color = sr.lightColor;
+          parts[slot] = part;
+        }
+        const build = { parts };
+        const computed = computeBuild(build);
+        const msgs = [...(computed.errors || [])];
+        for (const slot of SLOTS) {
+          const part = parts[slot];
+          const sel = document.querySelector(`[data-slot="${slot}"]`);
+          const fit = part && slot !== 'chassis' ? canFit(build, part) : { ok: true };
+          if (sel) sel.classList.toggle('bad', !fit.ok);
+          if (!fit.ok) msgs.push(`${SLOT_NAMES[slot]}: ${fit.reason}`);
+        }
+        document.getElementById('sr-msg').textContent = msgs.length ? `Would not fit in-game (shown anyway): ${msgs.join(' · ')}` : '';
+        if (!computed.params) return;
+        if (sr.car) sr.car.removeFrom(stand);
+        sr.car = new CarView(build, computed, cur);
+        sr.car.showcase();
+        applyDamage(sr.car);
+        stand.add(sr.car.group, sr.car.shadow);
+        if (state.set === 'proposed') texturize(sr.car);
+        // The street scene drives the same car.
+        if (sr.street) sr.street.removeFrom(scene);
+        sr.street = new CarView(build, computed, cur);
+        sr.street.showcase();
+        applyDamage(sr.street);
+        scene.add(sr.street.group, sr.street.shadow);
+        if (state.set === 'proposed') texturize(sr.street);
+        if (focusSlot) focus(focusSlot);
+      }
+      function focus(slot) {
+        const f = sr.car?.slotFocus(slot);
+        if (!f) return Object.assign(cam, CAMS.showroom, { target: [...CAMS.showroom.target] });
+        stand.updateMatrixWorld(true);
+        const c = sr.car.group.localToWorld(f.center.clone());
+        cam.target = [c.x, c.y, c.z];
+        cam.dist = Math.max(2.2, f.radius * 5);
+      }
+
+      const grid = document.getElementById('sr-grid');
+      function renderShowroomUI() {
+        const opt = (v, label, sel) => `<option value="${v}"${sel ? ' selected' : ''}>${label}</option>`;
+        const rows = [
+          `<div class="sr-row"><label>Damage</label><select id="sr-damage">${DAMAGE_STAGES.map((l, i) => opt(i, l, i === sr.damage)).join('')}</select></div>`,
+          `<div class="sr-row"><label>Quality</label><select id="sr-quality">${QUALITIES.map((q) => opt(q.id, q.name || q.id, q.id === sr.quality)).join('')}${opt('mixed', 'Mixed (all six)', sr.quality === 'mixed')}</select></div>`,
+          `<div class="sr-row"><label>Paint colour</label><select id="sr-paint">${[...new Set([sr.paintColor, ...PAINT_COLORS])].map((c) => opt(c, c, c === sr.paintColor)).join('')}</select></div>`,
+          `<div class="sr-row"><label>Light colour</label><select id="sr-light">${LIGHT_COLORS.map((c) => opt(c, c, c === sr.lightColor)).join('')}</select></div>`,
+        ];
+        for (const slot of SLOTS) {
+          const req = REQUIRED_SLOTS.includes(slot);
+          const opts = (req ? '' : opt('', '— none —', !sr.types[slot])) + typesOf(slot).map((t) => opt(t, typeName(slot, t), sr.types[slot] === t)).join('');
+          rows.push(`<div class="sr-row"><label>${SLOT_NAMES[slot] || slot}</label><select data-slot="${slot}">${opts}</select></div>`);
+        }
+        grid.innerHTML = rows.join('');
+        grid.querySelectorAll('[data-slot]').forEach((sel) =>
+          sel.addEventListener('change', () => {
+            sr.types[sel.dataset.slot] = sel.value || null;
+            buildShowroom(sel.dataset.slot);
+          }),
+        );
+        document.getElementById('sr-quality').addEventListener('change', (e) => ((sr.quality = e.target.value), buildShowroom()));
+        document.getElementById('sr-damage').addEventListener('change', (e) => ((sr.damage = +e.target.value), buildShowroom()));
+        document.getElementById('sr-paint').addEventListener('change', (e) => {
+          sr.paintColor = state.paint = e.target.value;
+          buildShowroom();
+          renderGallery();
+        });
+        document.getElementById('sr-light').addEventListener('change', (e) => ((sr.lightColor = e.target.value), buildShowroom()));
+      }
+      const reshuffle = (fill) => {
+        randomize(fill);
+        renderShowroomUI();
+        buildShowroom('chassis');
+      };
+      document.getElementById('sr-random').addEventListener('click', () => reshuffle(0.7));
+      document.getElementById('sr-all').addEventListener('click', () => {
+        for (const slot of SLOTS) sr.types[slot] ||= typesOf(slot)[0];
+        renderShowroomUI();
+        buildShowroom('chassis');
+      });
+      document.getElementById('sr-strip').addEventListener('click', () => reshuffle(0));
+      document.getElementById('sr-whole').addEventListener('click', () => focus('chassis'));
+      document.getElementById('sr-spin').addEventListener('click', (e) => {
+        sr.spin = !sr.spin;
+        e.target.classList.toggle('on', sr.spin);
+      });
+
       let flip = null;
+      let last = performance.now();
       function frame() {
+        const now = performance.now();
+        const dt = (now - last) / 1000;
+        last = now;
+        if (sr.spin) stand.rotation.y += dt * 0.4;
+        sr.car?.tick(now / 1000);
+        sr.street?.tick(now / 1000);
         placeCamera();
         composer.render();
         requestAnimationFrame(frame);
@@ -1469,6 +2577,15 @@
         } else flip = setInterval(() => setSet(state.set === 'current' ? 'proposed' : 'current'), 1500);
         e.target.classList.toggle('on', !!flip);
       });
+      group('scene', (v) => {
+        const room = v === 'showroom';
+        renderPass.scene = room ? showroom : scene;
+        document.getElementById('showroom').hidden = !room;
+        state.cam = room ? 'showroom' : 'chase';
+        Object.assign(cam, CAMS[state.cam], { target: [...CAMS[state.cam].target] });
+        if (room && !grid.childElementCount) renderShowroomUI();
+        if (room) buildShowroom(false);
+      });
       group('finish', (v) => ((state.finish = v), apply()));
       group('glass', (v) => ((state.glass = v), apply()));
       group('barrier', (v) => ((state.barrier = v), apply()));
@@ -1485,8 +2602,9 @@
         b.style.background = c;
         b.setAttribute('aria-label', c);
         b.addEventListener('click', () => {
-          state.paint = c;
+          state.paint = sr.paintColor = c;
           paintBox.querySelectorAll('.swatch').forEach((o) => o.classList.toggle('on', o === b));
+          if (grid.childElementCount) renderShowroomUI();
           apply();
         });
         paintBox.appendChild(b);
@@ -1497,7 +2615,7 @@
         { name: 'Road', key: 'road', cur: cur.road, use: 'Track surface. Same lane layout; adds wheel paths, patches, manhole, oil and puddles.', tile: true },
         { name: 'Road roughness', key: 'roadRough', use: 'New. Dark = glossy. Puddles near mirror, wheel paths semi-gloss, dry asphalt matte.', tile: true },
         { name: 'Barrier: chevron', key: 'wallChevron', cur: cur.wall, use: 'Track walls. Bolted rail, grime from the road, scrape marks, rust drips.', tile: true },
-        { name: 'Barrier: concrete', key: 'wallConcrete', cur: cur.wall, use: 'Alternative wall (concept 2): cast segments, rain streaks, reflector strip, graffiti.', tile: true },
+        { name: 'Barrier: concrete', key: 'wallConcrete', cur: cur.wall, use: 'Alternative wall (concept 2): cast segments, rain streaks, reflector strip.', tile: true },
         { name: 'Armour plate', key: 'armor', use: 'New. Car body, bumpers, weapons. Greyscale, multiplies the paint colour.', tile: true, tint: true },
         { name: 'Rust (junk parts)', key: 'rust', use: 'New. Junk-quality bodywork: the same plates with rust and flaking paint.', tile: true, tint: true },
         { name: 'Glass', key: 'glass', use: 'New. Windows with reflection streaks.' },
@@ -1517,8 +2635,40 @@
         { name: 'Highway signs', key: 'highway', use: 'New (concept 2). Weathered green panels for gantries.' },
         { name: 'Direction arrows', key: 'arrows', use: 'New (concept 1). LED chevrons for overhead gantries.' },
       ];
+      // One card per quality: livery (in the selected paint), part sheets per kind,
+      // trim, steel, tyre and plate.
+      for (const q of Q)
+        SHEETS.push({
+          name: `Quality: ${QUALITIES[Q.indexOf(q)].name || q}`,
+          use: 'Livery (flanks on top, plan view below), part materials by kind, trim, steel, tyre, plate, glass, and the markings the models carry.',
+          wide: true,
+          figs: () => [
+            ['Livery', liveryTex(q, state.paint)],
+            ['Weapon', partTex(q, 'primaryWeapon', '#4a4a54')],
+            ['Engine', partTex(q, 'engine', '#3a3a44')],
+            ['Armour', partTex(q, 'armor', '#5a5a60')],
+            ['Exhaust', partTex(q, 'exhaust', '#9a9aa8')],
+            ['Fuel tank', partTex(q, 'fuelTank', '#8a2020')],
+            ['Wheel', partTex(q, 'wheels', '#8a88a0')],
+            ['Spoiler', partTex(q, 'spoiler', '#1c1b22')],
+            ['Trim', trimTex(q, '#16151c')],
+            ['Steel', steelTex(q, '#6a6878')],
+            ['Tyre', tyreTex(q)],
+            ['Plate', plateTex(q)],
+            ['Glass', glassTex(q === 'junk' ? 1 : 0)],
+            ['Hazard', hazardTex(q)],
+            ['Stencil', stencilTex(q)],
+            ['Label', labelTex('FUEL', q)],
+          ],
+        });
+      SHEETS.push({
+        name: 'Damage stages',
+        use: 'Livery damage by HP (on Stock, in the selected paint), then glass: clean, cracked, shattered. Wrecks also lose their glass; the shell crumples in the showroom.',
+        wide: true,
+        figs: () => [...DAMAGE_STAGES.map((label, i) => [label, liveryTex('stock', state.paint, i)]), ['Glass', glassTex(0)], ['Cracked', glassTex(1)], ['Shattered', glassTex(2)]],
+      });
       const view = { zoom: 3, tile: 1 };
-      function sheetCanvas(tex, tint) {
+      function sheetCanvas(tex, tint, zoom) {
         const src = tex.image;
         const t = view.tile;
         const c = document.createElement('canvas');
@@ -1532,7 +2682,7 @@
           x.fillRect(0, 0, c.width, c.height);
         }
         // Sheets are scaled toward a common size: small ones up, big ones down.
-        const z = Math.max(1, Math.round(view.zoom * Math.min(4, 64 / Math.max(src.width, src.height / 2))));
+        const z = zoom ?? Math.max(1, Math.round(view.zoom * Math.min(4, 64 / Math.max(src.width, src.height / 2))));
         c.style.width = `${c.width * z}px`;
         return c;
       }
@@ -1540,24 +2690,28 @@
         const root = document.getElementById('gallery');
         root.innerHTML = '';
         for (const s of SHEETS) {
-          const tex = P[s.key];
+          const figs = s.figs?.();
+          const tex = figs ? figs[0][1] : P[s.key];
           const card = document.createElement('div');
-          card.className = 'card';
+          card.className = s.wide ? 'card wide' : 'card';
           card.innerHTML = `<h3>${s.name}</h3><p>${s.use}</p><div class="meta">${tex.image.width} x ${tex.image.height} px${s.tint ? ' · shown multiplied by the selected paint' : ''}</div>`;
           const pair = document.createElement('div');
           pair.className = 'pair';
-          const fig = (label, texture, isNew, tint) => {
+          const fig = (label, texture, isNew, tint, z) => {
             const f = document.createElement('figure');
-            f.appendChild(sheetCanvas(texture, tint));
+            f.appendChild(sheetCanvas(texture, tint, z));
             const cap = document.createElement('figcaption');
             cap.textContent = label;
             if (isNew) cap.className = 'new';
             f.appendChild(cap);
             pair.appendChild(f);
           };
-          if (s.cur) fig('Current', s.cur, false, false);
-          fig('Proposed', tex, true, s.tint);
-          if (s.tint) fig('Raw', tex, true, false);
+          if (figs) figs.forEach(([label, t]) => fig(label, t, true, false, Math.max(1, view.zoom - (t.image.width > 100 ? 2 : 1))));
+          else {
+            if (s.cur) fig('Current', s.cur, false, false);
+            fig('Proposed', tex, true, s.tint);
+            if (s.tint) fig('Raw', tex, true, false);
+          }
           card.appendChild(pair);
           root.appendChild(card);
         }
@@ -1566,9 +2720,15 @@
       group('tile', (v) => ((view.tile = +v), renderGallery()));
       paintBox.addEventListener('click', renderGallery);
 
-      // Deep links, e.g. texture-lab.html?set=current&cam=side&glass=cracked
+      // Deep links, e.g. texture-lab.html?set=current&cam=side&glass=cracked, or
+      // ?scene=showroom&chassis=buggy&primaryWeapon=railgun&damage=2
       for (const [k, v] of new URLSearchParams(location.search)) {
         document.querySelector(`[data-${k}="${CSS.escape(v)}"]`)?.click();
+        const sel = document.getElementById(`sr-${k}`) || document.querySelector(`[data-slot="${k}"]`);
+        if (sel) {
+          sel.value = v;
+          sel.dispatchEvent(new Event('change'));
+        }
       }
       setRes(360);
       apply();

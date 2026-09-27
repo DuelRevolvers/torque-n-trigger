@@ -34,6 +34,7 @@ export function buildTrack(def) {
       track: buildTrack({ ...b, closed: false, halfWidth: b.halfWidth ?? 6, curbWidth: 0.8, shoulderWidth: 2, spacing }),
       s0: b.s0,
       s1: b.s1,
+      kind: b.kind || 'street',
     }));
   }
   return track;

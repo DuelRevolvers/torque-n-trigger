@@ -274,7 +274,7 @@ function fireWeapon(world, i, slot, pressed, dt) {
     applyDamage(world, target, damage, t.pos, i);
     world.events.push({ type: 'arc', car: i, from: origin, to: { ...t.pos } });
   } else if (beh.mode === 'mine') {
-    const g = world.track.query(origin.x, origin.z, car.trackIndex);
+    const g = world.track.query(origin.x, origin.z, car.trackIndex, origin.y);
     state.mines.push({ id: state.nextId++, owner: i, pos: v3(origin.x, g.height + 0.1, origin.z), arm: 0.8, life: 45, damage });
   }
 }
@@ -328,7 +328,7 @@ function updateProjectiles(world, dt) {
     }
     pr.pos = add(pr.pos, step);
     pr.life -= dt;
-    const g = track.query(pr.pos.x, pr.pos.z);
+    const g = track.query(pr.pos.x, pr.pos.z, -1, pr.pos.y);
     if (pr.pos.y < g.height || Math.abs(g.lateral) > track.wallDist) {
       if (pr.splash) explode(world, pr.pos, pr.splash, pr.damage, pr.owner);
       else world.events.push({ type: 'spark', pos: pr.pos });

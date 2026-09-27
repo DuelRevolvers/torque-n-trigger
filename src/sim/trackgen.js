@@ -10,7 +10,7 @@ const WIDTHS = { halfWidth: 8, curbWidth: 1.2, shoulderWidth: 4 };
 
 // Minimum clearance between parts of the road that aren't neighbours, and the
 // tightest corner radius the walls can take without folding.
-function valid(track, { minLen, maxLen }) {
+export function valid(track, { minLen, maxLen }) {
   if (track.length < minLen || track.length > maxLen) return false;
   const n = track.count;
   const clear = (2 * track.wallDist + 8) ** 2;
@@ -40,7 +40,7 @@ function curvatureAt(track, i) {
 }
 
 // Jump kickers on straight, level-ish stretches, spaced apart.
-function placeJumps(track, rng, count, avoid = []) {
+export function placeJumps(track, rng, count, avoid = []) {
   const jumps = [];
   const L = track.length;
   for (let s = 140; s < L - 160 && jumps.length < count; s += 20) {
@@ -202,11 +202,13 @@ export function pickupSpots(track, seed) {
   const spots = [];
   if (track.isArena) {
     for (let tries = 0; spots.length < 8 && tries < 200; tries++) {
-      const x = (rng() - 0.5) * (track.def.size - 20);
-      const z = (rng() - 0.5) * (track.def.size - 20);
+      const x = track.cx + (rng() - 0.5) * (track.halfX * 2 - 20);
+      const z = track.cz + (rng() - 0.5) * (track.halfZ * 2 - 20);
       const g = track.query(x, z);
       if (Math.abs(g.lateral) - track.wallDist < -4 && !track.hazardAt(x, z)) spots.push({ type: types[spots.length % types.length], x, y: g.height + 0.8, z });
     }
+    // Rewards for climbing: pickups on top of the raised decks.
+    track.def.platforms.forEach((p, k) => spots.push({ type: k % 2 ? 'ammo' : 'health', x: track.cx + p.x, y: track.y0 + p.h + 0.8, z: track.cz + p.z }));
     return spots;
   }
   const L = track.closed ? track.length : track.length - 40;

@@ -34,6 +34,7 @@ export function createWorld({ track, cars, respawnOnWreck = true, poses = null, 
 // Advances the world one tick. `inputs[i]` is the InputFrame for car i.
 export function stepWorld(world, inputs) {
   const { track, params, state } = world;
+  track.setTime?.(state.tick * SIM_DT); // moving arena parts follow the tick
   const effective = state.cars.map((c, i) => {
     if (c.wrecked) return NEUTRAL;
     const raw = inputs[i] || NEUTRAL;

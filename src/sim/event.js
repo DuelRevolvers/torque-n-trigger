@@ -22,7 +22,7 @@ export function createEventState(def, track) {
     mode: def.mode || null,
     laps: def.laps || 0,
     timeLimit: def.timeLimit || 0,
-    pit: def.pit || null,
+    pit: def.pit ? resolvePit(def.pit, track) : null,
     finishS: def.finishS ?? (track.isArena ? 0 : track.length - 25),
     weapons: def.type === 'drag' ? 'rear' : 'all',
     manualShift: def.type === 'drag',
@@ -52,6 +52,12 @@ export function initEventCar(car, ev) {
   if (ev.modifiers.includes('oneHit')) car.maxHp = car.hp = 1;
 }
 
+// Pit zone positions may be given from the end of the lap (negative s).
+export function resolvePit(pit, track) {
+  const at = (s) => (s < 0 ? track.length + s : s);
+  return { ...pit, s0: at(pit.s0), s1: at(pit.s1) };
+}
+
 // Grid positions per event type.
 export function gridPoses(track, def, count) {
   if (track.isArena) return Array.from({ length: count }, (_, i) => track.spawnPose(i));
@@ -76,7 +82,7 @@ export function eventInput(world, i, raw) {
   const ev = world.state.event;
   const car = world.state.cars[i];
   if (ev.phase === 'countdown') {
-    if (ev.timer < 0.5 && raw.throttle > 0.5) car.launch.jumped = true;
+    if (ev.timer < 1 && raw.throttle > 0.5) car.launch.jumped = true; // false-start window: last second
     return HOLD;
   }
   if (car.lockTime > 0) return HOLD;
@@ -160,7 +166,7 @@ export function updateEvent(world, dt) {
     }
 
     // Arena floor hazards.
-    const hazard = track.hazardAt?.(car.pos.x, car.pos.z);
+    const hazard = track.hazardAt?.(car.pos.x, car.pos.z, car.pos.y);
     if (hazard) {
       applyDamage(world, i, hazard.dps * dt, car.pos, -1, true);
       if (state.tick % 6 === 0) world.events.push({ type: 'spark', pos: { ...car.pos } });

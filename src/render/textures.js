@@ -34,7 +34,7 @@ export function makeRng(seed = 1) {
   };
 }
 
-function canvasTexture(w, h, draw, { repeat = true, filter = THREE.NearestFilter } = {}) {
+export function canvasTexture(w, h, draw, { repeat = true, filter = THREE.NearestFilter } = {}) {
   const canvas = document.createElement('canvas');
   canvas.width = w;
   canvas.height = h;
@@ -49,7 +49,7 @@ function canvasTexture(w, h, draw, { repeat = true, filter = THREE.NearestFilter
   return tex;
 }
 
-function speckle(ctx, w, h, rng, colors, density) {
+export function speckle(ctx, w, h, rng, colors, density) {
   for (let i = 0; i < w * h * density; i++) {
     ctx.fillStyle = colors[Math.floor(rng() * colors.length)];
     ctx.fillRect(Math.floor(rng() * w), Math.floor(rng() * h), 1, 1);
@@ -66,15 +66,12 @@ export function createTextures() {
     ctx.fillStyle = PALETTE.asphalt;
     ctx.fillRect(0, 0, w, h);
     speckle(ctx, w, h, rng, ['#1e1c28', '#121118', '#24222e', '#1a1a26'], 0.5);
-    // Puddles: darker, slightly blue patches that the gloss makes read as wet.
-    for (let i = 0; i < 9; i++) {
-      const cx = rng() * w;
-      const cy = rng() * h;
-      const rx = 6 + rng() * 16;
-      const ry = 10 + rng() * 30;
-      ctx.fillStyle = rng() < 0.5 ? '#0e0e17' : '#131729';
+    // Wet patches are separate decals (see trackView buildPuddles) so they don't
+    // repeat with the texture; here only faint, small oil stains.
+    for (let i = 0; i < 5; i++) {
+      ctx.fillStyle = 'rgba(8,8,14,0.35)';
       ctx.beginPath();
-      ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+      ctx.ellipse(rng() * w, rng() * h, 2 + rng() * 5, 3 + rng() * 8, rng() * 3, 0, Math.PI * 2);
       ctx.fill();
     }
     // Cracks.

@@ -3,7 +3,8 @@ import { buildTrack } from '../sim/track.js';
 import { buildArena } from '../sim/arena.js';
 import { getVenue } from '../sim/tracks/venues.js';
 import { createWorld, stepWorld } from '../sim/world.js';
-import { createEventState, gridPoses, standings } from '../sim/event.js';
+import { createEventState, gridPoses, standings, resolvePit } from '../sim/event.js';
+import { districtMap } from '../sim/city.js';
 import { InputQueue, neutralInput } from '../sim/input.js';
 import { initAi, aiInput } from '../sim/ai.js';
 import { WEAPON_BEHAVIOR } from '../sim/combat.js';
@@ -18,6 +19,7 @@ import { PALETTE } from '../render/textures.js';
 import { buildTrackView } from '../render/trackView.js';
 import { buildCityView } from '../render/cityView.js';
 import { buildArenaView } from '../render/arenaView.js';
+import { buildDistrictView } from '../render/districtView.js';
 import { additiveMaterial } from '../render/retroMaterial.js';
 import { CarView } from '../render/carView.js';
 import { CameraRig } from '../render/cameraRig.js';
@@ -57,6 +59,7 @@ export class RaceScreen {
     this.speedLines = new SpeedLines(this.camera);
     this.speedFx = 0;
     this.venues = new Map();
+    this.envs = new Map(); // district environments, shared by that district's events
     this.poses = [];
     this._qa = new THREE.Quaternion();
     this._qb = new THREE.Quaternion();
@@ -75,24 +78,46 @@ export class RaceScreen {
       old.group.traverse((o) => o.geometry?.dispose());
       this.venues.delete(oldKey);
     }
-    const v = getVenue(id);
+    const v = getVenue(id, def);
     const tex = this.app.tex;
     let track;
+    let animate = null;
     const group = new THREE.Group();
     if (v.kind === 'arena') {
       track = buildArena(v.def);
-      group.add(buildArenaView(track, tex));
+      const view = buildArenaView(track, tex, { outdoor: !!def.city, look: def.city?.look });
+      animate = view.userData.animate;
+      group.add(view);
     } else {
       track = buildTrack(v.def);
       if (def.finishS) track.finishS = def.finishS;
-      group.add(buildTrackView(track, tex), buildCityView(track, tex));
-      if (def.pit) group.add(pitZoneMesh(track, def.pit, tex));
+      if (def.city) {
+        group.add(buildTrackView(track, tex, { city: true, sidewalk: tex.sidewalk, barrierColor: def.city.look.barrier }));
+      } else {
+        group.add(buildTrackView(track, tex), buildCityView(track, tex));
+      }
+      if (def.pit) group.add(pitZoneMesh(track, resolvePit(def.pit, track), tex));
     }
     group.visible = false;
     this.scene.add(group);
-    const entry = { track, group, outdoor: v.kind !== 'arena' };
+    const entry = { track, group, outdoor: v.kind !== 'arena' || !!def.city, animate };
     this.venues.set(key, entry);
     return entry;
+  }
+
+  // The whole district around the route (built once per district, last two kept).
+  env(style) {
+    if (this.envs.has(style.id)) return this.envs.get(style.id);
+    if (this.envs.size >= 2) {
+      const [oldKey, old] = this.envs.entries().next().value;
+      this.scene.remove(old);
+      old.traverse((o) => o.geometry?.dispose());
+      this.envs.delete(oldKey);
+    }
+    const group = buildDistrictView(districtMap(style), this.app.tex);
+    this.scene.add(group);
+    this.envs.set(style.id, group);
+    return group;
   }
 
   enter({ build, car, event }) {
@@ -105,7 +130,10 @@ export class RaceScreen {
     }
     for (const v of this.venues.values()) v.group.visible = false;
     const venue = this.venue(this.def);
+    this.venueEntry = venue;
     venue.group.visible = true;
+    for (const env of this.envs.values()) env.visible = false;
+    if (this.def.city) this.env(this.def.city).visible = true;
     this.track = venue.track;
     this.outdoor = venue.outdoor;
     // District look and event modifiers.
@@ -319,6 +347,7 @@ export class RaceScreen {
     this.popups = this.popups.filter((p) => p.age < 1.8);
 
     state.cars.forEach((car, i) => this.views[i].update(this.pose(i, paused ? 1 : alpha), car, this.track, this.time));
+    this.venueEntry.animate?.((state.tick + (paused ? 0 : alpha)) * SIM_DT);
     this.fx.handleEvents(events, this.world, this.views);
     this.fx.update(paused ? 0 : dt, this.world, this.views);
 
