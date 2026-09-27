@@ -85,9 +85,11 @@ export class RaceScreen {
     const group = new THREE.Group();
     if (v.kind === 'arena') {
       track = buildArena(v.def);
-      const view = buildArenaView(track, tex, { outdoor: !!def.city, look: def.city?.look });
-      animate = view.userData.animate;
-      group.add(view);
+      if (!v.def.roam) {
+        const view = buildArenaView(track, tex, { outdoor: !!def.city, look: def.city?.look });
+        animate = view.userData.animate;
+        group.add(view);
+      }
     } else {
       track = buildTrack(v.def);
       if (def.finishS) track.finishS = def.finishS;
@@ -288,11 +290,11 @@ export class RaceScreen {
       arena: ev.mode === 'lastStanding' ? 'LAST STANDING' : 'BRAWL',
     }[ev.type];
     let sub = '';
-    if (ev.type === 'free') sub = `BEST ${formatTime(car.race.bestLap)}`;
+    if (ev.type === 'free') sub = 'FREE ROAM';
     if (ev.type === 'arena') {
       const left = Math.max(0, ev.timeLimit - ev.time);
       sub = ev.mode === 'lastStanding' ? `ALIVE ${alive}` : `LEFT ${formatTime(left * 60).slice(0, -3)}`;
-    } else if (ev.type !== 'circuit') {
+    } else if (ev.type !== 'circuit' && ev.type !== 'free') {
       sub = `${Math.min(100, Math.round((car.trackS / ev.finishS) * 100))}% DONE`;
     }
     const place = ev.finished.indexOf(0) + 1;
@@ -424,6 +426,8 @@ export class RaceScreen {
       career.cash = (career.cash || 0) + rewards.total;
       career.inventory.push(...salvage);
       career.eventsRun = (career.eventsRun || 0) + 1;
+      career.completed ??= [];
+      if (this.def.career && place > 0 && place <= 3 && !career.completed.includes(this.def.id)) career.completed.push(this.def.id);
       saveCareer(career);
     }
     const fee = this.def.entryFee || 0;

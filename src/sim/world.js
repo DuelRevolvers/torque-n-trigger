@@ -99,6 +99,10 @@ export function respawnCar(world, id, { back = 0, index = null } = {}) {
   const { track } = world;
   const car = world.state.cars[id];
   const params = world.params[id];
+  if (track.def?.roadPoints) {
+    placeCar(car, params, track.roadPose(car.pos));
+    return;
+  }
   if (track.spawnPose) {
     // Arenas: the spawn point furthest from every other car.
     let best = 0;

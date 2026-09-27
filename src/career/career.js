@@ -14,6 +14,7 @@ export function loadCareer() {
     data.district ??= 0; // saves from before M6
     data.bosses ??= [];
     data.eventsRun ??= 0;
+    data.completed ??= [];
     data.bought ??= {};
     return data;
   } catch {
@@ -45,6 +46,7 @@ export function newCareer(starter, seed) {
     district: 0, // highest unlocked district index
     bosses: [], // district ids whose boss is beaten
     eventsRun: 0, // refreshes shop stock
+    completed: [], // event ids finished on the podium (opens bosses)
     bought: {},
     cars: [{ id: 'car-1', name: starter.name, archetype: starter.archetype, build: starter.build }],
     activeCar: 'car-1',

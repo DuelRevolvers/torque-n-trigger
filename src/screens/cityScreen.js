@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DISTRICTS, HOME_EVENTS, MODIFIER_LABELS, districtEvents, districtUnlocked } from '../career/districts.js';
+import { DISTRICTS, HOME_EVENTS, MODIFIER_LABELS, districtEvents, districtUnlocked, bossProgress } from '../career/districts.js';
 import { SHOP_KINDS, shopStock, buyPrice, sellPrice, buyPart, sellPart } from '../career/shop.js';
 import { saveCareer, activeCar } from '../career/career.js';
 import { computeBuild, resolvePart } from '../parts/build.js';
@@ -114,6 +114,7 @@ export class CityScreen {
     const { career } = this.app;
     const cleared = e.boss && career.bosses.includes(e.district);
     const canPay = (e.entryFee || 0) <= career.cash;
+    const gate = e.boss ? bossProgress(career, DISTRICTS.find((d) => d.id === e.district)) : { open: true };
     const badges = [
       e.boss ? '<span class="badge boss">BOSS</span>' : '',
       e.rival ? '<span class="badge rival">RIVAL</span>' : '',
@@ -127,14 +128,14 @@ export class CityScreen {
       e.purse ? `Purse <b>$${e.purse}</b>` : 'No prizes',
       `Entry ${e.entryFee ? `$${e.entryFee}` : 'free'}`,
     ].filter(Boolean).join(' &middot; ');
-    const disabled = !drivable || !canPay;
+    const disabled = !drivable || !canPay || !gate.open;
     return `<button class="event-card" data-event="${e.id}" ${disabled ? 'disabled' : ''}>
       <span>${n ? `<span class="num" style="background:${TYPE_COLOR[e.type]}">${n}</span>` : ''}<span class="tag">${TYPE_LABEL[e.type]}</span> ${badges}</span>
       <b>${esc(e.name)}</b>
       ${e.desc ? `<span class="event-desc">${esc(e.desc)}</span>` : ''}
       ${mods ? `<span class="mods">${mods}</span>` : ''}
       <span class="event-meta">${meta}</span>
-      ${!drivable ? '<span class="err">Your car is missing parts.</span>' : !canPay ? '<span class="err">Not enough cash for the entry fee.</span>' : ''}
+      ${!gate.open ? `<span class="err">Locked: podium ${gate.need - gate.done} more event${gate.need - gate.done > 1 ? 's' : ''} here to face the boss (${gate.done}/${gate.need}).</span>` : !drivable ? '<span class="err">Your car is missing parts.</span>' : !canPay ? '<span class="err">Not enough cash for the entry fee.</span>' : ''}
     </button>`;
   }
 
@@ -338,7 +339,7 @@ export class CityScreen {
             line([[cx - sizeX / 2, cz - sizeZ / 2], [cx + sizeX / 2, cz - sizeZ / 2], [cx + sizeX / 2, cz + sizeZ / 2], [cx - sizeX / 2, cz + sizeZ / 2]], true);
             ctx.stroke();
           }
-          pins.push([at(v.def.cx, v.def.cz), TYPE_COLOR.arena, k + 1]);
+          pins.push([at(v.def.cx, v.def.cz), TYPE_COLOR[e.type] || TYPE_COLOR.arena, k + 1]);
           return;
         }
         const pts = v.def.points.map(([x, , z]) => [x, z]);

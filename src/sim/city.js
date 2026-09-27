@@ -9,6 +9,7 @@
 import { makeRng } from '../parts/generate.js';
 import { buildTrack } from './track.js';
 import { valid, placeJumps } from './trackgen.js';
+import { yawFromDirection } from './math.js';
 
 export const STREET = { halfWidth: 8, curbWidth: 1.2, shoulderWidth: 4 };
 export const SETBACK = STREET.halfWidth + STREET.curbWidth + STREET.shoulderWidth; // centreline to lot edge
@@ -634,10 +635,50 @@ function cityArena(map, rng) {
   return { name: `${map.style.name} Arena`, sizeX: a.sizeX, sizeZ: a.sizeZ, cx: a.x, cz: a.z, y: a.y, spawns: 8, spawnRadius: ring, obstacles, ramps, hazards, platforms, lifts, sweepers };
 }
 
+// Free roam: the whole district as one open arena with no barriers. Streets,
+// lots and the arena lot are all drivable; building blocks (and the alley blocks
+// either side of their alley), the Spire lot and container yards are solid, and
+// the city beyond the edge walls it in.
+function cityRoam(map) {
+  const { bounds, heightAt, style } = map;
+  const solid = [];
+  const block = (x0, x1, z0, z1, h) => {
+    if (x1 - x0 < 1 || z1 - z0 < 1) return;
+    const x = (x0 + x1) / 2;
+    const z = (z0 + z1) / 2;
+    solid.push({ x, z, hw: (x1 - x0) / 2, hd: (z1 - z0) / 2, y: Math.min(heightAt(x0, z0), heightAt(x1, z1), heightAt(x, z)) - 2, h });
+  };
+  const corridorOf = new Map(map.corridors.map((c) => [c.cell, c.points]));
+  for (const c of map.cells) {
+    const [x0, x1, z0, z1] = [c.lot[0] + 3, c.lot[1] - 3, c.lot[2] + 3, c.lot[3] - 3];
+    if (c.kind === 'buildings') block(x0, x1, z0, z1, 400);
+    else if (c.kind === 'yard') block(x0 + 2, x1 - 2, z0 + 2, z1 - 2, 12);
+    else if (c.kind === 'alley') {
+      const [[ax, az], [bx]] = corridorOf.get(c);
+      const gap = 8;
+      if (ax !== bx) block(x0, x1, z0, az - gap, 400), block(x0, x1, az + gap, z1, 400);
+      else block(x0, ax - gap, z0, z1, 400), block(ax + gap, x1, z0, z1, 400);
+    }
+  }
+  const pad = SETBACK;
+  const cx = (bounds.minX + bounds.maxX) / 2;
+  const cz = (bounds.minZ + bounds.maxZ) / 2;
+  const start = map.nodes[map.nid(Math.floor(style.cols / 2) - 1, map.avenue)];
+  return {
+    name: style.name + ' Free Roam', roam: true, cx, cz, y: 0,
+    sizeX: bounds.maxX - bounds.minX + 2 * pad, sizeZ: bounds.maxZ - bounds.minZ + 2 * pad,
+    heightAt, minY: Math.min(...map.nodes.map((n) => n.y)) - 20,
+    roadPoints: map.nodes.filter((n) => map.adj[n.id].length).map((n) => [n.x, n.z]),
+    spawns: 1, spawnRadius: 0, spawnAt: { x: start.x, z: start.z, yaw: yawFromDirection(1, 0) },
+    obstacles: solid, ramps: [], hazards: [], platforms: [], lifts: [], sweepers: [],
+  };
+}
+
 // Builds the venue for one event route in a district.
-// route: { kind: 'circuit'|'sprint'|'drag'|'arena', seed, cells?, length?, jumps? }
+// route: { kind: 'circuit'|'sprint'|'drag'|'arena'|'roam', seed, cells?, length?, jumps? }
 export function cityVenue(style, route) {
   const map = districtMap(style);
+  if (route.kind === 'roam') return { kind: 'arena', def: cityRoam(map) };
   if (route.kind === 'arena') return { kind: 'arena', def: cityArena(map, makeRng(style.seed * 17 + 3)) };
   const name = `${style.name} ${route.kind}`;
   if (route.kind === 'drag') {

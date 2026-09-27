@@ -72,7 +72,7 @@ export const DISTRICTS = [
     id: 'undercity', name: 'The Undercity', tier: 3, faction: 'Low Road Crew', color: '#39ff14',
     blurb: 'Streets under the elevated city deck. Pillars, pipes and flooded asphalt. The lights go out down here.',
     theme: { haze: '#081a12', fog: 0.0058 },
-    map: [[66, 50], [96, 50], [96, 94], [62, 94]],
+    map: [[69, 50], [96, 50], [96, 94], [69, 94]],
     city: {
       id: 'undercity', name: 'Undercity', seed: 4404, cols: 10, rows: 8,
       spacingX: [85, 125], spacingZ: [80, 115], removeEdges: 0.14, elevation: 1.5, hillScale: 260, arenaMin: 150,
@@ -121,7 +121,7 @@ export const MODIFIER_LABELS = {
   blackout: 'Blackout: lights matter',
 };
 
-const routeKey = (r) => (r.kind === 'arena' || r.kind === 'drag' ? r.kind : `${r.kind}-${r.seed}`);
+const routeKey = (r) => (r.kind === 'arena' || r.kind === 'drag' || r.kind === 'roam' ? r.kind : `${r.kind}-${r.seed}`);
 const venueFor = (district, route) => `city:${district.id}:${routeKey(route)}`;
 
 // Full event definitions for a district (what RaceScreen runs).
@@ -148,8 +148,8 @@ const RUST = DISTRICTS[0];
 export const HOME_EVENTS = [
   {
     id: 'free-drive', type: 'free', name: 'Free Drive', cars: 1, purse: 0, entryFee: 0, district: 'rustline',
-    route: RUST.events[1].route, venue: venueFor(RUST, RUST.events[1].route), city: RUST.city,
-    desc: 'The Crane Yard loop to yourself. Lap times only.',
+    route: { kind: 'roam' }, venue: venueFor(RUST, { kind: 'roam' }), city: RUST.city,
+    desc: 'The whole of Rustline to yourself. No barriers, no clock.',
   },
   {
     id: 'back-alley', type: 'sprint', name: 'Back-alley Sprint', cars: 4, purse: 350, entryFee: 0, tier: 0, district: 'rustline',
@@ -159,3 +159,11 @@ export const HOME_EVENTS = [
 ];
 
 export const districtUnlocked = (career, i) => i <= (career.district || 0);
+
+// The boss opens once 75% of the district's other events are completed (a podium finish).
+export function bossProgress(career, district) {
+  const ids = district.events.map((e) => `${district.id}-${e.key}`);
+  const done = ids.filter((id) => career.completed?.includes(id)).length;
+  const need = Math.ceil(ids.length * 0.75);
+  return { done, need, open: done >= need };
+}

@@ -93,6 +93,7 @@
         <div class="group"><span>Barrier</span><button data-barrier="chevron" class="on">Chevron</button><button data-barrier="concrete">Concrete</button></div>
         <div class="group"><span>Lines</span><select id="res"><option value="270">270p</option><option value="360" selected>360p</option><option value="540">540p</option></select></div>
         <div class="group"><span>Camera</span><button data-cam="chase" class="on">Chase</button><button data-cam="side">Side</button><button data-cam="street">Street</button></div>
+        <div class="group"><span>Venue</span><select id="venue"></select></div>
       </div>
 
       <div id="showroom" class="showroom" hidden>
@@ -137,6 +138,16 @@
       import { SLOTS, SLOT_NAMES, REQUIRED_SLOTS, PART_TYPES, QUALITIES, PAINT_COLORS, LIGHT_COLORS } from '/src/parts/catalog.js';
       import { makePart } from '/src/parts/generate.js';
       import { computeBuild, canFit } from '/src/parts/build.js';
+      import { DISTRICTS, districtEvents, HOME_EVENTS } from '/src/career/districts.js';
+      import { getVenue } from '/src/sim/tracks/venues.js';
+      import { buildTrack } from '/src/sim/track.js';
+      import { buildArena } from '/src/sim/arena.js';
+      import { gridPoses } from '/src/sim/event.js';
+      import { districtMap } from '/src/sim/city.js';
+      import { buildTrackView } from '/src/render/trackView.js';
+      import { buildArenaView } from '/src/render/arenaView.js';
+      import { buildDistrictView } from '/src/render/districtView.js';
+      import { createCityTextures } from '/src/render/cityTextures.js';
 
       // ------------------------------------------------------------------------
       // Pixel helpers
@@ -1558,8 +1569,193 @@
         wheels: 'wheel', spoiler: 'aero',
       };
       const LINES = [16, 48];
+      // The earlier panel-style part tiles (framed panels with bolts, stickers,
+      // hazard bands, stencils, fins, labels), kept for weapons, engines and utility gear.
+      const TANK_LABEL = { fuelTank: 'FUEL', nitrous: 'NOS', utility: 'AUX' };
+      function partTexClassic(q, slot, baseHex) {
+        const kind = PART_KIND[slot] || 'plain';
+        return cached(`classic|${q}|${slot}|${baseHex}`, () =>
+          tiled(64, 64, (ctx) => {
+            const rng = makeRng(1500 + Q.indexOf(q) * 31 + kind.length);
+            const base = rgb(baseHex);
+            const p = new Pix(64, 64);
+            const { dot, rect, disc, text, bolt, scratch } = tilePainter(p);
+            const n = fbm(64, 64, rng, [32, 16, 8, 4]);
+            p.fill((x, y) => scale(base, 0.9 + n[y * 64 + x] * 0.18));
+            const light = mix(base, [255, 255, 255], 0.45);
+            const dark = scale(base, 0.45);
+            // Panel seams every half metre: dark gap, lit lip below and to the right.
+            const seams = (c1, c2) => {
+              for (let i = 0; i < 64; i++)
+                for (const s of [0, 32]) {
+                  p.set(i, s, c1);
+                  p.blend(i, s + 1, c2, 0.5);
+                  p.set(s, i, c1);
+                  p.blend(s + 1, i, c2, 0.5);
+                }
+            };
+            switch (q) {
+              case 'junk': {
+                // Rusted through: scabby rust, a welded-on patch, a hole, tape, scratches.
+                const rust = fbm(64, 64, rng, [16, 8, 4]);
+                for (let i = 0; i < 4096; i++) {
+                  const k = rust[i] + n[i] * 0.2;
+                  if (k > 0.7) p.set(i % 64, i >> 6, mix(rgb('#8a4a20'), rgb('#3a1a0c'), clamp((k - 0.7) * 3)));
+                  else if (k > 0.66) p.set(i % 64, i >> 6, rgb('#b06a30'));
+                }
+                const [px0, py0] = [Math.floor(rng() * 64), Math.floor(rng() * 64)];
+                rect(px0, py0, 18, 12, rgb('#6a6a70'));
+                for (let i = 0; i < 18; i++) for (const y of [py0, py0 + 11]) dot(px0 + i, y, (i + y) % 2 ? rgb('#c8c0a8') : rgb('#5a5040'));
+                for (let i = 0; i < 12; i++) for (const x of [px0, px0 + 17]) dot(x, py0 + i, (i + x) % 2 ? rgb('#c8c0a8') : rgb('#5a5040'));
+                const [hx, hy] = [Math.floor(rng() * 64), Math.floor(rng() * 64)];
+                rect(hx - 1, hy - 1, 5, 5, rgb('#6a3418'), 0.7);
+                rect(hx, hy, 3, 3, rgb('#080604'));
+                const [tx, ty] = [Math.floor(rng() * 64), Math.floor(rng() * 64)];
+                for (let k = 0; k < 20; k++) for (let t = 0; t < 3; t++) dot(tx + k, ty + t + (k >> 2), rgb(t === 1 ? '#b0b0ac' : '#8a8a86'));
+                for (let i = 0; i < 8; i++) scratch(rng, 6 + rng() * 10, rgb('#d8d0c0'));
+                break;
+              }
+              case 'stock':
+                // Factory stamping: panel seams, a part-number plate, a film of dust.
+                seams(dark, light);
+                rect(4, 42, 14, 6, rgb('#d8d4c8'));
+                for (let x = 5; x < 17; x += 2) dot(x, 45, rgb('#3a3830'));
+                for (let i = 0; i < 200; i++) dot(rng() * 64, 64 - Math.abs(rng() - rng()) * 20, rgb('#b0a890'), 0.3);
+                break;
+              case 'street':
+                // Clean paint and flake, seams with hex bolts at the corners, a sticker.
+                for (let i = 0; i < 120; i++) dot(rng() * 64, rng() * 64, mix(base, [255, 255, 255], 0.5), 0.6);
+                seams(scale(base, 0.5), light);
+                for (const [cx, cy] of [[0, 0], [32, 0], [0, 32], [32, 32]]) for (const [ox, oy] of [[3, 3], [-4, 3], [3, -4], [-4, -4]]) bolt(cx + ox, cy + oy);
+                rect(40, 44, 9, 6, rgb(PALETTE.cyan));
+                rect(41, 45, 7, 1, [255, 255, 255]);
+                break;
+              case 'sport': {
+                // Drilled for lightness in staggered rows, anodised red seams, bolts.
+                const ano = rgb('#d02030');
+                seams(ano, scale(ano, 0.6));
+                for (let gy = 8; gy < 64; gy += 16)
+                  for (let gx = (gy / 16) % 2 ? 16 : 8; gx < 64; gx += 16) {
+                    disc(gx, gy, 3, light);
+                    disc(gx, gy, 2, rgb('#0a0a0e'));
+                  }
+                for (const [x, y] of [[3, 29], [35, 29], [3, 61], [35, 61]]) bolt(x, y);
+                break;
+              }
+              case 'race':
+                // Carbon-fibre twill, quick-release fasteners, safety wire, a tech sticker.
+                for (let y = 0; y < 64; y++)
+                  for (let x = 0; x < 64; x++) {
+                    const weave = ((x + (y >> 1)) >> 1) % 2;
+                    p.set(x, y, mix(rgb(weave ? '#2c2c34' : '#141418'), base, 0.3));
+                    if (weave && (x + y) % 4 === 0) p.blend(x, y, [255, 255, 255], 0.12);
+                  }
+                for (const [cx, cy] of [[8, 8], [40, 40]]) {
+                  disc(cx, cy, 2, rgb('#d8d8e0'));
+                  dot(cx, cy, rgb('#202028'));
+                }
+                for (let i = 11; i < 38; i += 2) dot(i, i, rgb('#b8b8c0'));
+                rect(44, 6, 12, 7, rgb('#f2c200'));
+                rect(45, 9, 10, 1, rgb('#202028'));
+                break;
+              case 'elite':
+                // Polished, engraved brick-hex pattern, gold seams, neon inlays, crests.
+                for (let y = 0; y < 64; y++)
+                  for (let x = 0; x < 64; x++) {
+                    p.blend(x, y, [255, 255, 255], 0.1 + n[y * 64 + x] * 0.12);
+                    const hx = (x + (Math.floor(y / 8) % 2) * 8) % 16;
+                    if (y % 8 === 0 || hx === 0) p.blend(x, y, scale(base, 0.55), 0.35);
+                  }
+                for (let i = 0; i < 64; i++)
+                  for (const s of [0, 32]) {
+                    p.set(i, s, GOLD);
+                    p.set(s, i, GOLD);
+                  }
+                for (const [cx, cy] of [[0, 0], [32, 0], [0, 32], [32, 32]]) {
+                  rect(cx - 1, cy - 1, 3, 3, rgb(PALETTE.cyan));
+                  dot(cx, cy, [255, 255, 255]);
+                }
+                for (const [cx, cy] of [[16, 16], [48, 48]])
+                  for (let d = 0; d < 4; d++) {
+                    rect(cx - (3 - d), cy - d, 2 * (3 - d) + 1, 1, GOLD);
+                    rect(cx - (3 - d), cy + d, 2 * (3 - d) + 1, 1, GOLD);
+                  }
+                break;
+            }
+            // Detail for the kind of part, on top of the quality look.
+            const worn = q === 'junk';
+            switch (kind) {
+              case 'weapon': {
+                // Hazard band along the base, mark stencil above it (MK1 junk .. MK6
+                // elite), vent slots higher up.
+                const c1 = q === 'elite' ? GOLD : rgb('#f2c200');
+                for (let y = 59; y < 64; y++) for (let x = 0; x < 64; x++) if (!worn || rng() > 0.35) p.blend(x, y, (x + y) % 8 < 4 ? c1 : rgb('#141418'), worn ? 0.6 : 1);
+                text(`MK${Q.indexOf(q) + 1}`, 3, 51, worn ? rgb('#c8c0a8') : contrast(base));
+                for (let y = 36; y < 46; y += 3) {
+                  rect(24, y, 20, 1, rgb('#0a0a0e'));
+                  rect(24, y + 1, 20, 1, light, 0.5);
+                }
+                break;
+              }
+              case 'engine':
+                // Cooling fins over the whole casting; oil weeping on the cheap ones.
+                for (let y = 0; y < 64; y += 4) {
+                  rect(0, y, 64, 1, light, 0.6);
+                  rect(0, y + 1, 64, 1, dark, 0.5);
+                }
+                if (worn || q === 'stock') for (let i = 0; i < 30; i++) dot(36 + rng() * 12, 50 + rng() * 12, rgb('#08080a'), 0.6);
+                break;
+              case 'armor':
+                // Rivet rows along the seams.
+                for (let x = 4; x < 64; x += 8) {
+                  bolt(x, 3);
+                  bolt(x, 35);
+                }
+                break;
+              case 'exhaust':
+                // Heat bluing cycling along the pipe; junk is just sooted.
+                for (let y = 0; y < 64; y++)
+                  for (let x = 0; x < 64; x++) {
+                    if (worn) {
+                      if (n[y * 64 + x] > 0.45) p.blend(x, y, rgb('#0a0806'), 0.6);
+                      continue;
+                    }
+                    const t = (Math.sin((y / 64) * TAU) + 1) / 2;
+                    const heat = t < 0.5 ? mix(rgb('#c8a050'), rgb('#3050a0'), t * 2) : mix(rgb('#3050a0'), rgb('#7a3a9a'), (t - 0.5) * 2);
+                    p.blend(x, y, heat, 0.35);
+                  }
+                break;
+              case 'tank': {
+                // Contents label band near the base.
+                const label = TANK_LABEL[slot] || 'AUX';
+                rect(0, 48, 64, 11, rgb(worn ? '#b8b0a0' : '#ecece4'));
+                rect(0, 48, 64, 1, rgb('#c82020'));
+                rect(0, 58, 64, 1, rgb('#c82020'));
+                text(label, 4, 50, rgb('#18181c'));
+                text(label, 36, 50, rgb('#18181c'));
+                break;
+              }
+              case 'wheel':
+                // Lathe rings round the hub (cap UVs are centred on the axle).
+                for (let y = 0; y < 64; y++)
+                  for (let x = 0; x < 64; x++) {
+                    const d = Math.hypot(Math.min(x, 64 - x), Math.min(64 - y, y));
+                    if (Math.round(d) % 3 === 0) p.blend(x, y, light, 0.35);
+                  }
+                break;
+              case 'aero':
+                rect(0, 50, 64, 1, contrast(base));
+                rect(0, 53, 64, 1, contrast(base));
+                break;
+            }
+            p.flush(ctx);
+          }),
+        );
+      }
+
       function partTex(q, slot, baseHex) {
         const kind = PART_KIND[slot] || 'plain';
+        if (kind === 'weapon' || kind === 'engine' || slot === 'utility') return partTexClassic(q, slot, baseHex);
         return cached(`part|${q}|${slot}|${baseHex}`, () =>
           tiled(64, 64, (ctx) => {
             const rng = makeRng(1500 + Q.indexOf(q) * 31 + kind.length);
@@ -1977,6 +2173,7 @@
       const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
       renderer.setPixelRatio(1);
       const cur = createTextures();
+      Object.assign(cur, createCityTextures()); // as the game does
       cur.env = createEnvMap(renderer);
       const P = proposedTextures();
 
@@ -2332,7 +2529,8 @@
       function placeCamera() {
         const [tx, ty, tz] = cam.target;
         camera.position.set(tx + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist, ty + Math.sin(cam.pitch) * cam.dist, tz + Math.cos(cam.yaw) * Math.cos(cam.pitch) * cam.dist);
-        camera.lookAt(tx, ty - (state.cam === 'chase' ? 0.6 : 0), tz - (state.cam === 'chase' ? 8 : 0));
+        const ahead = state.cam === 'chase' ? 8 : 0;
+        camera.lookAt(tx - Math.sin(cam.yaw) * ahead, ty - (ahead ? 0.6 : 0), tz - Math.cos(cam.yaw) * ahead);
       }
       let drag = null;
       canvas.addEventListener('pointerdown', (e) => {
@@ -2472,11 +2670,11 @@
         stand.add(sr.car.group, sr.car.shadow);
         if (state.set === 'proposed') texturize(sr.car);
         // The street scene drives the same car.
-        if (sr.street) sr.street.removeFrom(scene);
+        if (sr.street) sr.street.removeFrom(sr.street.group.parent || scene);
         sr.street = new CarView(build, computed, cur);
         sr.street.showcase();
         applyDamage(sr.street);
-        scene.add(sr.street.group, sr.street.shadow);
+        placeStreetCar();
         if (state.set === 'proposed') texturize(sr.street);
         if (focusSlot) focus(focusSlot);
       }
@@ -2537,6 +2735,89 @@
         e.target.classList.toggle('on', sr.spin);
       });
 
+      // --- Game venues: any district event's streets or arena, built the way the
+      // race screen builds them, with the showroom car on the event's grid ---
+      const venueScene = new THREE.Scene();
+      venueScene.add(new THREE.HemisphereLight('#6a70c0', '#1a0b2e', 1.4));
+      const venueMoon = new THREE.DirectionalLight('#9ab8ff', 1.2);
+      venueMoon.position.set(-0.4, 1, 0.3);
+      venueScene.add(venueMoon);
+      const VENUE_EVENTS = [
+        ...HOME_EVENTS.map((e) => ({ ...e, group: 'Home' })),
+        ...DISTRICTS.flatMap((d) => districtEvents(d).map((e) => ({ ...e, group: `${d.name} (tier ${d.tier + 1})` }))),
+      ];
+      let venueNow = null; // { def, group, pose }
+      const streetScene = () => (venueNow ? venueScene : scene);
+      function loadVenue(id) {
+        if (venueNow) {
+          venueScene.remove(venueNow.group);
+          venueNow.group.traverse((o) => o.geometry?.dispose());
+          venueNow = null;
+        }
+        const def = VENUE_EVENTS.find((e) => e.id === id);
+        if (!def) return;
+        const v = getVenue(def.venue, def);
+        const group = new THREE.Group();
+        let track;
+        if (v.kind === 'arena') {
+          track = buildArena(v.def);
+          group.add(buildArenaView(track, cur, { outdoor: !!def.city, look: def.city?.look }));
+        } else {
+          track = buildTrack(v.def);
+          if (def.finishS) track.finishS = def.finishS;
+          group.add(buildTrackView(track, cur, { city: true, sidewalk: cur.sidewalk, barrierColor: def.city?.look.barrier }));
+        }
+        if (def.city) group.add(buildDistrictView(districtMap(def.city), cur));
+        venueScene.add(group);
+        const theme = DISTRICTS.find((d) => d.id === def.district)?.theme;
+        const haze = (def.modifiers || []).includes('acidRain') ? '#10241a' : theme?.haze || PALETTE.haze;
+        venueScene.fog = new THREE.FogExp2(haze, theme?.fog || 0.0045);
+        venueScene.background = cur.sky;
+        venueNow = { def, group, pose: gridPoses(track, def, 1)[0] };
+      }
+      // Puts the street car in the scene that's showing: the lab road, or pole
+      // position on a venue's grid.
+      function placeStreetCar() {
+        if (!sr.street) return;
+        const target = streetScene();
+        if (sr.street.group.parent !== target) {
+          sr.street.group.parent?.remove(sr.street.group, sr.street.shadow);
+          target.add(sr.street.group, sr.street.shadow);
+        }
+        if (!venueNow) return sr.street.showcase();
+        const { pos, yaw } = venueNow.pose;
+        const floor = pos.y - 0.9;
+        sr.street.group.position.set(pos.x, floor + sr.street.rideHeight, pos.z);
+        sr.street.group.rotation.set(0, yaw, 0);
+        sr.street.shadow.position.set(pos.x, floor + 0.02, pos.z);
+        sr.street.shadow.rotation.set(0, yaw, 0);
+      }
+      // Camera presets; on a venue they're placed relative to the car's grid spot.
+      function camPreset(name) {
+        const c = { ...CAMS[name], target: [...CAMS[name].target] };
+        if (!venueNow || name === 'showroom') return c;
+        const { pos, yaw } = venueNow.pose;
+        const [tx, ty, tz] = c.target;
+        const [sn, cs] = [Math.sin(yaw), Math.cos(yaw)];
+        c.target = [pos.x + tx * cs + tz * sn, pos.y - 0.9 + ty, pos.z - tx * sn + tz * cs];
+        c.yaw += yaw;
+        return c;
+      }
+      const venueSel = document.getElementById('venue');
+      const venueGroups = new Map();
+      for (const e of VENUE_EVENTS) (venueGroups.get(e.group) || venueGroups.set(e.group, []).get(e.group)).push(e);
+      venueSel.innerHTML =
+        '<option value="">Lab street</option>' +
+        [...venueGroups].map(([g, es]) => `<optgroup label="${g}">${es.map((e) => `<option value="${e.id}">${e.name} · ${e.type}</option>`).join('')}</optgroup>`).join('');
+      venueSel.addEventListener('change', () => {
+        loadVenue(venueSel.value);
+        placeStreetCar();
+        if (renderPass.scene !== showroom) {
+          renderPass.scene = streetScene();
+          Object.assign(cam, camPreset(state.cam === 'showroom' ? 'chase' : state.cam));
+        }
+      });
+
       let flip = null;
       let last = performance.now();
       function frame() {
@@ -2579,10 +2860,10 @@
       });
       group('scene', (v) => {
         const room = v === 'showroom';
-        renderPass.scene = room ? showroom : scene;
+        renderPass.scene = room ? showroom : streetScene();
         document.getElementById('showroom').hidden = !room;
         state.cam = room ? 'showroom' : 'chase';
-        Object.assign(cam, CAMS[state.cam], { target: [...CAMS[state.cam].target] });
+        Object.assign(cam, camPreset(state.cam));
         if (room && !grid.childElementCount) renderShowroomUI();
         if (room) buildShowroom(false);
       });
@@ -2591,7 +2872,7 @@
       group('barrier', (v) => ((state.barrier = v), apply()));
       group('cam', (v) => {
         state.cam = v;
-        Object.assign(cam, CAMS[v], { target: [...CAMS[v].target] });
+        Object.assign(cam, camPreset(v));
       });
       document.getElementById('res').addEventListener('change', (e) => setRes(+e.target.value));
       const paints = ['#b01c2c', '#5a5660', '#1a1a22', '#d8d8e0', '#2a5ac8', '#e8a000', '#2a8a3a', '#8a2ac8'];
@@ -2616,14 +2897,8 @@
         { name: 'Road roughness', key: 'roadRough', use: 'New. Dark = glossy. Puddles near mirror, wheel paths semi-gloss, dry asphalt matte.', tile: true },
         { name: 'Barrier: chevron', key: 'wallChevron', cur: cur.wall, use: 'Track walls. Bolted rail, grime from the road, scrape marks, rust drips.', tile: true },
         { name: 'Barrier: concrete', key: 'wallConcrete', cur: cur.wall, use: 'Alternative wall (concept 2): cast segments, rain streaks, reflector strip.', tile: true },
-        { name: 'Armour plate', key: 'armor', use: 'New. Car body, bumpers, weapons. Greyscale, multiplies the paint colour.', tile: true, tint: true },
-        { name: 'Rust (junk parts)', key: 'rust', use: 'New. Junk-quality bodywork: the same plates with rust and flaking paint.', tile: true, tint: true },
-        { name: 'Glass', key: 'glass', use: 'New. Windows with reflection streaks.' },
-        { name: 'Glass: cracked', key: 'glassCracked', use: 'New. Damage state: bullet hole with spider-web cracks.' },
         { name: 'Tail light', key: 'tail', use: 'New. Segmented LED cells. Brighter centre row blooms first.' },
         { name: 'Headlight', key: 'head', use: 'New. Twin reflector bowls.' },
-        { name: 'Tyre tread', key: 'tread', use: 'New. Chevron blocks around the tyre.', tile: true },
-        { name: 'Wheel face', key: 'rim', use: 'New. Sidewall lettering, five-spoke rim, lug nuts.' },
         { name: 'Facade: apartments', key: 'building', cur: cur.building, use: 'City blocks. Pilasters, blinds, A/C units, grime runs.', tile: true },
         { name: 'Facade glow: apartments', key: 'buildingGlow', cur: cur.buildingGlow, use: 'Emissive windows: half-drawn blinds, TV flicker, people, a neon strip.', tile: true },
         { name: 'Facade: glass tower', key: 'tower', use: 'New second building style: glass bands with a neon reflection sweep.', tile: true },
@@ -2724,7 +2999,7 @@
       // ?scene=showroom&chassis=buggy&primaryWeapon=railgun&damage=2
       for (const [k, v] of new URLSearchParams(location.search)) {
         document.querySelector(`[data-${k}="${CSS.escape(v)}"]`)?.click();
-        const sel = document.getElementById(`sr-${k}`) || document.querySelector(`[data-slot="${k}"]`);
+        const sel = document.getElementById(`sr-${k}`) || document.querySelector(`[data-slot="${k}"]`) || document.getElementById(k);
         if (sel) {
           sel.value = v;
           sel.dispatchEvent(new Event('change'));

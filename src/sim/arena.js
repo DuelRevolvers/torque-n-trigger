@@ -36,7 +36,8 @@ class Arena {
     this.half = Math.max(this.halfX, this.halfZ);
     this.halfWidth = this.half;
     this.wallDist = WALL_DIST;
-    this.minY = this.y0;
+    this.minY = def.minY ?? this.y0;
+    this.heightAt = def.heightAt || null; // free roam: follows the district's hills (world y)
     this.count = 1;
     this.length = 1;
     this.step = 1;
@@ -75,6 +76,15 @@ class Arena {
         const n = Math.hypot(slope, 1);
         return { h: (r.base || 0) + slope * u, nx: (-r.dirX * slope) / n, ny: 1 / n, nz: (-r.dirZ * slope) / n };
       }
+    }
+    if (this.heightAt) {
+      const wx = x + this.cx;
+      const wz = z + this.cz;
+      const h = this.heightAt(wx, wz);
+      const gx = (this.heightAt(wx + 1, wz) - this.heightAt(wx - 1, wz)) / 2;
+      const gz = (this.heightAt(wx, wz + 1) - this.heightAt(wx, wz - 1)) / 2;
+      const n = Math.hypot(gx, 1, gz);
+      return { h: h - this.y0, nx: -gx / n, ny: 1 / n, nz: -gz / n };
     }
     return { h: 0, nx: 0, ny: 1, nz: 0 };
   }
@@ -115,7 +125,7 @@ class Arena {
       }
     };
     for (const o of this.def.obstacles) {
-      if (ly !== undefined && o.h && ly > o.h + 0.3) continue; // flying over it
+      if (ly !== undefined && o.h && ly > (o.y || 0) + o.h + 0.3) continue; // flying over it
       boxWall(o.x, o.z, o.hw, o.hd);
     }
     // Decks and lifts: ground when you're on top, a wall when you're beside.
@@ -153,12 +163,23 @@ class Arena {
 
   // Spawn points on a ring, facing the centre.
   spawnPose(slot) {
+    if (this.def.spawnAt) {
+      const p = this.def.spawnAt;
+      return { pos: { x: p.x + slot * 6, y: this.y0 + this.ground(p.x + slot * 6 - this.cx, p.z - this.cz).h + 0.9, z: p.z }, yaw: p.yaw };
+    }
     const n = this.def.spawns;
     const a = (slot / n) * Math.PI * 2 + 0.3;
     const r = this.def.spawnRadius;
     const x = Math.cos(a) * r;
     const z = Math.sin(a) * r;
     return { pos: { x: this.cx + x, y: this.y0 + 0.9, z: this.cz + z }, yaw: yawFromDirection(-x, -z) };
+  }
+
+  // Free roam recovery: back onto the nearest intersection.
+  roadPose(pos) {
+    let best = this.def.roadPoints[0];
+    for (const p of this.def.roadPoints) if (Math.hypot(p[0] - pos.x, p[1] - pos.z) < Math.hypot(best[0] - pos.x, best[1] - pos.z)) best = p;
+    return { pos: { x: best[0], y: this.heightAt(best[0], best[1]) + 0.9, z: best[1] }, yaw: this.def.spawnAt.yaw };
   }
 
   // Floor plates (only at floor level) and contact with a sweeper bar.
