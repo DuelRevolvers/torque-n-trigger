@@ -34,7 +34,7 @@ export const SIZES = { small: 1, medium: 2, large: 3 };
 // Inverse stats (lower is better) divide instead. Stats not listed don't scale
 // (weight, sizes, gear ratios, looks).
 export const SCALING = {
-  torque: 1, power: 1, hp: 1, weightCapacity: 0.5, brakeForce: 1, grip: 0.35, handling: 0.35,
+  torque: 1, power: 1, hp: 1, weightCapacity: 0, brakeForce: 1, grip: 0.35, handling: 0.35,
   turboBoost: 1, force: 1, charges: 0, heatCapacity: 1, dissipation: 1, armor: 1, damage: 1,
   fireRate: 0.5, range: 0.5, rollCage: 1, controls: 1, electronics: 1, aero: 1, ramDamage: 1,
   downforce: 1, capacity: 1, landing: 0.5, torqueBonus: 1, offroadGrip: 0.35, ammo: 0.5,
@@ -64,17 +64,17 @@ export const PART_TYPES = {
       length: 4.3, width: 1.9, height: 0.9, wheelbase: 2.7, track: 1.64, drag: 0.36, brakeBase: 9000, drive: 'rwd',
     },
     muscle: {
-      name: 'Muscle Car', value: 1600, size: 'medium', hp: 520, weight: 820, weightCapacity: 1500,
+      name: 'Muscle Car', value: 1600, size: 'medium', hp: 600, weight: 820, weightCapacity: 1500,
       mounts: { engine: 'large', primaryWeapon: 'medium', secondaryWeapon: 'medium' },
       length: 4.6, width: 1.95, height: 0.95, wheelbase: 2.8, track: 1.66, drag: 0.44, brakeBase: 9500, drive: 'rwd',
     },
     pickup: {
-      name: 'Armored Pickup', value: 1800, size: 'large', hp: 650, weight: 950, weightCapacity: 1750,
+      name: 'Armored Pickup', value: 1800, size: 'large', hp: 820, weight: 950, weightCapacity: 1750,
       mounts: { engine: 'large', primaryWeapon: 'large', secondaryWeapon: 'medium' },
       length: 4.9, width: 2.0, height: 1.1, wheelbase: 3.0, track: 1.72, drag: 0.52, brakeBase: 10000, drive: 'rwd',
     },
     van: {
-      name: 'Cargo Van', value: 1500, size: 'large', hp: 760, weight: 1080, weightCapacity: 1950,
+      name: 'Cargo Van', value: 1500, size: 'large', hp: 920, weight: 1080, weightCapacity: 1950,
       mounts: { engine: 'medium', primaryWeapon: 'large', secondaryWeapon: 'large' },
       length: 4.8, width: 2.0, height: 1.45, wheelbase: 2.9, track: 1.72, drag: 0.6, brakeBase: 10000, drive: 'rwd',
     },
@@ -151,11 +151,11 @@ export const PART_TYPES = {
     reactive: { name: 'Reactive Plates', value: 1400, armor: 0.18, hp: 80, weight: 130 },
   },
   primaryWeapon: {
-    chaingun: { name: 'Chain Gun', value: 800, size: 'small', kind: 'ballistic', damage: 8, fireRate: 12, range: 60, ammo: 200, reload: 2.5, powerDraw: 10, weight: 60 },
-    scatter: { name: 'Scatter Cannon', value: 900, size: 'medium', kind: 'ballistic', damage: 40, fireRate: 1.5, range: 25, ammo: 24, reload: 3, powerDraw: 10, weight: 90 },
-    plasma: { name: 'Plasma Launcher', value: 1200, size: 'medium', kind: 'energy', damage: 35, fireRate: 2, range: 70, heatPerShot: 8, powerDraw: 35, weight: 80 },
-    flamethrower: { name: 'Flamethrower', value: 900, size: 'small', kind: 'energy', damage: 3, fireRate: 10, range: 15, heatPerShot: 3, powerDraw: 20, weight: 70 },
-    railgun: { name: 'Rail Gun', value: 2000, size: 'large', kind: 'energy', damage: 90, fireRate: 0.5, range: 150, heatPerShot: 25, powerDraw: 60, weight: 120 },
+    chaingun: { name: 'Chain Gun', value: 800, size: 'small', kind: 'ballistic', damage: 5, fireRate: 12, range: 60, ammo: 200, reload: 2.5, powerDraw: 10, weight: 60 },
+    scatter: { name: 'Scatter Cannon', value: 900, size: 'medium', kind: 'ballistic', damage: 60, fireRate: 1.5, range: 25, ammo: 24, reload: 3, powerDraw: 10, weight: 90 },
+    plasma: { name: 'Plasma Launcher', value: 1200, size: 'medium', kind: 'energy', damage: 40, fireRate: 2, range: 70, heatPerShot: 8, powerDraw: 35, weight: 80 },
+    flamethrower: { name: 'Flamethrower', value: 900, size: 'small', kind: 'energy', damage: 8, fireRate: 10, range: 15, heatPerShot: 3, powerDraw: 20, weight: 70 },
+    railgun: { name: 'Rail Gun', value: 2000, size: 'large', kind: 'energy', damage: 150, fireRate: 0.5, range: 150, heatPerShot: 25, powerDraw: 60, weight: 120 },
   },
   secondaryWeapon: {
     mines: { name: 'Rear Mines', value: 700, size: 'small', kind: 'ballistic', mount: 'rear', damage: 60, fireRate: 0.5, range: 0, ammo: 6, reload: 6, powerDraw: 5, weight: 50 },

@@ -153,10 +153,96 @@
         gap: 8px;
       }
       .t-small { width: 64px; height: 40px; font-size: 12px; }
+
+      /* Screens (starter selection, garage) */
+      #ui { position: fixed; inset: 0; pointer-events: none; z-index: 1; font-size: 13px; }
+      #ui .screen { position: absolute; inset: 0; }
+      #ui button, #ui .card, #ui .g-slots, #ui .g-side { pointer-events: auto; }
+      #ui h1 { margin: 0; font-size: 26px; letter-spacing: 3px; color: var(--pink); text-shadow: 3px 3px 0 #000; }
+      #ui h2 { margin: 0 0 8px; font-size: 17px; color: var(--cyan); text-transform: uppercase; }
+      #ui h3 { margin: 12px 0 6px; font-size: 13px; color: var(--amber); text-transform: uppercase; }
+      .btn {
+        font: bold 14px var(--font); padding: 8px 14px; background: #1a1030; color: var(--ink);
+        border: 2px solid #33245a; cursor: pointer; text-transform: uppercase;
+      }
+      .btn:hover:not(:disabled) { border-color: var(--cyan); }
+      .btn.primary { background: var(--pink); color: #000; border-color: #000; box-shadow: 3px 3px 0 var(--cyan); }
+      .btn.small { padding: 5px 9px; font-size: 12px; }
+      .btn.on { border-color: var(--cyan); color: var(--cyan); }
+      .btn:disabled { opacity: 0.4; cursor: default; }
+      .tag { background: var(--cyan); color: #000; padding: 1px 6px; font-size: 11px; vertical-align: middle; }
+      .q-junk { color: #c08050; } .q-stock { color: #b8b8c8; } .q-street { color: #ffffff; }
+      .q-sport { color: #39ff14; } .q-race { color: var(--cyan); } .q-elite { color: var(--amber); }
+      .panel, .card, .g-stats, .g-detail, .g-slots {
+        background: var(--panel); border: 2px solid #33245a;
+      }
+      .pr { font-size: 15px; margin-bottom: 6px; } .pr b { font-size: 22px; color: var(--amber); }
+      .up { color: #39ff14; } .down { color: var(--pink); }
+      .stat { display: grid; grid-template-columns: 92px minmax(40px, 1fr) auto; gap: 8px; align-items: center; margin: 2px 0; font-size: 12px; }
+      .stat-label { color: #a89fd0; }
+      .stat-value { text-align: right; white-space: nowrap; }
+      .bar { position: relative; height: 8px; background: #241d3a; }
+      .bar i { position: absolute; top: 0; bottom: 0; left: 0; background: var(--cyan); }
+      .bar i.up { background: #39ff14; } .bar i.down { background: var(--pink); }
+      .warn { color: var(--amber); font-size: 12px; margin-top: 4px; }
+      .err { color: var(--pink); font-size: 12px; margin: 6px 0; }
+      .hint { color: #8a82b0; font-size: 12px; margin: 6px 0; }
+
+      .screen-head { position: absolute; top: 14px; left: 16px; right: 70px; display: flex; gap: 16px; align-items: center; }
+      .cards { position: absolute; left: 12px; right: 12px; bottom: 12px; display: flex; gap: 12px; }
+      .card { flex: 1; padding: 12px; max-height: 60vh; overflow-y: auto; }
+      .card-title { font-size: 18px; font-weight: bold; margin-bottom: 2px; }
+      .card-sub { color: #a89fd0; margin-bottom: 8px; }
+      .parts { list-style: none; padding: 0; margin: 8px 0; font-size: 12px; }
+      .parts li { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid #241d3a; padding: 2px 0; }
+      .choose { width: 100%; margin-top: 4px; }
+
+      .g-head { position: absolute; top: 12px; left: 16px; right: 64px; display: flex; justify-content: space-between; align-items: flex-start; }
+      .g-head .race { pointer-events: auto; }
+      .car-name { margin-top: 4px; font-size: 15px; font-weight: bold; }
+      .g-slots { position: absolute; top: 84px; left: 12px; bottom: 12px; width: 232px; overflow-y: auto; padding: 4px; }
+      .slot-btn {
+        display: block; width: 100%; text-align: left; padding: 5px 8px; margin-bottom: 3px; background: #140c26;
+        border: 2px solid transparent; color: var(--ink); font: bold 12px var(--font); cursor: pointer; text-transform: uppercase;
+      }
+      .slot-btn small { display: block; font-weight: normal; text-transform: none; font-size: 11px; }
+      .slot-btn.empty small { color: #5a5280; }
+      .slot-btn.active, .slot-btn:hover { border-color: var(--amber); }
+      .g-side { position: absolute; top: 64px; right: 12px; bottom: 12px; width: 370px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
+      .g-stats, .g-detail { padding: 10px; }
+      .build-line { margin-top: 6px; font-size: 12px; color: #a89fd0; } .build-line b { color: var(--ink); }
+      .part-card { background: #140c26; padding: 8px; margin-bottom: 6px; }
+      .part-name { font-weight: bold; font-size: 14px; }
+      .part-meta { font-size: 11px; margin: 3px 0; color: #a89fd0; }
+      .trait { background: #33245a; color: var(--ink); padding: 0 5px; margin-right: 4px; }
+      .part-stats span { display: inline-block; margin-right: 10px; font-size: 12px; color: #a89fd0; }
+      .part-stats b { color: var(--ink); }
+      .spare {
+        display: flex; justify-content: space-between; width: 100%; padding: 6px 8px; margin-bottom: 3px; background: #140c26;
+        border: 2px solid transparent; color: var(--ink); font: 12px var(--font); cursor: pointer; text-align: left;
+      }
+      .spare.on { border-color: var(--cyan); } .spare.bad small { color: var(--pink); } .spare small { color: #39ff14; }
+      .preview { margin-top: 8px; border-top: 2px dashed #33245a; padding-top: 8px; }
+      .row { display: flex; gap: 8px; margin-top: 6px; }
+      .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+      .swatch { width: 30px; height: 30px; border: 2px solid #000; cursor: pointer; }
+      .swatch.on { outline: 2px solid var(--amber); }
+      .finishes { display: flex; flex-wrap: wrap; gap: 6px; }
+      .menu-action { justify-content: center; margin-top: 4px; }
+
+      @media (max-width: 760px) {
+        #ui h1 { font-size: 20px; }
+        .cards { overflow-x: auto; scroll-snap-type: x mandatory; gap: 8px; }
+        .card { flex: 0 0 calc(100% - 4px); scroll-snap-align: center; max-height: 55vh; }
+        .g-slots { top: 74px; left: 0; right: 0; bottom: auto; width: auto; display: flex; overflow-x: auto; overflow-y: hidden; gap: 4px; }
+        .slot-btn { flex: 0 0 140px; margin: 0; }
+        .g-side { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 50vh; }
+      }
     </style>
   </head>
   <body>
     <canvas id="game"></canvas>
+    <div id="ui"></div>
     <div id="touch" hidden></div>
     <button id="pause-btn" aria-label="Pause">II</button>
     <div id="menu" hidden></div>

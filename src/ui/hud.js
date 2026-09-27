@@ -22,6 +22,11 @@ export class Hud {
     this.ctx = canvas.getContext('2d');
   }
 
+  clear() {
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+  }
+
   draw({ car, params, tick, fps, showFps, touchLayout, label }) {
     const { ctx, canvas } = this;
     // Layout is in 270-line units, scaled up by an integer so the pixel font stays

@@ -41,6 +41,10 @@ export class CarView {
     const body = new THREE.Group();
     this.group.add(body);
     this.time = 0;
+    // Meshes per slot, for the garage's zoom-and-highlight.
+    this.slotMeshes = {};
+    this.slot = 'chassis';
+    this.mounts = { shell, W };
 
     const envParams = { envMap: tex.env, side: THREE.DoubleSide };
     const lightColor = parts.lights?.color || '#ffffff';
@@ -61,6 +65,7 @@ export class CarView {
       const m = new THREE.Mesh(geo, mat);
       m.position.set(x, y, z);
       parent.add(m);
+      (this.slotMeshes[this.slot] ||= []).push(m);
       return m;
     };
     const box = (w, h, d, mat, x, y, z, parent) => add(new THREE.BoxGeometry(w, h, d), mat, x, y, z, parent);
@@ -120,6 +125,7 @@ export class CarView {
     }
 
     // --- Engine: pokes through the hood, look per type ---
+    this.slot = 'engine';
     const eng = parts.engine;
     const engMat = finish(eng, '#3a3a44');
     const ex = m.hood;
@@ -151,6 +157,7 @@ export class CarView {
     }
     trim(eng, 0.5, 0.04, 0, ex.y + 0.3, ex.z - 0.3);
 
+    this.slot = 'turbo';
     if (parts.turbo) {
       const t = parts.turbo;
       const r = t.type === 'big' ? 0.17 : 0.12;
@@ -158,6 +165,7 @@ export class CarView {
       for (const s of sides) cyl(r, 0.14, finish(t, '#8a8a98'), s * 0.5, ex.y + 0.15, ex.z + 0.25, 'x', 8);
     }
 
+    this.slot = 'cooling';
     if (parts.cooling) {
       const c = parts.cooling;
       const grilleMat = c.type === 'cryo' ? glow('#05d9e8', 1.6) : finish(c, '#2a2a30');
@@ -166,6 +174,7 @@ export class CarView {
     }
 
     // --- Exhaust: tips double as nitro flame emitters ---
+    this.slot = 'exhaust';
     this.exhaustTips = [];
     const exPart = parts.exhaust;
     const pipeMat = exPart ? finish(exPart, '#9a9aa8') : steelMat;
@@ -191,6 +200,7 @@ export class CarView {
     }
 
     // --- Armor plating ---
+    this.slot = 'armor';
     if (parts.armor) {
       const a = parts.armor;
       const mat = finish(a, a.type === 'composite' ? '#2a2a32' : '#5a5a60');
@@ -209,6 +219,7 @@ export class CarView {
     // --- Weapons ---
     const roofY = m.roof.y;
     const roofZ = m.roof.z;
+    this.slot = 'primaryWeapon';
     if (parts.primaryWeapon) {
       const w = parts.primaryWeapon;
       const mat = finish(w, '#4a4a54');
@@ -239,6 +250,7 @@ export class CarView {
       }
       trim(w, 0.34, 0.04, 0, roofY + 0.33, roofZ - 0.1);
     }
+    this.slot = 'secondaryWeapon';
     if (parts.secondaryWeapon) {
       const w = parts.secondaryWeapon;
       const mat = finish(w, '#4a4a54');
@@ -263,6 +275,7 @@ export class CarView {
           break;
       }
     }
+    this.slot = 'utility';
     if (parts.utility) {
       const u = parts.utility;
       box(0.45, 0.16, 0.35, finish(u, '#3a3a44'), -0.35, m.deck.y + 0.08, m.deck.z - 0.1);
@@ -270,6 +283,7 @@ export class CarView {
     }
 
     // --- Body kit and spoiler ---
+    this.slot = 'bodyKit';
     if (parts.bodyKit) {
       const k = parts.bodyKit;
       const mat = k.type === 'ram' || k.type === 'spiked' ? finish(k, '#7a7a84') : this.paintMat;
@@ -298,6 +312,7 @@ export class CarView {
           break;
       }
     }
+    this.slot = 'spoiler';
     if (parts.spoiler) {
       const s = parts.spoiler;
       const size = { lip: [W * 0.9, 0.0, 0.2], mid: [W * 0.95, 0.25, 0.4], high: [W * 1.02, 0.5, 0.5] }[s.type];
@@ -312,11 +327,13 @@ export class CarView {
     }
 
     // --- Interiors, fuel tank, nitrous, transmission ---
+    this.slot = 'interiors';
     const int = parts.interiors;
     if (int && (int.type === 'cage' || int.type === 'armored') && !shell.cage) {
       cage(0.4, roofZ - 0.35, roofZ + 0.35);
       if (int.type === 'armored') for (let i = -1; i <= 1; i++) box(W * 0.6, 0.03, 0.03, darkMat, 0, roofY - 0.12 + i * 0.1, roofZ - 0.55);
     }
+    this.slot = 'fuelTank';
     if (parts.fuelTank) {
       const f = parts.fuelTank;
       const mat = finish(f, f.type === 'armored' ? '#5a5a60' : '#8a2020');
@@ -324,15 +341,18 @@ export class CarView {
       if (shell.bedRails) cyl(r + 0.08, 1.0, mat, 0, m.deck.y + r + 0.08, m.deck.z, 'x');
       else cyl(r, 0.9, mat, 0, -0.32, m.rear - 0.35, 'x');
     }
+    this.slot = 'nitrous';
     if (parts.nitrous) {
       const n = parts.nitrous;
       const count = { single: 1, dual: 2, directPort: 2, cells: 4 }[n.type];
       const mat = n.type === 'cells' ? glow('#05d9e8', 1.8) : finish(n, '#2050c8');
       for (let i = 0; i < count; i++) cyl(0.07, 0.5, mat, 0.2 + i * 0.16, m.deck.y + 0.1, m.deck.z - 0.3, 'z', 8);
     }
+    this.slot = 'transmission';
     box(0.35, 0.18, 0.7, finish(parts.transmission, '#3a3a40'), 0, -0.45, 0.4); // gearbox tunnel
 
     // --- Lights ---
+    this.slot = 'lights';
     const lightsType = parts.lights?.type || 'halogen';
     const headMat = glowMaterial({ color: lightsType === 'halogen' ? '#fff0d0' : '#e8fbff', intensity: 3 });
     this.tailMat = glowMaterial({ color: '#ff1030', intensity: 1.2 });
@@ -347,7 +367,9 @@ export class CarView {
     }
     const pool = new THREE.PlaneGeometry(5, 10);
     pool.rotateX(-Math.PI / 2);
-    add(pool, additiveMaterial({ map: tex.glow, color: '#7ab8d8', opacity: 0.55 }), 0, -0.56, m.front - 5.3).renderOrder = 1;
+    this.headlightPool = add(pool, additiveMaterial({ map: tex.glow, color: '#7ab8d8', opacity: 0.55 }), 0, -0.56, m.front - 5.3);
+    this.headlightPool.renderOrder = 1;
+    this.slotMeshes.lights.pop(); // the road pool isn't part of the car's outline
     this.underglow = null;
     if (parts.lights && parts.lights.type !== 'halogen' && parts.lights.type !== 'lightbar') {
       const g = new THREE.PlaneGeometry(W + 1.1, m.rear - m.front + 1);
@@ -443,6 +465,61 @@ export class CarView {
     }
   }
 
+  // Animated bits that run in every view (race and garage).
+  tick(time) {
+    if (this.underglow) this.underglow.material.opacity = 0.7 + 0.15 * Math.sin(time * 3);
+    if (this.holo) this.paintMat.color.setHSL((time * 0.08) % 1, 0.6, 0.45);
+  }
+
+  // Static display pose for turntables: resting on its springs, wheels straight,
+  // origin on the floor. Add to a parent whose y = 0 is the floor.
+  showcase() {
+    const p = this.params;
+    const comp = (p.mass * 9.81) / 4 / p.suspension.stiffness;
+    for (const { def, pivot, tire } of this.wheels) {
+      pivot.position.y = def.y - (p.suspension.rest - comp);
+      pivot.rotation.y = 0;
+      tire.rotation.x = 0;
+    }
+    for (const f of this.flames) f.visible = false;
+    this.headlightPool.visible = false;
+    this.rideHeight = p.suspension.rest - comp + p.wheelRadius - p.wheels[0].y;
+    this.group.position.set(0, this.rideHeight, 0);
+    this.group.quaternion.identity();
+    this.shadow.position.set(0, 0.02, 0);
+    this.shadow.quaternion.identity();
+    this.shadow.material.opacity = 0.9;
+  }
+
+  // Where a slot lives on the car, in the car group's local space:
+  // { center: Vector3, radius }. Null means "the whole car" (chassis, paint).
+  slotFocus(slot) {
+    const { shell: m, W } = this.mounts;
+    if (slot === 'chassis' || slot === 'paint') return null;
+    if (slot === 'wheels' || slot === 'suspension' || slot === 'brakes') {
+      return { center: this.wheels[0].pivot.position.clone(), radius: 0.6 };
+    }
+    const meshes = this.slotMeshes[slot];
+    if (meshes?.length) {
+      const box = new THREE.Box3();
+      for (const mesh of meshes) {
+        mesh.updateMatrix();
+        mesh.geometry.computeBoundingBox();
+        box.union(mesh.geometry.boundingBox.clone().applyMatrix4(mesh.matrix));
+      }
+      const size = box.getSize(new THREE.Vector3());
+      return { center: box.getCenter(new THREE.Vector3()), radius: Math.max(0.35, Math.max(size.x, size.y, size.z) / 2), box };
+    }
+    const anchors = {
+      engine: [0, m.hood.y, m.hood.z], turbo: [0.4, m.hood.y, m.hood.z], cooling: [0, -0.1, m.front],
+      exhaust: [0, -0.3, m.rear], armor: [W / 2, 0, 0], primaryWeapon: [0, m.roof.y, m.roof.z],
+      secondaryWeapon: [0, m.roof.y, m.roof.z + 0.5], utility: [0, m.deck.y, m.deck.z], nitrous: [0, m.deck.y, m.deck.z],
+      spoiler: [0, m.deck.y, m.deck.z], bodyKit: [0, -0.2, m.front], lights: [0, 0, m.front],
+      fuelTank: [0, -0.3, m.rear - 0.3], transmission: [0, -0.4, 0.4], interiors: [0, m.roof.y - 0.3, m.roof.z],
+    };
+    return { center: new THREE.Vector3(...anchors[slot]), radius: 0.5 };
+  }
+
   // pose: interpolated { pos, quat } (three.js types); car: latest sim state.
   update(pose, car, track, time) {
     this.group.position.copy(pose.pos);
@@ -457,8 +534,7 @@ export class CarView {
     });
 
     this.tailMat.color.set('#ff1030').multiplyScalar(car.braking ? 3.5 : 1.2);
-    if (this.underglow) this.underglow.material.opacity = 0.7 + 0.15 * Math.sin(time * 3);
-    if (this.holo) this.paintMat.color.setHSL((time * 0.08) % 1, 0.6, 0.45);
+    this.tick(time);
 
     const boosting = car.nitro.active > 0;
     this.flames.forEach((flame, k) => {

@@ -16,7 +16,9 @@ const OPTIONS = [
 ];
 
 export class SettingsMenu {
-  constructor(root, settings, onChange) {
+  // actions: [{ label, onClick, visible?() }] extra buttons shown under Resume.
+  constructor(root, settings, onChange, actions = []) {
+    this.actions = actions;
     this.root = root;
     this.settings = settings;
     this.onChange = onChange;
@@ -27,9 +29,10 @@ export class SettingsMenu {
         <h1>PAUSED</h1>
         <div class="menu-options"></div>
         <button class="menu-resume">RESUME</button>
+        <div class="menu-actions"></div>
         <div class="menu-help">
           <b>KEYBOARD</b> W/S throttle &amp; brake/reverse &middot; A/D steer &middot; SPACE handbrake &middot;
-          SHIFT nitro &middot; Q look back &middot; R reset car &middot; N random car (dev) &middot; ESC pause<br>
+          SHIFT nitro &middot; Q look back &middot; R reset car &middot; ESC pause<br>
           <b>GAMEPAD</b> RT/LT throttle &amp; brake &middot; stick steer &middot; A handbrake &middot; B nitro &middot;
           R3 look back &middot; BACK reset &middot; START pause
         </div>
@@ -60,6 +63,17 @@ export class SettingsMenu {
   setOpen(open) {
     this.open = open;
     this.root.hidden = !open;
+    if (!open) return;
+    const box = this.root.querySelector('.menu-actions');
+    box.innerHTML = '';
+    for (const action of this.actions) {
+      if (action.visible && !action.visible()) continue;
+      const btn = document.createElement('button');
+      btn.className = 'menu-row menu-action';
+      btn.textContent = action.label;
+      btn.addEventListener('click', () => action.onClick());
+      box.appendChild(btn);
+    }
   }
 
   toggle() {

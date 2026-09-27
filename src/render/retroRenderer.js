@@ -156,11 +156,14 @@ export class RetroRenderer {
     if (!this.composer) {
       this.composer = new EffectComposer(this.renderer);
       this.composer.renderToScreen = false;
-      this.composer.addPass(new RenderPass(scene, camera));
+      this.renderPass = new RenderPass(scene, camera);
+      this.composer.addPass(this.renderPass);
       this.bloom = new UnrealBloomPass(new THREE.Vector2(this.width, this.height), 0.55, 0.35, 0.9);
       this.composer.addPass(this.bloom);
       this.sizeComposer();
     }
+    this.renderPass.scene = scene;
+    this.renderPass.camera = camera;
     this.bloom.enabled = this.settings.bloom;
     this.hudTexture.needsUpdate = true;
     this.composer.render();

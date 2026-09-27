@@ -257,7 +257,7 @@ function dps(eff) {
 export function performanceRating(stats) {
   const s = (k) => stats[k].score;
   return Math.round(
-    s('topSpeed') * 1.6 + s('acceleration') * 1.8 + s('handling') * 1.2 + s('grip') * 1.4 + s('braking') * 0.8 +
-      s('hp') * 0.9 + s('armor') * 0.8 + s('firepower') * 1.0 + s('heatCapacity') * 0.3,
+    s('topSpeed') * 1.3 + s('acceleration') * 1.3 + s('handling') * 1.1 + s('grip') * 1.2 + s('braking') * 0.7 +
+      s('hp') * 1.6 + s('armor') * 1.2 + s('firepower') * 1.6 + s('heatCapacity') * 0.3,
   );
 }
