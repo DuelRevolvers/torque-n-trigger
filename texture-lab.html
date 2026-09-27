@@ -2078,8 +2078,8 @@
       }
 
       // Tyres, 32 x 16 (half a metre round the tread, a quarter across): bald junk,
-      // stock tread, sport deep tread with yellow sidewall marks, race slicks,
-      // elite deep tread with neon in the grooves.
+      // stock tread, sport and elite deep tread, race slicks. Plain rubber, no
+      // coloured marks.
       function tyreTex(q) {
         return cached(`tyre|${q}`, () =>
           tiled(32, 16, (ctx) => {
@@ -2090,10 +2090,9 @@
               if (q === 'junk') return chevron < 0.8 ? rgb('#0c0c0e') : rgb(rng() < 0.1 ? '#2e2e34' : '#1e1e24');
               if (q === 'race') return rgb(rng() < 0.06 ? '#222228' : '#16161a');
               const deep = q === 'sport' || q === 'elite' ? 2.4 : 1.6;
-              if (chevron < deep) return q === 'elite' && chevron < 0.8 && x % 4 === 0 ? rgb(PALETTE.cyan) : rgb('#060608');
+              if (chevron < deep) return rgb('#060608');
               return rgb('#18181e');
             });
-            if (q === 'race' || q === 'sport') for (let x = 2; x < 32; x += 8) p.rect(x, 1, 2, 1, rgb('#f2c200'));
             p.flush(ctx);
           }),
         );

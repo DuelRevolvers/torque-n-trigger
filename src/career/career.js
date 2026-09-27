@@ -71,18 +71,17 @@ export function addCar(career, chassisUid) {
 
 // Until shops and salvage exist (M6), the garage starts with a bin of spare
 // Junk-to-Street parts across every slot so swapping can be tried out.
+// A couple of spares to start: the rest comes from shops and salvage.
+const SPARES = ['wheels', 'armor'];
 function sparePartsBin(seed) {
   const rng = makeRng(seed ^ 0x5eed);
   const qualities = ['junk', 'stock', 'street'];
   const parts = [];
   for (const slot of SLOTS) {
     if (slot === 'chassis') continue;
-    const count = slot === 'paint' ? 0 : 2;
-    for (let i = 0; i < count; i++) {
-      const types = Object.keys(PART_TYPES[slot]);
-      parts.push(makePart(rng, slot, types[Math.floor(rng() * types.length)], qualities[Math.floor(rng() * qualities.length)]));
-    }
+    if (slot === 'paint' || !SPARES.includes(slot)) continue;
+    const types = Object.keys(PART_TYPES[slot]);
+    parts.push(makePart(rng, slot, types[Math.floor(rng() * types.length)], qualities[Math.floor(rng() * qualities.length)]));
   }
-  parts.push(makePart(rng, 'chassis', 'muscle', 'junk'));
   return parts;
 }

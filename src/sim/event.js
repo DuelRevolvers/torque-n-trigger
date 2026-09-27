@@ -240,7 +240,10 @@ function updateStyle(world, i, dt) {
     if (st.drift > 0.8) award('DRIFT', st.drift * STYLE.driftPerSecond);
     st.drift = 0;
   }
-  if (!grounded) st.air += dt;
+  // Air only counts while upright: lying on the roof or side (then resetting) pays nothing.
+  const upright = quatRotate(car.quat, { x: 0, y: 1, z: 0 }).y > 0.3;
+  if (!upright) st.air = 0;
+  else if (!grounded) st.air += dt;
   else {
     if (st.air > 0.6) award('AIR', st.air * STYLE.airPerSecond);
     st.air = 0;

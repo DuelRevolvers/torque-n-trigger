@@ -14,6 +14,7 @@ import { DISTRICTS, districtEvents } from '../src/career/districts.js';
 import { shopStock, buyPart, sellPart, buyPrice, repairCost, repairParts } from '../src/career/shop.js';
 import { newCareer, addCar } from '../src/career/career.js';
 import { generateStarters } from '../src/parts/starters.js';
+import { makeRng, makePart } from '../src/parts/generate.js';
 
 const venueTrack = (id, def) => {
   const v = getVenue(id, def);
@@ -184,7 +185,8 @@ test('shops: stock is stable, buying and selling move cash and parts, repairs co
 
 test('a new car can be started from a spare chassis', () => {
   const career = newCareer(generateStarters(5)[0], 5);
-  const chassis = career.inventory.find((p) => p.slot === 'chassis');
+  const chassis = makePart(makeRng(5), 'chassis', 'muscle', 'junk');
+  career.inventory.push(chassis);
   const car = addCar(career, chassis.uid);
   assert.equal(career.cars.length, 2);
   assert.equal(career.activeCar, car.id);

@@ -8,6 +8,7 @@ import { drawText, textWidth } from '../ui/bitmapFont.js';
 import { districtMap, SETBACK } from '../sim/city.js';
 import { getVenue } from '../sim/tracks/venues.js';
 import { makeRng } from '../parts/generate.js';
+import { keepScroll } from '../ui/keepScroll.js';
 
 const MAP_W = 400;
 const MAP_H = 300;
@@ -50,6 +51,7 @@ export class CityScreen {
     const { career } = this.app;
     const car = this.car;
     const computed = computeBuild(car.build);
+    keepScroll(this.app.ui, `${this.selected}:${this.view}`);
     this.app.ui.innerHTML = `<div class="screen city">
       <div class="g-head">
         <div><h1>NEON SPRAWL</h1><div class="car-name">${esc(car.name)} &middot; ${computed.ok ? `PR ${computed.pr}` : 'NOT DRIVABLE'} <span class="cash">$${career.cash}</span></div></div>

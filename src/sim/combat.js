@@ -481,8 +481,9 @@ export function updateCombat(world, inputs, dt, respawn) {
       car.burning = Math.max(0, car.burning - dt);
       applyDamage(world, i, 6 * dt, car.pos, car.lastHitBy, true);
     }
-    if (car.impact > 10) {
-      applyDamage(world, i, (car.impact - 10) * 4 * (1 - c.rollCage * 0.4), toWorld(car, v3(0, 0, -p.body.length / 2)), -1);
+    // Wall hits: only a hard slam hurts, and gently (roll cages soften it further).
+    if (car.impact > 12) {
+      applyDamage(world, i, (car.impact - 12) * 2 * (1 - c.rollCage * 0.4), toWorld(car, v3(0, 0, -p.body.length / 2)), -1);
     }
     car.impact = 0;
   });

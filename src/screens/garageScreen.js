@@ -10,6 +10,7 @@ import { repairCost, repairParts } from '../career/shop.js';
 import { checkInstall, installPart, removePart, repaint, withPart } from '../career/garage.js';
 import { glowMaterial } from '../render/retroMaterial.js';
 import { PALETTE } from '../render/textures.js';
+import { keepScroll } from '../ui/keepScroll.js';
 
 // Stats shown on part cards: [label, unit, multiplier].
 const PART_STATS = {
@@ -175,6 +176,7 @@ export class GarageScreen {
           <div class="row"><button class="btn primary install" ${pv.ok ? '' : 'disabled'}>INSTALL</button><button class="btn small cancel">CANCEL</button></div></div>` : ''}`;
     }
 
+    keepScroll(this.root, car.id);
     this.root.innerHTML = `<div class="screen garage">
       <div class="g-head">
         <div><h1>GARAGE</h1><div class="car-name">${esc(car.name)} <span class="tag">${ARCHETYPES[car.archetype]?.name || ''}</span> <span class="cash">$${career.cash ?? 0}</span></div>

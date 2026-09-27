@@ -5,6 +5,7 @@ import { computeBuild } from '../parts/build.js';
 import { partName, SLOT_NAMES, QUALITY } from '../parts/catalog.js';
 import { statBarsHtml } from '../ui/statBars.js';
 import { newCareer, saveCareer } from '../career/career.js';
+import { keepScroll } from '../ui/keepScroll.js';
 
 const SPACING = 6.8;
 
@@ -64,6 +65,7 @@ export class StarterScreen {
         </div>`;
       })
       .join('');
+    keepScroll(this.root, 'starter');
     this.root.innerHTML = `<div class="screen starter">
       <div class="screen-head"><h1>CHOOSE YOUR RIDE</h1>
         <button class="btn reroll" ${this.rerolled ? 'disabled' : ''}>${this.rerolled ? 'REROLL USED' : 'FREE REROLL'}</button></div>
