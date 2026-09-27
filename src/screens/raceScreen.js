@@ -3,10 +3,11 @@ import { buildTrack } from '../sim/track.js';
 import { TEST_LOOP } from '../sim/tracks/testLoop.js';
 import { createWorld, stepWorld } from '../sim/world.js';
 import { InputQueue, neutralInput } from '../sim/input.js';
-import { cruisePilot } from '../sim/pilots.js';
+import { initAi, aiInput } from '../sim/ai.js';
+import { SIM_DT } from '../config.js';
 import { WEAPON_BEHAVIOR } from '../sim/combat.js';
 import { computeBuild } from '../parts/build.js';
-import { randomBuild, makeRng } from '../parts/generate.js';
+import { DRIVERS, buildDriver, tierForPr } from '../parts/drivers.js';
 import { partType } from '../parts/catalog.js';
 import { saveCareer } from '../career/career.js';
 import { PALETTE } from '../render/textures.js';
@@ -17,12 +18,9 @@ import { CameraRig } from '../render/cameraRig.js';
 import { Rain } from '../render/rain.js';
 import { Fx } from '../render/fx.js';
 
-// Target cars cruise the loop so there is something to fight until AI (M4).
-const TARGETS = [
-  { speed: 20, lane: -4 },
-  { speed: 24, lane: 4 },
-  { speed: 27, lane: 0 },
-];
+// Free drive against a field of named AI drivers.
+const AI_COUNT = 5;
+const hashId = (s) => [...s].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0, 2166136261);
 
 // Params come from a pristine copy of the build; wear is tracked in the sim as
 // per-part condition and written back to the career car on exit.
@@ -59,14 +57,19 @@ export class RaceScreen {
 
   enter({ build, car }) {
     this.careerCar = car || null;
-    this.builds = [build];
-    const targetBuilds = TARGETS.map((_, k) => randomBuild(makeRng(1000 + k + Math.floor(Math.random() * 1e6)), { minQuality: 'junk', maxQuality: 'stock', optional: 0.4 }));
-    this.builds.push(...targetBuilds);
+    // AI field: random named drivers at a tier matching the player's car.
+    const seed = Math.floor(Math.random() * 1e9);
+    const tier = tierForPr(computeBuild(build).pr);
+    const drivers = [...DRIVERS].sort((a, b) => ((hashId(a.id) ^ seed) >>> 0) - ((hashId(b.id) ^ seed) >>> 0)).slice(0, AI_COUNT);
+    const entries = drivers.map((d, k) => buildDriver(d, tier, seed + k));
+    this.names = ['YOU', ...entries.map((e) => e.name)];
+    this.builds = [build, ...entries.map((e) => e.build)];
     this.computed = this.builds.map((b) => computeBuild(pristine(b)));
     this.world = createWorld({
       track: this.track,
       cars: this.builds.map((b, i) => ({ params: this.computed[i].params, conditions: conditionsOf(b) })),
     });
+    entries.forEach((e, k) => initAi(this.world.state.cars[k + 1], e.personality, seed + 31 * k));
     this.queue = new InputQueue();
     this.lastFrame = neutralInput();
     this.views = this.builds.map((b, i) => this.makeView(i));
@@ -106,7 +109,7 @@ export class RaceScreen {
     this.lastFrame = this.app.localInput.sample();
     this.queue.push(tick, this.lastFrame);
     const inputs = [this.queue.take(tick)];
-    TARGETS.forEach((t, k) => inputs.push(cruisePilot(this.track, state.cars[k + 1], { targetSpeed: t.speed, lane: t.lane })));
+    for (let i = 1; i < state.cars.length; i++) inputs.push(aiInput(this.world, i, SIM_DT));
     this.prevPoses = this.capturePoses();
     stepWorld(this.world, inputs);
   }
@@ -145,10 +148,18 @@ export class RaceScreen {
       if (d > 90) return;
       const p = new THREE.Vector3(c.pos.x, c.pos.y + 1.6, c.pos.z).project(this.camera);
       if (p.z > 1) return;
-      out.push({ x: p.x, y: p.y, hp: c.hp / c.maxHp, id: j });
+      out.push({ x: p.x, y: p.y, hp: c.hp / c.maxHp, id: j, name: this.names[j] });
     });
     for (const m of out) m.lock = m.id === lock;
     return out;
+  }
+
+  // Race position by distance covered (laps + distance into the lap).
+  position() {
+    const { state } = this.world;
+    const prog = (c) => c.race.lap * this.track.length + c.trackS;
+    const mine = prog(state.cars[0]);
+    return { pos: 1 + state.cars.filter((c, j) => j > 0 && prog(c) > mine).length, total: state.cars.length };
   }
 
   render(alpha, dt, paused) {
@@ -189,6 +200,7 @@ export class RaceScreen {
       label: this.label,
       units: settings.units,
       markers: this.markers(player),
+      position: this.position(),
     });
     return { scene: this.scene, camera: this.camera };
   }

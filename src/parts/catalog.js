@@ -154,7 +154,7 @@ export const PART_TYPES = {
     chaingun: { name: 'Chain Gun', value: 800, size: 'small', kind: 'ballistic', damage: 5, fireRate: 12, range: 60, ammo: 200, reload: 2.5, powerDraw: 10, weight: 60 },
     scatter: { name: 'Scatter Cannon', value: 900, size: 'medium', kind: 'ballistic', damage: 60, fireRate: 1.5, range: 25, ammo: 24, reload: 3, powerDraw: 10, weight: 90 },
     plasma: { name: 'Plasma Launcher', value: 1200, size: 'medium', kind: 'energy', damage: 40, fireRate: 2, range: 70, heatPerShot: 8, powerDraw: 35, weight: 80 },
-    flamethrower: { name: 'Flamethrower', value: 900, size: 'small', kind: 'energy', damage: 8, fireRate: 10, range: 15, heatPerShot: 3, powerDraw: 20, weight: 70 },
+    flamethrower: { name: 'Flamethrower', value: 900, size: 'small', kind: 'energy', damage: 8, fireRate: 10, range: 15, heatPerShot: 1.2, powerDraw: 20, weight: 70 },
     railgun: { name: 'Rail Gun', value: 2000, size: 'large', kind: 'energy', damage: 150, fireRate: 0.5, range: 150, heatPerShot: 25, powerDraw: 60, weight: 120 },
   },
   secondaryWeapon: {

@@ -32,7 +32,7 @@ export class Hud {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  draw({ car, params, tick, fps, showFps, touchLayout, label, units = 'kmh', markers = [] }) {
+  draw({ car, params, tick, fps, showFps, touchLayout, label, units = 'kmh', markers = [], position = null }) {
     const { ctx, canvas } = this;
     // Layout is in 270-line units, scaled up by an integer so the pixel font stays
     // crisp and readable at any internal resolution.
@@ -106,6 +106,7 @@ export class Hud {
       ctx.fillRect(x - 11, y - 1, 22, 4);
       ctx.fillStyle = m.hp > 0.5 ? PALETTE.green : m.hp > 0.25 ? PALETTE.amber : PALETTE.pink;
       ctx.fillRect(x - 10, y, Math.max(1, Math.round(20 * m.hp)), 2);
+      if (m.name) text(m.name, x, y - 9, { color: '#e8e8ff', align: 'center' });
       if (m.lock) {
         ctx.fillStyle = '#ff2030';
         const ry = y + 12;
@@ -117,6 +118,8 @@ export class Hud {
         ctx.fillRect(x, ry - 1, 1, 3);
       }
     }
+
+    if (position) text(`POS ${position.pos}/${position.total}`, 104, 8, { scale: touchLayout ? 1 : 2, color: '#ffffff' });
 
     // Combat panel: health, heat, weapons and utility.
     const cx = 8;

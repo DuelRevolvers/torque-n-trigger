@@ -37,7 +37,7 @@ src/
   sim/                simulation: plain data, no three.js or DOM
     world.js          world state, stepWorld(), snapshot/restore, laps, respawn
     combat.js         weapons, projectiles, mines, utility, damage, part wear, heat, collisions, wrecks
-    pilots.js         simple cruising driver for target cars (until M4 AI)
+    ai.js             AI drivers: racing line, overtaking, weapons, utility, recovery (same InputFrames as players)
     vehicle.js        raycast vehicle physics
     track.js          spline track + nearest-point query
     input.js          InputFrame, InputQueue
@@ -45,7 +45,7 @@ src/
     tracks/           track definitions
   career/             career save, garage operations (install, remove, repaint)
   screens/            starter selection, garage, race
-  parts/              part catalog, starter generation,, quality/traits/condition, fitting rules, stats + PR, physics params, generator
+  parts/              part catalog, named AI drivers, starter generation,, quality/traits/condition, fitting rules, stats + PR, physics params, generator
   core/fixedLoop.js   fixed-timestep loop with render interpolation
   input/              keyboard, gamepad, touch -> InputFrame
   render/             three.js: retro renderer, procedural textures, track/city/car views, camera
