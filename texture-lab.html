@@ -1575,7 +1575,7 @@
       function partTexClassic(q, slot, baseHex) {
         const kind = PART_KIND[slot] || 'plain';
         return cached(`classic|${q}|${slot}|${baseHex}`, () =>
-          tiled(64, 64, (ctx) => {
+          canvasTexture(64, 64, (ctx) => {
             const rng = makeRng(1500 + Q.indexOf(q) * 31 + kind.length);
             const base = rgb(baseHex);
             const p = new Pix(64, 64);
@@ -1623,8 +1623,8 @@
                 for (let i = 0; i < 200; i++) dot(rng() * 64, 64 - Math.abs(rng() - rng()) * 20, rgb('#b0a890'), 0.3);
                 break;
               case 'street':
-                // Clean paint and flake, seams with hex bolts at the corners, a sticker.
-                for (let i = 0; i < 120; i++) dot(rng() * 64, rng() * 64, mix(base, [255, 255, 255], 0.5), 0.6);
+                // Clean smooth paint, seams with hex bolts at the corners, a sticker.
+                p.fill(() => base); // no flake
                 seams(scale(base, 0.5), light);
                 for (const [cx, cy] of [[0, 0], [32, 0], [0, 32], [32, 32]]) for (const [ox, oy] of [[3, 3], [-4, 3], [3, -4], [-4, -4]]) bolt(cx + ox, cy + oy);
                 rect(40, 44, 9, 6, rgb(PALETTE.cyan));
@@ -1753,6 +1753,40 @@
         );
       }
 
+      // These panels are drawn to sit whole on a face: each face of a part using
+      // them shows the panel fitted to its shorter side, centred, and repeated
+      // along the longer one, so bands, text and bolts are never cut off.
+      const isClassic = (u) => u?.kind === 'part' && (u.slot === 'utility' || PART_KIND[u.slot] === 'weapon' || PART_KIND[u.slot] === 'engine');
+      function fitShortSide(g) {
+        if (g.userData.fitted) return;
+        const uv = g.attributes.uv;
+        const prm = g.parameters || {};
+        const fit = (k, w, h, un, vn) => {
+          const s = Math.min(w, h) || 1;
+          uv.setXY(k, ((un - 0.5) * w) / s + 0.5, ((vn - 0.5) * h) / s + 0.5);
+        };
+        if (g.type === 'BoxGeometry') {
+          const { width: w, height: h, depth: d } = prm;
+          const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]]; // +x -x +y -y +z -z
+          for (let f = 0; f < 6; f++)
+            for (let k = f * 4; k < f * 4 + 4; k++) {
+              const [fw, fh] = dims[f];
+              fit(k, fw, fh, uv.getX(k) / fw, uv.getY(k) / fh); // metric back to 0..1, then fitted
+            }
+        } else if (g.type === 'CylinderGeometry') {
+          const { radiusTop: rt, radiusBottom: rb, height, radialSegments: rs, heightSegments: hs, thetaLength: tl, openEnded } = prm;
+          const torso = (rs + 1) * (hs + 1);
+          const round = tl * ((rt + rb) / 2);
+          for (let k = 0; k < torso; k++) fit(k, round, height, uv.getX(k) / round, uv.getY(k) / height);
+          let k = torso;
+          for (const r of [rt, rb]) {
+            if (openEnded || r <= 0) continue;
+            for (let i = 0; i < 2 * rs + 1; i++, k++) uv.setXY(k, uv.getX(k) / (2 * r) + 0.5, uv.getY(k) / (2 * r) + 0.5);
+          }
+        } else return;
+        uv.needsUpdate = true;
+        g.userData.fitted = true;
+      }
       function partTex(q, slot, baseHex) {
         const kind = PART_KIND[slot] || 'plain';
         if (kind === 'weapon' || kind === 'engine' || slot === 'utility') return partTexClassic(q, slot, baseHex);
@@ -2604,6 +2638,7 @@
         const stage = car.stage ?? 0;
         car.group.traverse((o) => {
           if (!o.isMesh) return;
+          if (isClassic(o.material?.userData)) fitShortSide(o.geometry);
           for (const mt of Array.isArray(o.material) ? o.material : [o.material]) {
             if (seen.has(mt)) continue;
             seen.add(mt);
