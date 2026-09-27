@@ -16,7 +16,7 @@ export function buildTrackView(track, tex, opts = {}) {
   const groundY = track.minY - 0.6;
   const doubleSided = { side: THREE.DoubleSide };
   const mats = {
-    road: standardMaterial({ map: tex.road, roughness: 0.45, metalness: 0.0, envMap: tex.env, envMapIntensity: 0.5, ...doubleSided }),
+    road: standardMaterial({ map: tex.road, roughnessMap: tex.roadRough ?? null, roughness: tex.roadRough ? 1 : 0.45, metalness: 0.0, envMap: tex.env, envMapIntensity: 0.5, ...doubleSided }),
     curb: litMaterial({ map: tex.curb, ...doubleSided }),
     shoulder: litMaterial({ map: opts.sidewalk || tex.shoulder, ...doubleSided }),
     barrier: litMaterial({ map: tex.wall, color: opts.barrierColor || '#ffffff', ...doubleSided }),

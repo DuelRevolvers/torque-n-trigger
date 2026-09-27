@@ -8,6 +8,8 @@ import { LocalInput } from './input/localInput.js';
 import { RetroRenderer } from './render/retroRenderer.js';
 import { createTextures, createEnvMap } from './render/textures.js';
 import { createCityTextures } from './render/cityTextures.js';
+import { createStreetTextures } from './render/streetTextures.js';
+import { applyCarTextures } from './render/carTextures.js';
 import { Hud } from './ui/hud.js';
 import { SettingsMenu } from './ui/settingsMenu.js';
 import { setCrtWarp } from './ui/crtWarp.js';
@@ -34,6 +36,11 @@ setCrtWarp(settings.crt);
 const hud = new Hud(hudCanvas);
 const tex = { ...createTextures(), ...createCityTextures() };
 tex.env = createEnvMap(renderer.renderer);
+// The concept-art street set replaces the road, barriers and facades, and cars
+// get their quality texture sets (applied by CarView).
+const street = createStreetTextures();
+Object.assign(tex, { road: street.road, roadRough: street.roadRough, wall: street.wallChevron, building: street.building, buildingGlow: street.buildingGlow });
+tex.carTextures = applyCarTextures;
 
 const app = {
   settings,

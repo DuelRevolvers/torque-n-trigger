@@ -81,7 +81,7 @@ export function buildDistrictView(map, tex) {
   const H = (x, z) => heightAt(x, z);
 
   const mats = {
-    road: standardMaterial({ map: tex.road, roughness: 0.45, metalness: 0, envMap: tex.env, envMapIntensity: 0.5, side: DS }),
+    road: standardMaterial({ map: tex.road, roughnessMap: tex.roadRough ?? null, roughness: tex.roadRough ? 1 : 0.45, metalness: 0, envMap: tex.env, envMapIntensity: 0.5, side: DS }),
     asphalt: litMaterial({ map: tex.asphalt, side: DS }),
     sidewalk: litMaterial({ map: tex.sidewalk, side: DS }),
     lot: litMaterial({ map: tex.lot, color: look.lot, side: DS }),

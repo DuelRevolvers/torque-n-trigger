@@ -1022,6 +1022,11 @@ export class CarView {
     this.damageSide = seeded(hash(parts.chassis.uid))() < 0.5 ? -1 : 1;
     this.damageRng = seeded(hash(parts.chassis.uid) + 77); // where hits land, the same every time
     this.damageMarks = []; // { type: 'crush' | 'dent' | 'hole' | 'tear', center, radius, ... } for damaged paint
+    // A texture set (tex.carTextures) skins the car now and again at each damage stage.
+    if (tex.carTextures) {
+      tex.carTextures(this);
+      this.onDamage = () => tex.carTextures(this);
+    }
 
     // Blob shadow, placed on the ground under the car every frame.
     const shadowGeo = new THREE.PlaneGeometry(W + 0.7, m.rear - m.front + 0.6);
