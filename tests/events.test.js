@@ -106,8 +106,17 @@ test('arena last standing ends with one survivor; takedown mode ranks by KOs', (
   for (let k = 1; k < s.length; k++) assert.ok(s[k].takedowns <= s[k - 1].takedowns);
 });
 
+test('free drive: solo, no countdown, never ends', () => {
+  const { world } = setup('free-drive');
+  assert.equal(world.state.cars.length, 1);
+  assert.equal(world.state.event.phase, 'racing');
+  run(world, 60);
+  assert.equal(world.state.event.done, false);
+  assert.ok(world.state.cars[0].race.lap >= 1);
+});
+
 test('rewards and salvage', () => {
-  const def = EVENTS[0];
+  const def = EVENTS.find((e) => e.id === 'strip-sprint');
   const r1 = computeRewards(def, 1, { takedowns: 2, style: { cash: 120 } }, 0);
   const r4 = computeRewards(def, 4, { takedowns: 0, style: { cash: 0 } }, 0);
   assert.ok(r1.total > r4.total);

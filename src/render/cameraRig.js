@@ -29,8 +29,13 @@ export class CameraRig {
     this.heading.lerp(_fwd, 1 - Math.exp(-7 * frameDt)).normalize();
 
     const dir = lookBack ? this.heading.clone().negate() : this.heading;
-    const dist = 6.4 + Math.min(speed, 60) * 0.025;
-    const targetY = pose.pos.y + 2.3;
+    // Speed feel (Burnout-style): intensity ramps in from ~90 km/h.
+    const s = Math.min(1, Math.max(0, (speed - 25) / 45));
+    const boosting = car.nitro.active > 0;
+    this.boost = (this.boost || 0) + ((boosting ? 1 : 0) - (this.boost || 0)) * (1 - Math.exp(-6 * frameDt));
+    this.intensity = Math.min(1, s * s * 0.85 + this.boost * 0.45);
+    const dist = 6.2 + s * 0.6 + this.boost * 1.4;
+    const targetY = pose.pos.y + 2.3 - s * 0.45;
     this.height = this.height === null ? targetY : this.height + (targetY - this.height) * (1 - Math.exp(-10 * frameDt));
 
     const cam = this.camera.position;
@@ -42,8 +47,13 @@ export class CameraRig {
     _look.set(pose.pos.x + dir.x * 4, pose.pos.y + 0.7, pose.pos.z + dir.z * 4);
     this.camera.lookAt(_look);
 
-    const boost = car.nitro.active > 0 ? 8 : 0;
-    const targetFov = 66 + Math.min(speed, 70) * 0.18 + boost;
+    // Shake grows with speed; boost adds a rumble.
+    const shake = s * s * 0.05 + this.boost * 0.06;
+    if (shake > 0.001) {
+      cam.x += (Math.random() - 0.5) * shake;
+      cam.y += (Math.random() - 0.5) * shake;
+    }
+    const targetFov = 64 + s * 24 + this.boost * 12;
     this.fov += (targetFov - this.fov) * (1 - Math.exp(-4 * frameDt));
     if (Math.abs(this.camera.fov - this.fov) > 0.01) {
       this.camera.fov = this.fov;

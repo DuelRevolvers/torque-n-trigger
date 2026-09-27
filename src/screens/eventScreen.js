@@ -4,7 +4,7 @@ import { computeBuild } from '../parts/build.js';
 import { EVENTS } from '../career/events.js';
 import { tierForPr } from '../parts/drivers.js';
 
-const TYPE_LABEL = { sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG' };
+const TYPE_LABEL = { free: 'FREE DRIVE', sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG' };
 
 // Pick an event. The player's car turns on the table behind the list.
 export class EventScreen {
@@ -26,7 +26,7 @@ export class EventScreen {
         <span class="tag">${TYPE_LABEL[e.type]}</span>
         <b>${e.name}</b>
         <span class="event-desc">${e.desc}</span>
-        <span class="event-meta">${e.cars} cars${e.laps ? ` &middot; ${e.laps} laps` : ''}${e.timeLimit ? ` &middot; ${Math.round(e.timeLimit / 60)} min` : ''} &middot; Purse <b>$${Math.round(e.purse * scale)}</b></span>
+        <span class="event-meta">${e.cars > 1 ? `${e.cars} cars` : 'Solo'}${e.laps ? ` &middot; ${e.laps} laps` : ''}${e.timeLimit ? ` &middot; ${Math.round(e.timeLimit / 60)} min` : ''} &middot; ${e.purse ? `Purse <b>$${Math.round(e.purse * scale)}</b>` : 'No prizes'}</span>
       </button>`).join('');
     this.app.ui.innerHTML = `<div class="screen events">
       <div class="g-head"><div><h1>EVENTS</h1><div class="car-name">${car.name} &middot; PR ${computed.pr} &middot; $${this.app.career.cash}</div></div>

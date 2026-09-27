@@ -130,6 +130,15 @@ test('mines trigger, energy weapons overheat, oil cuts grip', () => {
   assert.ok(oily.state.cars[1].mods.grip < 0.5);
 });
 
+test('god mode: an invulnerable car takes no damage or wear', () => {
+  const w = duel(build(), build());
+  const t = w.state.cars[1];
+  t.invulnerable = true;
+  step(w, 2, { fire1: true });
+  assert.equal(t.hp, t.maxHp);
+  assert.ok(Object.values(t.condition).every((v) => v === 100));
+});
+
 test('combat is deterministic', () => {
   const run = () => {
     const w = duel(build({ primaryWeapon: part('primaryWeapon', 'scatter') }), build());

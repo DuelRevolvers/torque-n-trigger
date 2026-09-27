@@ -6,6 +6,10 @@ import { QUALITIES, QUALITY } from '../parts/catalog.js';
 
 export const EVENTS = [
   {
+    id: 'free-drive', type: 'free', name: 'Free Drive', venue: 'testLoop', cars: 1, purse: 0,
+    desc: 'The circuit to yourself. No opponents, no finish line. Lap times only.',
+  },
+  {
     id: 'strip-sprint', type: 'sprint', name: 'Neon Strip Sprint', venue: 'neonStrip', cars: 6, purse: 1200,
     desc: 'Point to point through the Strip. Top speed and nitrous win it.',
   },

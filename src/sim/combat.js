@@ -113,7 +113,7 @@ function invInertiaWorld(car, p, v) {
 
 export function applyDamage(world, j, amount, point, source, silent = false) {
   const car = world.state.cars[j];
-  if (car.wrecked || amount <= 0) return;
+  if (car.wrecked || amount <= 0 || car.invulnerable) return;
   const p = world.params[j];
   const c = combatOf(p);
   if (car.shield > 0) amount *= 0.2;

@@ -6,6 +6,7 @@ const OPTIONS = [
   { key: 'resolution', label: 'Resolution', values: [[540, '960x540'], [720, '1280x720'], [0, 'Native'], [360, '640x360']] },
   { key: 'bloom', label: 'Neon bloom', values: [[true, 'On'], [false, 'Off']] },
   { key: 'rain', label: 'Rain', values: [[true, 'On'], [false, 'Off']] },
+  { key: 'speedFx', label: 'Speed effects', values: [[true, 'On'], [false, 'Off']] },
   { key: 'dither', label: 'Colour dither', values: [[false, 'Off'], [true, 'On']] },
   { key: 'vertexSnap', label: 'Vertex wobble', values: [[false, 'Off'], [true, 'On']] },
   { key: 'scanlines', label: 'Scanlines', values: [[false, 'Off'], [true, 'On']] },
@@ -14,6 +15,7 @@ const OPTIONS = [
   { key: 'autoAccelerate', label: 'Auto-accelerate', values: [[false, 'Off'], [true, 'On']] },
   { key: 'showFps', label: 'Show FPS', values: [[true, 'On'], [false, 'Off']] },
   { key: 'units', label: 'Speed units', values: [['kmh', 'KM/H'], ['mph', 'MPH']] },
+  { key: 'godMode', label: 'God mode', values: [[false, 'Off'], [true, 'On']] },
 ];
 
 export class SettingsMenu {

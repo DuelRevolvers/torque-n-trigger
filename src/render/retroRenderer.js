@@ -26,6 +26,11 @@ const POST_FRAGMENT = /* glsl */ `
   uniform float uLevels;
   uniform float uScanlines;
   uniform float uCrt;
+  uniform float uSpeed;     // 0..1 speed effect strength
+
+  vec3 sceneAt(vec2 uv) {
+    return linearToOutputTexel(texture2D(tScene, uv)).rgb;
+  }
 
   float bayer4(vec2 p) {
     int x = int(mod(p.x, 4.0));
@@ -54,7 +59,21 @@ const POST_FRAGMENT = /* glsl */ `
     vec2 pixel = floor(uv * uInternal);
     vec2 sampleUv = (pixel + 0.5) / uInternal;
 
-    vec3 color = linearToOutputTexel(texture2D(tScene, sampleUv)).rgb;
+    vec3 color;
+    vec2 fromCenter = sampleUv - 0.5;
+    if (uSpeed > 0.01) {
+      // Radial blur toward the centre, strongest at the edges of the screen.
+      float amount = uSpeed * dot(fromCenter, fromCenter) * 0.9;
+      color = vec3(0.0);
+      for (int k = 0; k < 8; k++) color += sceneAt(sampleUv - fromCenter * amount * (float(k) / 7.0));
+      color /= 8.0;
+      float ca = uSpeed * 0.012 * length(fromCenter);
+      color.r = mix(color.r, sceneAt(sampleUv + fromCenter * ca).r, 0.7);
+      color.b = mix(color.b, sceneAt(sampleUv - fromCenter * ca).b, 0.7);
+      color *= 1.0 - uSpeed * 0.45 * dot(fromCenter * 2.0, fromCenter * 2.0);
+    } else {
+      color = sceneAt(sampleUv);
+    }
     if (uDither > 0.5) {
       color = floor(color * uLevels + 0.5 + bayer4(pixel)) / uLevels;
     }
@@ -98,6 +117,7 @@ export class RetroRenderer {
         uLevels: { value: 48 },
         uScanlines: { value: 0 },
         uCrt: { value: 0 },
+        uSpeed: { value: 0 },
       },
     });
     this.postScene = new THREE.Scene();
@@ -141,6 +161,10 @@ export class RetroRenderer {
     this.post.uniforms.uScanlines.value = s.scanlines ? 1 : 0;
     this.post.uniforms.uCrt.value = s.crt ? 1 : 0;
     retroUniforms.uSnap.value = s.vertexSnap ? 1 : 0;
+  }
+
+  setSpeedFx(amount) {
+    this.post.uniforms.uSpeed.value = this.settings.speedFx === false ? 0 : amount;
   }
 
   get aspect() {

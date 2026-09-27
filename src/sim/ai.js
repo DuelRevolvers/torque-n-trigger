@@ -47,7 +47,7 @@ function racingLine(track) {
 function speedProfile(track, p, caution) {
   const { curvature } = racingLine(track);
   const n = track.count;
-  const grip = Math.min(p.gripFront, p.gripRear) * GRAVITY * 0.82;
+  const grip = Math.max(Math.min(p.gripFront, p.gripRear) * GRAVITY * 0.82, (p.arcade?.latG || 0) * GRAVITY * 0.78);
   const decel = Math.min(p.brakeForce / p.mass, grip) * (0.75 - caution * 0.2);
   const v = new Float64Array(n);
   for (let i = 0; i < n; i++) v[i] = Math.min(75, Math.sqrt(grip / Math.max(Math.abs(curvature[i]), 1e-4)));

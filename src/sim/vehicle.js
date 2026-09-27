@@ -129,7 +129,8 @@ function updateSteering(car, p, input, dt) {
 // torque once past their spool rpm.
 export function engineTorque(e, rpm) {
   const x = rpm / e.redline;
-  const shape = e.curve === 'flat' ? clamp(1.15 - 0.3 * x, 0.8, 1) : clamp(1 - 1.6 * (x - 0.65) ** 2, 0.35, 1);
+  let shape = e.curve === 'flat' ? clamp(1.15 - 0.3 * x, 0.8, 1) : clamp(1 - 1.6 * (x - 0.65) ** 2, 0.35, 1);
+  if (e.flatten) shape += (1 - shape) * e.flatten; // arcade: less peaky power
   const turbo = e.turboBoost ? e.turboBoost * clamp((rpm - e.turboRpm) / 1500, 0, 1) : 0;
   return e.maxTorque * shape * (1 + turbo);
 }
@@ -179,13 +180,13 @@ function updateDrivetrain(car, p, input, dt) {
   if (rpm > e.redline) torque = 0;
 
   let drive = (torque * ratio * t.efficiency) / p.wheelRadius;
-  if (car.shiftTimer > 0) drive *= 0.25;
+  if (car.shiftTimer > 0) drive *= p.arcade ? p.arcade.shiftKeep : 0.25;
   if (car.reverse) drive = vLong < -p.maxReverseSpeed ? 0 : -drive;
   else if (car.nitro.active > 0) drive += p.nitro.force;
 
   car.rpm = Math.min(e.redline + 150, rpm + car.wheelspin * 1500);
   car.braking = brake > 0.05;
-  return { drive, brake, handbrake: input.handbrake };
+  return { drive, brake, handbrake: input.handbrake, throttle, reverse: car.reverse, steerIn: input.steer, brakeIn: car.reverse ? 0 : input.brake };
 }
 
 function physicsSubstep(car, p, ctl, track, h) {
@@ -288,7 +289,7 @@ function physicsSubstep(car, p, ctl, track, h) {
       if (w.drive && ctl.drive !== 0) wheelspin = Math.max(wheelspin, Math.min(1, demand - 1));
     }
     const retain = Math.max(p.minLateralRetain, Math.sqrt(Math.max(0, 1 - Math.min(1, demand) ** 2)));
-    const latGrip = maxF * retain * (ctl.handbrake && !w.front ? p.handbrakeGrip : 1);
+    const latGrip = maxF * retain * (ctl.handbrake && !w.front ? p.handbrakeGrip : 1) * (!w.front && car.driftKick > 0 ? 0.5 : 1);
 
     // Lateral: slip-angle curve that peaks, then falls off to a sliding value.
     const alpha = Math.atan2(vLat, Math.max(Math.abs(vLong), p.lowSpeedSlip));
@@ -303,6 +304,11 @@ function physicsSubstep(car, p, ctl, track, h) {
   if (anyContact) {
     force = add(force, scale(up, -p.downforce * speed * speed));
     torque = add(torque, driftAssistTorque(car, p));
+    if (p.arcade) {
+      const a = arcadeAssist(car, p, ctl, h);
+      force = add(force, a.force);
+      torque = add(torque, a.torque);
+    }
   } else {
     // Gentle mid-air self-righting, so jumps land wheels-down more often than not.
     torque = add(torque, scale(cross(up, WORLD_UP), p.airLeveling));
@@ -325,6 +331,71 @@ function physicsSubstep(car, p, ctl, track, h) {
   resolveBodyContacts(car, p, track);
 }
 
+// Arcade assists (params.arcade): extra thrust that fades with speed, a yaw
+// assist that turns the car at the rate its steering asks for (up to latG), and
+// velocity alignment so the car goes where it points. The handbrake and big
+// slides switch alignment off so drifting still works.
+function arcadeAssist(car, p, ctl, h) {
+  const a = p.arcade;
+  const fwd = quatRotate(car.quat, LOCAL_FWD);
+  const right = quatRotate(car.quat, LOCAL_RIGHT);
+  const up = quatRotate(car.quat, LOCAL_UP);
+  const vLong = dot(car.vel, fwd);
+  const vLat = dot(car.vel, right);
+  const speed = Math.abs(vLong);
+  let force = v3();
+  let torque = v3();
+
+  if (!ctl.reverse && ctl.throttle > 0) {
+    force = scale(fwd, ctl.throttle * p.mass * a.thrust * clamp(1 - vLong / a.thrustFade, 0, 1));
+  }
+
+  // Drift (Burnout-style): tap the brake or handbrake while steering hard at
+  // speed. The tail kicks out, the angle follows how hard you steer into the
+  // turn, and straightening or counter-steering ends it.
+  const slide = Math.atan2(Math.abs(vLat), Math.max(speed, 1));
+  const steerIn = ctl.steerIn || 0;
+  if (!car.drifting && vLong > 12 && Math.abs(steerIn) > 0.45 && (ctl.handbrake || (ctl.brakeIn > 0.4 && vLong > 16))) {
+    car.drifting = true;
+    car.driftDir = Math.sign(steerIn);
+    car.driftKick = 0.35;
+    car.driftExit = 0;
+    car.angVel = add(car.angVel, scale(up, -car.driftDir * a.driftKick));
+  }
+  if (car.drifting) {
+    car.driftKick = Math.max(0, car.driftKick - h);
+    const holding = Math.sign(steerIn) === car.driftDir && Math.abs(steerIn) > 0.15;
+    car.driftExit = holding ? 0 : car.driftExit + h;
+    if (car.driftExit > 0.3 || speed < 6 || (car.driftKick === 0 && slide < 0.08)) car.drifting = false;
+  }
+  const drifting = !!car.drifting;
+
+  const wheelbase = Math.abs(p.wheels[2].z - p.wheels[0].z);
+  if (speed > 1.5) {
+    const limit = (a.latG * GRAVITY) / speed;
+    let want;
+    if (drifting) {
+      // Hold a drift angle set by how hard you steer into the turn.
+      const target = a.driftAngleMin + (a.driftAngleMax - a.driftAngleMin) * Math.min(1, Math.abs(steerIn));
+      const angle = Math.atan2(-vLat * car.driftDir, speed); // > 0: nose inside the turn
+      want = -car.driftDir * (limit * 0.9 + (target - angle) * 3);
+    } else {
+      const kinematic = (speed * Math.tan(car.steer)) / wheelbase;
+      want = -Math.sign(vLong) * clamp(kinematic, -limit, limit);
+    }
+    const yaw = dot(car.angVel, up);
+    torque = scale(up, (want - yaw) * p.inertia.y * (drifting ? a.yawGain * 0.6 : a.yawGain));
+  }
+
+  if (!ctl.handbrake && (drifting || slide < a.alignMaxSlip)) {
+    const k = Math.min(1, (drifting ? a.driftAlign : a.align) * h);
+    car.vel = sub(car.vel, scale(right, vLat * k));
+    // Keep the speed: redirect the removed sideways motion forward.
+    car.vel = add(car.vel, scale(fwd, Math.sign(vLong || 1) * (Math.hypot(vLong, vLat) - Math.hypot(vLong, vLat * (1 - k)))));
+  }
+  return { force, torque };
+}
+
 // Arcade drift control: once the slide angle passes driftAngle, yaw that would
 // widen it further is damped, so a drift holds instead of becoming a spin.
 function driftAssistTorque(car, p) {
@@ -339,7 +410,7 @@ function driftAssistTorque(car, p) {
   const yawRate = dot(car.angVel, up);
   // Positive yaw (turning left) pushes the velocity to the right of the heading.
   const widening = Math.sign(yawRate) === Math.sign(beta);
-  const excess = Math.abs(beta) - s.driftAngle;
+  const excess = Math.abs(beta) - (s.driftAngle + (car.drifting ? 0.35 : 0));
   if (!widening || excess <= 0) return v3();
   const strength = Math.min(1, excess / 0.5);
   return scale(up, -yawRate * p.inertia.y * s.driftDamping * strength);

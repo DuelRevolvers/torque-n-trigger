@@ -22,6 +22,7 @@ import { CarView } from '../render/carView.js';
 import { CameraRig } from '../render/cameraRig.js';
 import { Rain } from '../render/rain.js';
 import { Fx } from '../render/fx.js';
+import { SpeedLines } from '../render/speedLines.js';
 import { formatTime } from '../ui/hud.js';
 
 const hashId = (s) => [...s].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0, 2166136261);
@@ -50,6 +51,9 @@ export class RaceScreen {
     this.fx = new Fx(scene, app.tex);
     this.scene = scene;
     this.camera = new THREE.PerspectiveCamera(68, 16 / 9, 0.3, 1500);
+    scene.add(this.camera); // speed lines ride on the camera
+    this.speedLines = new SpeedLines(this.camera);
+    this.speedFx = 0;
     this.venues = new Map();
     this.poses = [];
     this._qa = new THREE.Quaternion();
@@ -157,6 +161,7 @@ export class RaceScreen {
     const tick = state.tick;
     this.lastFrame = this.app.localInput.sample();
     this.queue.push(tick, this.lastFrame);
+    state.cars[0].invulnerable = !!this.app.settings.godMode;
     const inputs = [this.queue.take(tick)];
     for (let i = 1; i < state.cars.length; i++) inputs.push(aiInput(this.world, i, SIM_DT));
     this.prevPoses = this.capturePoses();
@@ -214,12 +219,14 @@ export class RaceScreen {
     const car = state.cars[0];
     const alive = state.cars.filter((c) => !c.wrecked).length;
     const title = {
+      free: `LAP ${Math.max(1, car.race.lap)}`,
       circuit: `LAP ${Math.min(Math.max(1, car.race.lap), ev.laps)}/${ev.laps}`,
       sprint: 'SPRINT',
       drag: 'DRAG',
       arena: ev.mode === 'lastStanding' ? 'LAST STANDING' : 'BRAWL',
     }[ev.type];
     let sub = '';
+    if (ev.type === 'free') sub = `BEST ${formatTime(car.race.bestLap)}`;
     if (ev.type === 'arena') {
       const left = Math.max(0, ev.timeLimit - ev.time);
       sub = ev.mode === 'lastStanding' ? `ALIVE ${alive}` : `LEFT ${formatTime(left * 60).slice(0, -3)}`;
@@ -230,7 +237,9 @@ export class RaceScreen {
     return {
       title,
       sub: sub || undefined,
-      timeTicks: ev.phase === 'racing' ? Math.round(ev.time * 60) : 0,
+      timeTicks: ev.type === 'free'
+        ? (car.race.lapStart >= 0 ? state.tick - car.race.lapStart : -1)
+        : ev.phase === 'racing' ? Math.round(ev.time * 60) : 0,
       countdown: ev.phase === 'countdown' ? Math.ceil(ev.timer) : null,
       go: ev.phase === 'racing' && ev.time < 0.8,
       manual: car.manual,
@@ -279,6 +288,9 @@ export class RaceScreen {
       this.camera.position.y += (Math.random() - 0.5) * this.shake;
       this.shake = Math.max(0, this.shake - dt * 1.5);
     }
+    const fxOn = settings.speedFx !== false && !this.resultsShown;
+    this.speedFx = fxOn ? this.cameraRig.intensity || 0 : 0;
+    this.speedLines.update(paused ? 0 : dt, Math.hypot(player.vel.x, player.vel.z), this.speedFx);
     this.rain.mesh.visible = settings.rain && this.outdoor;
     if (this.rain.mesh.visible) this.rain.update(this.camera.position, dt);
 
@@ -299,10 +311,10 @@ export class RaceScreen {
       fps: this.app.fps,
       showFps: settings.showFps,
       touchLayout: touch.visible,
-      label: this.label,
+      label: settings.godMode ? `${this.label}  GOD MODE` : this.label,
       units: settings.units,
       markers: this.markers(player),
-      position: { pos: order.findIndex((r) => r.id === 0) + 1, total: state.cars.length },
+      position: state.cars.length > 1 ? { pos: order.findIndex((r) => r.id === 0) + 1, total: state.cars.length } : null,
       eventInfo: this.eventInfo(),
     });
     return { scene: this.scene, camera: this.camera };

@@ -133,6 +133,7 @@ startFixedLoop({
     if (gamepads.pollStart()) menu.toggle();
     if (frameDt > 0) app.fps += (1 / frameDt - app.fps) * 0.05;
     const { scene, camera } = app.current.render(alpha, frameDt, menu.open);
+    renderer.setSpeedFx(app.current.speedFx || 0);
     renderer.render(scene, camera);
   },
 });

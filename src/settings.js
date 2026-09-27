@@ -14,6 +14,8 @@ export const DEFAULT_SETTINGS = {
   touchControls: 'auto', // 'auto' | 'on' | 'off'
   showFps: true,
   units: 'kmh', // 'kmh' | 'mph'
+  speedFx: true, // speed blur, streaks, FOV and shake
+  godMode: false, // the player's car takes no damage
 };
 
 export function loadSettings() {

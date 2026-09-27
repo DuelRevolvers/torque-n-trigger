@@ -94,6 +94,27 @@ export function computeBuild(build) {
   return { ok: errors.length === 0, errors, warnings, eff, weight, capacity, powerSupply, powerDraw, params, stats, pr: performanceRating(stats) };
 }
 
+// Global feel tuning: arcade punch on top of the part stats.
+const TORQUE_BOOST = 1.4;
+const FINAL_DRIVE_SCALE = 0.88; // taller gearing so top speed is drag-limited, not rev-limited
+const DRAG_SCALE = 0.9;
+const GRIP_BOOST = 1.08; // sharper turn-in and more cornering grip
+const STEER = { max: 0.66, falloff: 16, rate: 7.5, returnRate: 10 };
+// Arcade handling layer (see vehicle.js arcadeAssist).
+const ARCADE = {
+  thrust: 3.2, // m/s^2 of extra pull at low speed...
+  thrustFade: 75, // ...fading to nothing at this speed (m/s)
+  shiftKeep: 0.8, // share of power kept during a gear change
+  latG: 1.5, // cornering the yaw assist may ask for, in g
+  yawGain: 6, // how firmly the car follows the steering
+  align: 2.6, // per second: how fast sideways motion turns into forward motion
+  driftAlign: 0.3, // ...while drifting (low, so a drift holds its angle)
+  driftKick: 1.1, // rad/s of yaw added when a drift starts
+  driftAngleMin: 0.35, // drift angle (rad) with light steering...
+  driftAngleMax: 0.7, // ...and with full lock into the turn
+  alignMaxSlip: 0.5, // rad: slides bigger than this are left alone (drifts)
+};
+
 // Physics params in the shape vehicle.js expects.
 function deriveParams(eff, mass, overweight, powerSupply, powerDraw) {
   const ch = eff.chassis;
@@ -136,36 +157,38 @@ function deriveParams(eff, mass, overweight, powerSupply, powerDraw) {
       antiRoll: stiffness * sus.antiRoll,
     },
     tireForceY: -0.15,
-    gripFront: wh.grip,
-    gripRear: wh.grip * 1.167,
+    gripFront: wh.grip * GRIP_BOOST,
+    gripRear: wh.grip * 1.167 * GRIP_BOOST,
     surfaceGrip: [1, 0.95, 0.72 * wh.offroadGrip],
     slipPeak: 0.16,
     slideGrip: 0.82,
     lowSpeedSlip: 3,
-    minLateralRetain: 0.3,
+    minLateralRetain: 0.55,
+    arcade: ARCADE,
     handbrakeGrip: 0.55,
     brakeForce: eff.brakes ? eff.brakes.brakeForce : ch.brakeBase,
     brakeBias: 0.62,
     handbrakeForce: 5000 * scaleMass,
     rollingResistance: 45 * scaleMass,
-    drag: ch.drag * (1 - (eff.bodyKit?.aero || 0)) + (eff.spoiler?.drag || 0),
+    drag: (ch.drag * (1 - (eff.bodyKit?.aero || 0)) + (eff.spoiler?.drag || 0)) * DRAG_SCALE,
     downforce: 0.5 + (eff.spoiler?.downforce || 0) * 0.35,
     angularDamping: 0.3,
     airLeveling: 3500 * scaleMass,
     airDamping: 1200 * scaleMass,
     engine: {
-      maxTorque: eng.torque * (1 + (eff.exhaust?.torqueBonus || 0)) * heavyPenalty,
+      maxTorque: eng.torque * (1 + (eff.exhaust?.torqueBonus || 0)) * heavyPenalty * TORQUE_BOOST,
       idleRpm: 1000,
       launchRpm: eng.curve === 'flat' ? 4500 : 3800,
       redline: eng.redline,
       curve: eng.curve || 'peaky',
+      flatten: 0.5,
       turboBoost: eff.turbo?.turboBoost || 0,
       turboRpm: eff.turbo?.spoolRpm || 0,
     },
     transmission: {
       gears: tr.gears,
       reverse: 3.4,
-      finalDrive: tr.finalDrive,
+      finalDrive: tr.finalDrive * FINAL_DRIVE_SCALE,
       efficiency: 0.88,
       shiftUpRpm: eng.redline - 300,
       shiftDownRpm: eng.redline * 0.44,
@@ -173,10 +196,10 @@ function deriveParams(eff, mass, overweight, powerSupply, powerDraw) {
     },
     maxReverseSpeed: 12,
     steering: {
-      max: 0.6 * handling,
-      speedFalloff: 12 * handling,
-      rate: 3.2 * handling,
-      returnRate: 5.5,
+      max: STEER.max * handling,
+      speedFalloff: STEER.falloff * handling,
+      rate: STEER.rate * handling,
+      returnRate: STEER.returnRate,
       counterSteerAssist: 0.55,
       driftAngle: 0.45,
       driftDamping: 6,
