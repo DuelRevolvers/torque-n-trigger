@@ -22,11 +22,16 @@ export class Hud {
     this.ctx = canvas.getContext('2d');
   }
 
-  draw({ car, params, tick, fps, showFps, touchLayout }) {
+  draw({ car, params, tick, fps, showFps, touchLayout, label }) {
     const { ctx, canvas } = this;
-    const W = canvas.width;
-    const H = canvas.height;
-    ctx.clearRect(0, 0, W, H);
+    // Layout is in 270-line units, scaled up by an integer so the pixel font stays
+    // crisp and readable at any internal resolution.
+    const S = Math.max(1, Math.round(canvas.height / 270));
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.setTransform(S, 0, 0, S, 0, 0);
+    const W = Math.floor(canvas.width / S);
+    const H = Math.floor(canvas.height / S);
     const text = (t, x, y, opts = {}) => drawText(ctx, t, x, y, { shadow: SHADOW, ...opts });
     const panel = (x, y, w, h) => {
       ctx.fillStyle = PANEL;
@@ -88,5 +93,6 @@ export class Hud {
       if (touchLayout) text(label, 8, 66, { color: '#6a6090' });
       else text(label, W - 32, 8, { color: '#6a6090', align: 'right' });
     }
+    if (label) text(label, 8, touchLayout ? 76 : H - 14, { color: '#a89fd0' });
   }
 }

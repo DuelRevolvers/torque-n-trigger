@@ -1,10 +1,13 @@
 import * as THREE from 'three';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { retroUniforms } from './retroMaterial.js';
 
-// Renders the scene into a small target (e.g. ~480x270) and upscales it to the
-// screen with nearest-neighbour sampling at an integer scale, so every game pixel
-// is the same size. The post pass also does the optional colour-quantise + dither,
-// scanlines and CRT curvature, and composites the HUD canvas on top.
+// Renders the scene at an internal resolution (default ~960x540) with neon bloom,
+// then upscales it to the screen at an integer scale so every pixel is the same
+// size. The post pass also does the optional colour-quantise + dither, scanlines
+// and CRT curvature, and composites the HUD canvas on top.
 
 const POST_VERTEX = /* glsl */ `
   varying vec2 vUv;
@@ -75,12 +78,7 @@ export class RetroRenderer {
     this.settings = settings;
     this.hudCanvas = hudCanvas;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-    this.target = new THREE.WebGLRenderTarget(1, 1, {
-      minFilter: THREE.NearestFilter,
-      magFilter: THREE.NearestFilter,
-      generateMipmaps: false,
-      depthBuffer: true,
-    });
+    this.composer = null; // created on first render, when scene and camera are known
     this.hudTexture = new THREE.CanvasTexture(hudCanvas);
     this.hudTexture.minFilter = this.hudTexture.magFilter = THREE.NearestFilter;
     this.hudTexture.generateMipmaps = false;
@@ -92,12 +90,12 @@ export class RetroRenderer {
       depthTest: false,
       depthWrite: false,
       uniforms: {
-        tScene: { value: this.target.texture },
+        tScene: { value: null },
         tHud: { value: this.hudTexture },
         uInternal: { value: new THREE.Vector2(1, 1) },
         uScale: { value: 1 },
         uDither: { value: 1 },
-        uLevels: { value: 24 },
+        uLevels: { value: 48 },
         uScanlines: { value: 0 },
         uCrt: { value: 0 },
       },
@@ -120,14 +118,15 @@ export class RetroRenderer {
     const cssH = window.innerHeight;
     const outW = Math.floor(cssW * dpr);
     const outH = Math.floor(cssH * dpr);
-    const scale = Math.max(1, Math.round(outH / this.settings.resolution));
+    const res = this.settings.resolution;
+    const scale = res ? Math.max(1, Math.round(outH / res)) : 1;
     this.width = Math.ceil(outW / scale);
     this.height = Math.ceil(outH / scale);
     this.scale = scale;
 
     this.renderer.setPixelRatio(dpr);
     this.renderer.setSize(cssW, cssH);
-    this.target.setSize(this.width, this.height);
+    if (this.composer) this.sizeComposer();
     this.hudCanvas.width = this.width;
     this.hudCanvas.height = this.height;
     this.hudTexture.dispose(); // canvas size changed; reallocate on the GPU
@@ -148,10 +147,24 @@ export class RetroRenderer {
     return this.width / this.height;
   }
 
+  sizeComposer() {
+    this.composer.setPixelRatio(1);
+    this.composer.setSize(this.width, this.height);
+  }
+
   render(scene, camera) {
+    if (!this.composer) {
+      this.composer = new EffectComposer(this.renderer);
+      this.composer.renderToScreen = false;
+      this.composer.addPass(new RenderPass(scene, camera));
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(this.width, this.height), 0.55, 0.35, 0.9);
+      this.composer.addPass(this.bloom);
+      this.sizeComposer();
+    }
+    this.bloom.enabled = this.settings.bloom;
     this.hudTexture.needsUpdate = true;
-    this.renderer.setRenderTarget(this.target);
-    this.renderer.render(scene, camera);
+    this.composer.render();
+    this.post.uniforms.tScene.value = this.composer.readBuffer.texture;
     this.renderer.setRenderTarget(null);
     this.renderer.render(this.postScene, this.postCamera);
   }

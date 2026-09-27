@@ -1,13 +1,15 @@
 // Player settings, persisted in localStorage when it's available.
 
-const KEY = 'tt.settings.v1';
+const KEY = 'tt.settings.v2';
 
 export const DEFAULT_SETTINGS = {
-  resolution: 270, // internal render height in pixels
-  dither: true,
+  resolution: 540, // internal render height in pixels; 0 = native
+  bloom: true,
+  rain: true,
+  dither: false,
   scanlines: false,
   crt: false,
-  vertexSnap: true,
+  vertexSnap: false,
   autoAccelerate: false,
   touchControls: 'auto', // 'auto' | 'on' | 'off'
   showFps: true,

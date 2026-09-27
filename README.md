@@ -25,6 +25,7 @@ name breaks npm's Windows command shims (`npx vite` fails here for that reason).
 | Nitro | Shift | B | N2O |
 | Look back | Q | R3 | LOOK |
 | Reset car | R | Back | RESET |
+| New random car (dev, until the M2 garage) | N | | |
 | Pause & settings | Esc | Start | II button |
 
 ## Code layout
@@ -37,8 +38,9 @@ src/
     vehicle.js        raycast vehicle physics
     track.js          spline track + nearest-point query
     input.js          InputFrame, InputQueue
-    carParams.js      car physics parameters (M1: derived from parts)
+    carParams.js      hand-tuned reference car used by the physics tests
     tracks/           track definitions
+  parts/              part catalog, quality/traits/condition, fitting rules, stats + PR, physics params, generator
   core/fixedLoop.js   fixed-timestep loop with render interpolation
   input/              keyboard, gamepad, touch -> InputFrame
   render/             three.js: retro renderer, procedural textures, track/city/car views, camera

@@ -63,13 +63,20 @@ function updateRecovery(world, car, params, input) {
   const lost = car.pos.y < track.minY - 30 || Math.abs(car.lateral) > track.wallDist + 10;
   const resetPressed = input.reset && !car.prevReset;
   car.prevReset = input.reset;
-  if (resetPressed || car.stuckTime > 2 || lost) {
-    const i = car.trackIndex >= 0 ? car.trackIndex : 0;
-    placeCar(car, params, poseAt(track, i));
-    car.trackIndex = i;
-    car.trackS = track.s[i];
-    car.lateral = 0;
-  }
+  if (resetPressed || car.stuckTime > 2 || lost) respawnCar(world, car.id);
+}
+
+// Puts car i back on the centreline at its current track position, at rest.
+export function respawnCar(world, id) {
+  const { track } = world;
+  const car = world.state.cars[id];
+  const params = world.params[id];
+  const i = car.trackIndex >= 0 ? car.trackIndex : 0;
+  placeCar(car, params, poseAt(track, i));
+  car.trackIndex = i;
+  car.trackS = track.s[i];
+  car.lateral = 0;
+  car.nitro.charges = Math.min(car.nitro.charges, params.nitro.charges);
 }
 
 // Lap timing in ticks. A lap only counts if the car passed the halfway point, so

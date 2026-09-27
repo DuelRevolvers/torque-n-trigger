@@ -124,9 +124,13 @@ function updateSteering(car, p, input, dt) {
   car.steer = approach(car.steer, target, (returning ? s.returnRate : s.rate) * dt);
 }
 
-function engineTorque(e, rpm) {
+// Torque at rpm. 'flat' curves (electric) make full torque from zero; turbos add
+// torque once past their spool rpm.
+export function engineTorque(e, rpm) {
   const x = rpm / e.redline;
-  return e.maxTorque * clamp(1 - 1.6 * (x - 0.65) ** 2, 0.35, 1);
+  const shape = e.curve === 'flat' ? clamp(1.15 - 0.3 * x, 0.8, 1) : clamp(1 - 1.6 * (x - 0.65) ** 2, 0.35, 1);
+  const turbo = e.turboBoost ? e.turboBoost * clamp((rpm - e.turboRpm) / 1500, 0, 1) : 0;
+  return e.maxTorque * shape * (1 + turbo);
 }
 
 function updateDrivetrain(car, p, input, dt) {
@@ -259,7 +263,7 @@ function physicsSubstep(car, p, ctl, track, h) {
     const vLong = dot(vc, wf);
     const vLat = dot(vc, wr);
 
-    const maxF = (w.front ? p.gripFront : p.gripRear) * SURFACE_GRIP[hit.g.surface] * load;
+    const maxF = (w.front ? p.gripFront : p.gripRear) * (p.surfaceGrip || SURFACE_GRIP)[hit.g.surface] * load;
 
     // Longitudinal: drive, brakes, rolling resistance.
     let fx = w.drive ? ctl.drive / drivenCount : 0;

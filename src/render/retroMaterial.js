@@ -35,8 +35,15 @@ export function retro(material) {
 // Flat-shaded lit material, the default for solid geometry.
 export const litMaterial = (params) => retro(new THREE.MeshLambertMaterial({ flatShading: true, ...params }));
 
-// Unlit material for emissive things: neon, lights, signs.
-export const glowMaterial = (params) => retro(new THREE.MeshBasicMaterial(params));
+// Glossy physically based material: wet road, car paint. Pass `envMap` for reflections.
+export const standardMaterial = (params) => retro(new THREE.MeshStandardMaterial({ flatShading: true, ...params }));
+
+// Unlit material for emissive things: neon, lights, signs. `intensity` pushes the
+// colour above 1.0 so it crosses the bloom threshold.
+export function glowMaterial({ intensity = 1, color = '#ffffff', ...params } = {}) {
+  const c = new THREE.Color(color).multiplyScalar(intensity);
+  return retro(new THREE.MeshBasicMaterial({ ...params, color: c }));
+}
 
 // Additive, depth-tested but not depth-writing: light beams, glows, underglow.
 export const additiveMaterial = (params) =>

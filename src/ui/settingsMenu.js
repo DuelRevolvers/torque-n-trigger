@@ -3,9 +3,11 @@ import { saveSettings } from '../settings.js';
 // Pause menu with the retro render toggles and control settings.
 
 const OPTIONS = [
-  { key: 'resolution', label: 'Resolution', values: [[270, '480x270'], [360, '640x360'], [180, '320x180']] },
-  { key: 'dither', label: 'Colour dither', values: [[true, 'On'], [false, 'Off']] },
-  { key: 'vertexSnap', label: 'Vertex wobble', values: [[true, 'On'], [false, 'Off']] },
+  { key: 'resolution', label: 'Resolution', values: [[540, '960x540'], [720, '1280x720'], [0, 'Native'], [360, '640x360']] },
+  { key: 'bloom', label: 'Neon bloom', values: [[true, 'On'], [false, 'Off']] },
+  { key: 'rain', label: 'Rain', values: [[true, 'On'], [false, 'Off']] },
+  { key: 'dither', label: 'Colour dither', values: [[false, 'Off'], [true, 'On']] },
+  { key: 'vertexSnap', label: 'Vertex wobble', values: [[false, 'Off'], [true, 'On']] },
   { key: 'scanlines', label: 'Scanlines', values: [[false, 'Off'], [true, 'On']] },
   { key: 'crt', label: 'CRT curve', values: [[false, 'Off'], [true, 'On']] },
   { key: 'touchControls', label: 'Touch controls', values: [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']] },
@@ -27,7 +29,7 @@ export class SettingsMenu {
         <button class="menu-resume">RESUME</button>
         <div class="menu-help">
           <b>KEYBOARD</b> W/S throttle &amp; brake/reverse &middot; A/D steer &middot; SPACE handbrake &middot;
-          SHIFT nitro &middot; Q look back &middot; R reset car &middot; ESC pause<br>
+          SHIFT nitro &middot; Q look back &middot; R reset car &middot; N random car (dev) &middot; ESC pause<br>
           <b>GAMEPAD</b> RT/LT throttle &amp; brake &middot; stick steer &middot; A handbrake &middot; B nitro &middot;
           R3 look back &middot; BACK reset &middot; START pause
         </div>

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { litMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
+import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
 import { PALETTE } from './textures.js';
 
 const BARRIER_HEIGHT = 1.1;
@@ -27,7 +27,11 @@ export function buildTrackView(track, tex) {
   };
   const doubleSided = { side: THREE.DoubleSide };
 
-  mesh(ribbon(track, (i) => at(i, -hw), (i) => at(i, hw), { vLength: 8 }), litMaterial({ map: tex.road, ...doubleSided }));
+  // Wet road: glossy, reflecting the neon environment.
+  mesh(
+    ribbon(track, (i) => at(i, -hw), (i) => at(i, hw), { vLength: 16 }),
+    standardMaterial({ map: tex.road, roughness: 0.45, metalness: 0.0, envMap: tex.env, envMapIntensity: 0.5, ...doubleSided }),
+  );
 
   const curbMat = litMaterial({ map: tex.curb, ...doubleSided });
   mesh(ribbon(track, (i) => at(i, -curbOuter), (i) => at(i, -hw), { vLength: 3 }), curbMat);
@@ -44,7 +48,7 @@ export function buildTrackView(track, tex) {
   const skirtMat = litMaterial({ color: PALETTE.wallDark, ...doubleSided });
   for (const side of [-1, 1]) {
     mesh(
-      ribbon(track, (i) => at(i, side * wall, BARRIER_HEIGHT), (i) => at(i, side * wall), { vLength: 4, swapUV: true }),
+      ribbon(track, (i) => at(i, side * wall, BARRIER_HEIGHT), (i) => at(i, side * wall), { vLength: 3.4, swapUV: true }),
       barrierMat,
     );
     mesh(
@@ -132,9 +136,9 @@ function buildStartLine(track, tex, at) {
   const signH = 1.3;
   const sign = new THREE.PlaneGeometry(signH * rect.aspect, signH);
   setUvRect(sign, rect);
-  const signMesh = new THREE.Mesh(sign, glowMaterial({ map: tex.signs.texture, side: THREE.DoubleSide }));
+  const signMesh = new THREE.Mesh(sign, glowMaterial({ map: tex.signs.texture, intensity: 2.4, side: THREE.DoubleSide }));
   signMesh.position.set(0, height, 0.45);
-  const strip = new THREE.Mesh(new THREE.BoxGeometry(span * 2 + 0.8, 0.12, 0.9), glowMaterial({ color: PALETTE.cyan }));
+  const strip = new THREE.Mesh(new THREE.BoxGeometry(span * 2 + 0.8, 0.12, 0.9), glowMaterial({ color: PALETTE.cyan, intensity: 2.5 }));
   strip.position.set(0, height - 0.86, 0);
 
   const gantry = new THREE.Group();
@@ -185,7 +189,7 @@ function buildLamps(track, tex, at) {
   }
   const group = new THREE.Group();
   group.add(new THREE.Mesh(mergeGeometries(poles), litMaterial({ color: '#2b2445' })));
-  group.add(new THREE.Mesh(mergeGeometries(heads), glowMaterial({ color: '#ffd9a0' })));
+  group.add(new THREE.Mesh(mergeGeometries(heads), glowMaterial({ color: '#ffd9a0', intensity: 3 })));
   const poolMesh = new THREE.Mesh(
     mergeGeometries(pools),
     additiveMaterial({ map: tex.glow, color: '#b86a2a', opacity: 0.55 }),
