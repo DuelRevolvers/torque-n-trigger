@@ -1,5 +1,6 @@
 // Venue definitions for events: spline tracks (see track.js) and arenas (arena.js).
 import { TEST_LOOP } from './testLoop.js';
+import { genCircuit, genSprint, genArena } from '../trackgen.js';
 
 // Point-to-point sprint through the Neon Strip, with a crest to jump.
 export const NEON_STRIP = {
@@ -56,3 +57,22 @@ export const VENUES = {
   dragStrip: { kind: 'track', def: DRAG_STRIP },
   dataCentre: { kind: 'arena', def: DATA_CENTRE },
 };
+
+// Generated venues are named 'gen-<circuit|sprint|arena>-<seed>' and built on
+// first use from the seeded generators.
+
+const generated = new Map();
+export function getVenue(id) {
+  if (VENUES[id]) return VENUES[id];
+  if (!generated.has(id)) {
+    const [, kind, seedText] = id.split('-');
+    const seed = Number(seedText);
+    const name = `${kind[0].toUpperCase()}${kind.slice(1)} ${seed}`;
+    const venue =
+      kind === 'arena'
+        ? { kind: 'arena', def: genArena(seed, { name }) }
+        : { kind: 'track', def: kind === 'circuit' ? genCircuit(seed, { name }) : genSprint(seed, { name }) };
+    generated.set(id, venue);
+  }
+  return generated.get(id);
+}

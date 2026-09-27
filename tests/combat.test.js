@@ -66,12 +66,16 @@ test('wrecks credit a takedown, then respawn with full HP', () => {
   const w = duel(build({ primaryWeapon: part('primaryWeapon', 'chaingun', 'elite') }), build());
   const t = w.state.cars[1];
   t.hp = 20;
-  step(w, 2, { fire1: true });
+  for (let k = 0; k < 120 && !t.wrecked; k++) step(w, 1 / 60, { fire1: true });
   assert.ok(t.wrecked);
   assert.equal(w.state.cars[0].takedowns, 1);
   assert.ok(w.events.some((e) => e.type === 'wreck'));
-  step(w, 3.2);
+  const wreckS = STRAIGHT.s[t.wreckIndex];
+  step(w, 4.5);
+  assert.ok(t.wrecked, "still down before 5 s");
+  step(w, 0.7);
   assert.equal(t.wrecked, false);
+  assert.ok(Math.abs(t.trackS - (wreckS - 15)) < 3, `respawned at ${t.trackS}, wreck at ${wreckS}`);
   assert.equal(t.hp, t.maxHp);
 });
 

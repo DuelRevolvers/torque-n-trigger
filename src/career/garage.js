@@ -18,7 +18,9 @@ export function checkInstall(build, part) {
   const fit = canFit(build, part);
   if (!fit.ok) return { ok: false, reason: fit.reason };
   const result = computeBuild(withPart(build, part));
-  if (!result.ok) return { ok: false, reason: result.errors[0], result };
+  // A car still being built may be missing other parts; only fit errors block.
+  const blocking = result.errors.filter((e) => !e.startsWith('Missing'));
+  if (blocking.length) return { ok: false, reason: blocking[0], result };
   return { ok: true, result };
 }
 

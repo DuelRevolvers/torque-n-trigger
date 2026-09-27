@@ -44,6 +44,7 @@ export function stepWorld(world, inputs) {
     const input = effective[i];
     updateMods(world, i);
     if (car.launchBoost > 0) car.mods.torque *= 1.3;
+    if (state.event?.modifiers?.includes('acidRain')) car.mods.grip *= 0.82;
     stepCar(car, params[i], input, track, SIM_DT);
     if (!car.wrecked) updateRecovery(world, car, params[i], input);
     if (!track.isArena) updateLap(track, car, state.tick);
@@ -91,8 +92,9 @@ function updateRecovery(world, car, params, input) {
   if (resetPressed || car.stuckTime > 2 || lost) respawnCar(world, car.id);
 }
 
-// Puts car i back on the centreline at its current track position, at rest.
-export function respawnCar(world, id) {
+// Puts car id back on the centreline at rest: at its current track position, or
+// `back` metres behind track sample `index` (used for wrecks).
+export function respawnCar(world, id, { back = 0, index = null } = {}) {
   const { track } = world;
   const car = world.state.cars[id];
   const params = world.params[id];
@@ -111,7 +113,8 @@ export function respawnCar(world, id) {
     placeCar(car, params, track.spawnPose(best));
     return;
   }
-  const i = car.trackIndex >= 0 ? car.trackIndex : 0;
+  const from = index ?? (car.trackIndex >= 0 ? car.trackIndex : 0);
+  const i = back ? track.indexAtDistance(Math.max(0, track.s[from] - back)) : from;
   placeCar(car, params, poseAt(track, i));
   car.trackIndex = i;
   car.trackS = track.s[i];

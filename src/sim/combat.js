@@ -32,7 +32,8 @@ const REGION_SLOTS = {
 };
 const WEAR = 0.25; // condition % lost per point of damage, split across the region's parts
 
-const WRECK_TIME = 3;
+const WRECK_TIME = 5; // seconds before a wrecked car respawns
+const RESPAWN_BACK = 15; // metres behind the wreck site
 const MINE_TRIGGER = 2.4;
 const FWD = v3(0, 0, -1);
 const combatOf = (p) => p.combat || DEFAULT_COMBAT;
@@ -151,6 +152,7 @@ function wreck(world, j, source) {
   car.wrecked = true;
   car.hp = 0;
   car.wreckTimer = WRECK_TIME;
+  car.wreckIndex = car.trackIndex;
   car.burning = 0;
   car.shield = 0;
   car.vel = add(car.vel, v3(0, 5, 0));
@@ -217,6 +219,7 @@ function fireWeapon(world, i, slot, pressed, dt) {
   if (!pressed || cf <= 0) return;
   // Drag races allow only rear-facing weapons.
   if (world.state.event?.weapons === 'rear' && !(slot === 'secondary' && w.type === 'mines')) return;
+  if (world.state.event?.weaponsLocked) return; // "weapons in the second half" modifier
   if (w.heatPerShot && car.overheated) return;
   if (w.ammo !== null && (ws.ammo <= 0 || ws.reload > 0)) return;
   const beh = WEAPON_BEHAVIOR[w.type];
@@ -442,7 +445,7 @@ export function updateCombat(world, inputs, dt, respawn) {
       car.firing.primary = car.firing.secondary = false;
       car.wreckTimer -= dt;
       if (car.wreckTimer <= 0 && world.respawnOnWreck) {
-        respawn(world, i);
+        respawn(world, i, { back: RESPAWN_BACK, index: car.wreckIndex });
         car.wrecked = false;
         car.hp = car.maxHp;
         car.heat = 0;

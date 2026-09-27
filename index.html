@@ -258,7 +258,24 @@
       .reward-line { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; }
       .reward-line.total { border-top: 2px solid #33245a; margin-top: 4px; font-size: 16px; color: var(--amber); }
 
+      .city-map {
+        position: absolute; top: 84px; left: 16px; width: min(58vw, calc((100vh - 110px) * 4 / 3)); aspect-ratio: 4 / 3;
+        image-rendering: pixelated; border: 2px solid #33245a; pointer-events: auto; cursor: pointer;
+      }
+      .city-panel { position: absolute; top: 84px; right: 12px; bottom: 12px; width: min(420px, 38vw); overflow-y: auto; background: var(--panel); border: 2px solid #33245a; padding: 12px; pointer-events: auto; display: flex; flex-direction: column; gap: 6px; }
+      .event-card:disabled { opacity: 0.55; cursor: default; }
+      .badge { font-size: 10px; padding: 1px 5px; margin-left: 4px; }
+      .badge.boss { background: var(--pink); color: #000; } .badge.rival { background: var(--amber); color: #000; } .badge.clear { background: var(--green, #39ff14); color: #000; }
+      .mods { display: flex; flex-wrap: wrap; gap: 4px; } .mod { font-size: 11px; color: #39ff14; border: 1px solid #1f5a1a; padding: 0 4px; }
+      .shop-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; border-bottom: 1px solid #241d3a; font-size: 12px; }
+      .shop-row small { display: block; color: #8a82b0; }
+      .wide { width: 100%; }
+      .boss-banner { background: var(--amber); color: #000; font-weight: bold; padding: 6px 8px; margin: 6px 0; }
+      .car-switch { display: flex; gap: 6px; align-items: center; margin-top: 6px; pointer-events: auto; font-size: 13px; }
+
       @media (max-width: 760px) {
+        .city-map { width: calc(100% - 32px); }
+        .city-panel { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 48vh; }
         #ui h1 { font-size: 20px; }
         .cards { overflow-x: auto; scroll-snap-type: x mandatory; gap: 8px; }
         .card { flex: 0 0 calc(100% - 4px); scroll-snap-align: center; max-height: 55vh; }

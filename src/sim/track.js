@@ -17,11 +17,26 @@ export function buildTrack(def) {
     spacing = 2,
   } = def;
   const dense = densify(points, closed, 24);
-  return new Track(name, resample(dense, closed, spacing), closed, {
-    halfWidth,
-    curbWidth,
-    shoulderWidth,
-  });
+  const pts = resample(dense, closed, spacing);
+  // Jump kickers: the road rises over len metres, then drops away.
+  const jumps = (def.jumps || []).map((j) => ({ s: j.frac !== undefined ? j.frac * pts.length : j.s, len: j.len, height: j.height }));
+  for (const j of jumps) {
+    pts.points.forEach((pt, i) => {
+      const s = i * pts.step;
+      if (s >= j.s && s <= j.s + j.len) pt[1] += (j.height * (s - j.s)) / j.len;
+    });
+  }
+  const track = new Track(name, pts, closed, { halfWidth, curbWidth, shoulderWidth });
+  track.jumps = jumps;
+  // Shortcut branches: narrow roads that leave the main line at s0 and rejoin at s1.
+  if (def.branches?.length) {
+    track.branches = def.branches.map((b) => ({
+      track: buildTrack({ ...b, closed: false, halfWidth: b.halfWidth ?? 6, curbWidth: 0.8, shoulderWidth: 2, spacing }),
+      s0: b.s0,
+      s1: b.s1,
+    }));
+  }
+  return track;
 }
 
 class Track {
@@ -106,9 +121,32 @@ class Track {
     return this.wrap(i);
   }
 
+  // Nearest road surface: the main line, or a shortcut branch when the point is
+  // on one. Branch hits report main-line progress (s, index) so laps and
+  // positions keep working, and a lateral scaled to the main wall distance.
+  query(x, z, hint = -1) {
+    const r = this.queryMain(x, z, hint);
+    if (!this.branches) return r;
+    let best = r;
+    let bestPen = Math.abs(r.lateral) - this.wallDist;
+    for (const b of this.branches) {
+      const rb = b.track.queryMain(x, z, -1);
+      if (rb.overrun > 1) continue;
+      const pen = Math.abs(rb.lateral) - b.track.wallDist;
+      if (pen < bestPen) {
+        bestPen = pen;
+        const span = this.closed ? (b.s1 - b.s0 + this.length) % this.length : b.s1 - b.s0;
+        let s = b.s0 + (rb.s / b.track.length) * span;
+        if (this.closed) s %= this.length;
+        best = { ...rb, s, index: this.indexAtDistance(s), lateral: Math.sign(rb.lateral) * (Math.abs(rb.lateral) + this.wallDist - b.track.wallDist), onBranch: true };
+      }
+    }
+    return best;
+  }
+
   // Finds the closest point on the centreline to (x, z). `hint` is the index from
   // the previous query for the same object, which keeps the search local.
-  query(x, z, hint = -1) {
+  queryMain(x, z, hint = -1) {
     const n = this.count;
     const xs = this.x;
     const zs = this.z;
@@ -176,6 +214,8 @@ class Track {
       index: best,
       s: this.s[i0] + u * this.step,
       lateral,
+      overrun: Math.sqrt(Math.max(0, seg.d - lateral * lateral)), // distance past an open end
+
       height: this.y[i0] + (this.y[i1] - this.y[i0]) * u,
       nx,
       ny,

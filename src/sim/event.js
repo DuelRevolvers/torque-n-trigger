@@ -6,6 +6,10 @@
 import { neutralInput } from './input.js';
 import { quatRotate } from './math.js';
 import { applyDamage } from './combat.js';
+import { pickupSpots } from './trackgen.js';
+
+const PICKUP_RESPAWN = 18; // seconds
+const PICKUP_RADIUS = 2.6;
 
 const HOLD = { ...neutralInput(), handbrake: true };
 const COUNTDOWN = 3;
@@ -25,6 +29,11 @@ export function createEventState(def, track) {
     phase: def.type === 'free' ? 'racing' : 'countdown',
     timer: def.type === 'free' ? 0 : COUNTDOWN,
     time: 0,
+    modifiers: def.modifiers || [],
+    // Health, nitro and ammo pickups that respawn after being taken.
+    pickups: def.type === 'drag' ? [] : pickupSpots(track, def.seed ?? 1).map((p, id) => ({ id, ...p, active: true, timer: 0 })),
+    half: false,
+    weaponsLocked: (def.modifiers || []).includes('weaponsLate'),
     finished: [],
     finishTime: {},
     eliminated: [],
@@ -40,6 +49,7 @@ export function initEventCar(car, ev) {
   car.inPit = false;
   car.style = { drift: 0, air: 0, cash: 0, nm: {} };
   car.race.penalty = 0;
+  if (ev.modifiers.includes('oneHit')) car.maxHp = car.hp = 1;
 }
 
 // Grid positions per event type.
@@ -111,6 +121,16 @@ export function updateEvent(world, dt) {
     return;
   }
   ev.time += dt;
+  updatePickups(world, dt);
+  // Leader's share of the event, for "weapons in the second half only".
+  const L = track.length;
+  const frac = Math.max(...state.cars.map((c) => {
+    if (ev.type === 'arena' || ev.type === 'free') return ev.timeLimit ? ev.time / ev.timeLimit : 1;
+    if (ev.type === 'circuit') return (Math.max(0, c.race.lap - 1) + c.trackS / L) / ev.laps;
+    return c.trackS / ev.finishS;
+  }));
+  ev.half = frac >= 0.5;
+  ev.weaponsLocked = ev.modifiers.includes('weaponsLate') && !ev.half;
 
   state.cars.forEach((car, i) => {
     car.lockTime = Math.max(0, car.lockTime - dt);
@@ -120,6 +140,10 @@ export function updateEvent(world, dt) {
       return;
     }
     updateStyle(world, i, dt);
+    if (ev.modifiers.includes('noNitro')) {
+      car.nitro.charges = 0;
+      car.nitro.recharge = 0;
+    }
 
     // Finishing.
     if (ev.type === 'sprint' || ev.type === 'drag') {
@@ -150,6 +174,42 @@ export function updateEvent(world, dt) {
     if ((ev.mode === 'lastStanding' && alive <= 1) || (ev.timeLimit && ev.time >= ev.timeLimit)) ev.done = true;
   } else if (ev.finished.length === n || (ev.timeLimit && ev.time >= ev.timeLimit)) {
     ev.done = true;
+  }
+}
+
+function updatePickups(world, dt) {
+  const { state, params } = world;
+  const ev = state.event;
+  for (const pk of ev.pickups) {
+    if (!pk.active) {
+      pk.timer -= dt;
+      if (pk.timer <= 0) pk.active = true;
+      continue;
+    }
+    for (let i = 0; i < state.cars.length; i++) {
+      const car = state.cars[i];
+      if (car.wrecked || (car.pos.x - pk.x) ** 2 + (car.pos.z - pk.z) ** 2 > PICKUP_RADIUS ** 2 || Math.abs(car.pos.y - pk.y) > 3) continue;
+      const p = params[i];
+      if (pk.type === 'health') {
+        if (car.hp >= car.maxHp) continue;
+        car.hp = Math.min(car.maxHp, car.hp + car.maxHp * 0.35);
+        car.burning = 0;
+      } else if (pk.type === 'nitro') {
+        if (!p.nitro.charges || ev.modifiers.includes('noNitro') || car.nitro.charges >= p.nitro.charges) continue;
+        car.nitro.charges++;
+      } else if (pk.type === 'ammo') {
+        for (const slot of ['primary', 'secondary']) {
+          const w = p.weapons?.[slot];
+          if (w && car.weapons[slot]) car.weapons[slot] = { cooldown: 0, ammo: w.ammo, reload: 0 };
+        }
+        car.heat = 0;
+        car.overheated = false;
+      }
+      pk.active = false;
+      pk.timer = PICKUP_RESPAWN;
+      world.events.push({ type: 'pickup', car: i, kind: pk.type });
+      break;
+    }
   }
 }
 

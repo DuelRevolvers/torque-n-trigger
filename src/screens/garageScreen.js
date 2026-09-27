@@ -5,7 +5,8 @@ import { computeBuild, resolvePart } from '../parts/build.js';
 import { SLOTS, SLOT_NAMES, REQUIRED_SLOTS, QUALITY, TRAITS, PART_TYPES, PAINT_COLORS, partName } from '../parts/catalog.js';
 import { ARCHETYPES } from '../parts/starters.js';
 import { statBarsHtml } from '../ui/statBars.js';
-import { saveCareer, activeCar } from '../career/career.js';
+import { saveCareer, activeCar, addCar } from '../career/career.js';
+import { repairCost, repairParts } from '../career/shop.js';
 import { checkInstall, installPart, removePart, repaint, withPart } from '../career/garage.js';
 import { glowMaterial } from '../render/retroMaterial.js';
 import { PALETTE } from '../render/textures.js';
@@ -93,9 +94,9 @@ export class GarageScreen {
       const check = checkInstall(this.car.build, part);
       this.preview = { part, ...check };
     }
-    const shown = this.preview?.ok ? { build: withPart(this.car.build, this.preview.part), computed: this.preview.result } : { build: this.car.build, computed: this.computed };
-    const view = new CarView(shown.build, shown.computed, this.app.tex);
-    this.setView(view);
+    const shown = this.preview?.result?.ok ? { build: withPart(this.car.build, this.preview.part), computed: this.preview.result } : { build: this.car.build, computed: this.computed };
+    // A car still missing required parts has nothing to show on the table yet.
+    this.setView(shown.computed.ok ? new CarView(shown.build, shown.computed, this.app.tex) : null);
     this.renderUi();
   }
 
@@ -141,11 +142,14 @@ export class GarageScreen {
     }).join('');
 
     const pv = this.preview;
-    const stats = statBarsHtml(this.computed.stats, pv?.ok ? pv.result.stats : null, this.computed.pr, pv?.ok ? pv.result.pr : null, this.app.settings.units);
-    const weightLine = `<div class="build-line">Weight <b>${Math.round(this.computed.weight)}</b> / ${Math.round(this.computed.capacity)} kg &middot; Power <b>${Math.round(this.computed.powerDraw)}</b> / ${Math.round(this.computed.powerSupply)} kW</div>`;
-    const warnings = (pv?.ok ? pv.result.warnings : this.computed.warnings).map((w) => `<div class="warn">${esc(w)}</div>`).join('');
-    const worn = Object.values(parts).some((p) => p && p.condition < 100);
-    const repair = worn ? '<button class="btn small repair">REPAIR ALL (FREE UNTIL M6)</button>' : '';
+    const stats = !this.computed.ok
+      ? `<div class="hint">This car can't drive yet:</div>${this.computed.errors.map((e) => `<div class="err">${esc(e)}</div>`).join('')}`
+      : statBarsHtml(this.computed.stats, pv?.result?.ok ? pv.result.stats : null, this.computed.pr, pv?.result?.ok ? pv.result.pr : null, this.app.settings.units);
+    const weightLine = !this.computed.ok ? '' : `<div class="build-line">Weight <b>${Math.round(this.computed.weight)}</b> / ${Math.round(this.computed.capacity)} kg &middot; Power <b>${Math.round(this.computed.powerDraw)}</b> / ${Math.round(this.computed.powerSupply)} kW</div>`;
+    const warnings = (pv?.result?.ok ? pv.result.warnings : this.computed.warnings).map((w) => `<div class="warn">${esc(w)}</div>`).join('');
+    const worn = Object.values(parts).filter((p) => p && p.condition < 100);
+    const cost = worn.reduce((s, p) => s + repairCost(p), 0);
+    const repair = worn.length ? `<button class="btn small repair" ${cost > career.cash ? 'disabled' : ''}>REPAIR ALL ($${cost})</button>` : '';
 
     let detail = `<div class="hint">Select a slot to inspect or swap parts. Drag the car to turn it.</div>`;
     if (this.slot === 'paint') {
@@ -173,8 +177,9 @@ export class GarageScreen {
 
     this.root.innerHTML = `<div class="screen garage">
       <div class="g-head">
-        <div><h1>GARAGE</h1><div class="car-name">${esc(car.name)} <span class="tag">${ARCHETYPES[car.archetype]?.name || ''}</span> <span class="cash">$${career.cash ?? 0}</span></div></div>
-        <button class="btn primary race">EVENTS &#9654;</button>
+        <div><h1>GARAGE</h1><div class="car-name">${esc(car.name)} <span class="tag">${ARCHETYPES[car.archetype]?.name || ''}</span> <span class="cash">$${career.cash ?? 0}</span></div>
+          <div class="car-switch">${career.cars.length > 1 ? `<button class="btn small prev-car">&#9664;</button><span>${career.cars.indexOf(car) + 1}/${career.cars.length}</span><button class="btn small next-car">&#9654;</button>` : ''}${career.inventory.some((p) => p.slot === 'chassis') ? '<button class="btn small new-car">NEW CAR</button>' : ''}</div></div>
+        <button class="btn primary race">CITY MAP &#9654;</button>
       </div>
       <div class="g-slots">${slotButtons}</div>
       <div class="g-side">
@@ -185,11 +190,31 @@ export class GarageScreen {
 
     const on = (sel, fn) => this.root.querySelectorAll(sel).forEach((el) => el.addEventListener('click', () => fn(el)));
     on('.slot-btn', (el) => this.select(el.dataset.slot));
-    on('.race', () => this.app.go('events', { car: this.car }));
+    on('.race', () => this.app.go('city'));
     on('.repair', () => {
-      for (const p of Object.values(car.build.parts)) if (p) p.condition = 100;
+      if (repairParts(career, Object.values(car.build.parts).filter((p) => p && p.condition < 100)).ok) this.save();
+      this.refresh();
+    });
+    const switchCar = (d) => {
+      const i = career.cars.indexOf(this.car);
+      career.activeCar = career.cars[(i + d + career.cars.length) % career.cars.length].id;
+      this.car = activeCar(career);
+      this.slot = null;
+      this.previewUid = null;
       this.save();
       this.refresh();
+    };
+    on('.prev-car', () => switchCar(-1));
+    on('.next-car', () => switchCar(1));
+    on('.new-car', () => {
+      const chassis = career.inventory.find((p) => p.slot === 'chassis');
+      if (chassis && addCar(career, chassis.uid)) {
+        this.car = activeCar(career);
+        this.slot = 'engine';
+        this.previewUid = null;
+        this.save();
+        this.refresh();
+      }
     });
     on('.spare', (el) => {
       this.previewUid = this.previewUid === el.dataset.uid ? null : el.dataset.uid;

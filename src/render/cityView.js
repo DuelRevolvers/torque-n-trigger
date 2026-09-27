@@ -22,10 +22,12 @@ export function buildCityView(track, tex) {
   const clearOfTrack = (x, z, radius) => {
     const minD = track.wallDist + 3 + radius;
     const minD2 = minD * minD;
-    for (let i = 0; i < track.count; i++) {
-      const dx = x - track.x[i];
-      const dz = z - track.z[i];
-      if (dx * dx + dz * dz < minD2) return false;
+    for (const t of [track, ...(track.branches || []).map((b) => b.track)]) {
+      for (let i = 0; i < t.count; i++) {
+        const dx = x - t.x[i];
+        const dz = z - t.z[i];
+        if (dx * dx + dz * dz < minD2) return false;
+      }
     }
     return true;
   };

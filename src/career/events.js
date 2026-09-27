@@ -48,14 +48,15 @@ export function computeRewards(event, place, playerCar, tier) {
 
 // Salvage: a chance of one part from each car the player wrecked, usually a
 // quality step down and a bit battered.
-export function rollSalvage(victimBuilds, seed) {
+// chance: per wrecked car. downgrade: rivals and bosses drop full-quality parts.
+export function rollSalvage(victimBuilds, seed, { chance = 0.6, downgrade = true } = {}) {
   const rng = makeRng(seed);
   const out = [];
   for (const build of victimBuilds) {
-    if (rng() > 0.6) continue;
+    if (rng() > chance) continue;
     const candidates = Object.values(build.parts).filter((p) => p && p.slot !== 'paint');
     const src = candidates[Math.floor(rng() * candidates.length)];
-    const rank = Math.max(0, QUALITY[src.quality].rank - (rng() < 0.75 ? 1 : 0));
+    const rank = Math.max(0, QUALITY[src.quality].rank - (downgrade && rng() < 0.75 ? 1 : 0));
     out.push({
       ...src,
       uid: `${src.slot}-salv-${Math.floor(rng() * 2 ** 32).toString(36)}`,

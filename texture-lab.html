@@ -1,0 +1,1579 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Texture Lab</title>
+    <!--
+      Texture Lab: a sandbox for proposed pixel-art textures, previewed next to the
+      game's current ones. Not part of the game build (Vite only bundles index.html).
+      Run the dev server (play.bat) and open http://localhost:5173/texture-lab.html
+    -->
+    <style>
+      :root {
+        --night: #0b0818;
+        --panel: #130c26;
+        --line: #33245a;
+        --pink: #ff2a6d;
+        --cyan: #05d9e8;
+        --amber: #ffb000;
+        --ink: #e8e8ff;
+        --dim: #a89fd0;
+        --font: 'Courier New', ui-monospace, monospace;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--night); color: var(--ink); font: 13px/1.45 var(--font); }
+      header { padding: 16px 16px 8px; }
+      h1 { margin: 0; font-size: 24px; letter-spacing: 3px; color: var(--pink); text-shadow: 3px 3px 0 #000; }
+      h2 { margin: 24px 0 10px; font-size: 16px; color: var(--cyan); text-transform: uppercase; letter-spacing: 1px; }
+      .sub { color: var(--dim); margin-top: 4px; max-width: 900px; }
+      main { padding: 0 16px 40px; max-width: 1400px; }
+      .viewport { position: relative; border: 3px solid var(--pink); box-shadow: 0 0 0 3px #000, 6px 6px 0 3px var(--cyan); background: #000; }
+      #view { display: block; width: 100%; aspect-ratio: 16 / 9; image-rendering: pixelated; cursor: grab; touch-action: none; }
+      #view:active { cursor: grabbing; }
+      .badge { position: absolute; top: 8px; left: 8px; padding: 2px 8px; font-weight: bold; background: #000c; border: 2px solid var(--amber); color: var(--amber); pointer-events: none; }
+      .hint { position: absolute; bottom: 8px; right: 10px; color: #fff8; font-size: 11px; pointer-events: none; }
+      .controls { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; margin: 22px 0 6px; }
+      .group { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+      .group > span { color: var(--dim); margin-right: 4px; text-transform: uppercase; font-size: 11px; }
+      button, select {
+        font: bold 12px var(--font); padding: 6px 10px; background: #1a1030; color: var(--ink);
+        border: 2px solid var(--line); cursor: pointer; text-transform: uppercase;
+      }
+      button:hover, select:hover { border-color: var(--cyan); }
+      button.on { border-color: var(--amber); color: var(--amber); }
+      .swatch { width: 26px; height: 26px; padding: 0; border: 2px solid #000; }
+      .swatch.on { outline: 2px solid var(--amber); }
+      .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+      .card { background: var(--panel); border: 2px solid var(--line); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+      .card h3 { margin: 0; font-size: 14px; color: var(--amber); text-transform: uppercase; }
+      .card p { margin: 0; color: var(--dim); font-size: 12px; }
+      .meta { font-size: 11px; color: #7d74a8; }
+      .pair { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; }
+      .pair figure { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+      .pair figcaption { font-size: 10px; text-transform: uppercase; color: var(--dim); }
+      .pair figcaption.new { color: var(--cyan); }
+      .pair figure { max-width: 100%; }
+      .pair canvas { display: block; max-width: 100%; height: auto; image-rendering: pixelated; background: repeating-conic-gradient(#1c1530 0% 25%, #140f24 0% 50%) 0 0 / 12px 12px; border: 1px solid #000; }
+      .notes { background: var(--panel); border: 2px solid var(--line); padding: 10px 14px; color: var(--dim); max-width: 900px; }
+      .notes b { color: var(--ink); }
+      .notes li { margin: 4px 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>TEXTURE LAB</h1>
+      <div class="sub">
+        Proposed pixel-art textures based on the concept art, shown next to what the game uses now. Everything here is
+        generated on canvases the same way <b>src/render/textures.js</b> does, so any texture can be moved into the game unchanged.
+      </div>
+    </header>
+    <main>
+      <div class="viewport">
+        <canvas id="view"></canvas>
+        <div class="badge" id="badge">PROPOSED</div>
+        <div class="hint">drag to orbit · wheel to zoom</div>
+      </div>
+
+      <div class="controls">
+        <div class="group"><span>Textures</span><button data-set="current">Current</button><button data-set="proposed" class="on">Proposed</button><button id="flip" title="Switches every 1.5 s">Flip A/B</button></div>
+        <div class="group"><span>Paint</span><span id="paints"></span></div>
+        <div class="group"><span>Finish</span><button data-finish="armor" class="on">Armored</button><button data-finish="junk">Junk / rust</button></div>
+        <div class="group"><span>Glass</span><button data-glass="clean" class="on">Clean</button><button data-glass="cracked">Cracked</button></div>
+        <div class="group"><span>Barrier</span><button data-barrier="chevron" class="on">Chevron</button><button data-barrier="concrete">Concrete</button></div>
+        <div class="group"><span>Lines</span><select id="res"><option value="270">270p</option><option value="360" selected>360p</option><option value="540">540p</option></select></div>
+        <div class="group"><span>Camera</span><button data-cam="chase" class="on">Chase</button><button data-cam="side">Side</button><button data-cam="street">Street</button></div>
+      </div>
+
+      <h2>Texture sheets</h2>
+      <div class="controls" style="margin-top: 0">
+        <div class="group"><span>Zoom</span><button data-zoom="2">2x</button><button data-zoom="3" class="on">3x</button><button data-zoom="4">4x</button></div>
+        <div class="group"><span>Tiling</span><button data-tile="1" class="on">Single</button><button data-tile="2">2 x 2</button></div>
+      </div>
+      <div class="gallery" id="gallery"></div>
+
+      <h2>Notes for moving these into the game</h2>
+      <div class="notes">
+        <ul>
+          <li><b>Car body textures are greyscale on purpose.</b> They multiply the paint colour, so the garage paint picker keeps working. The rust sheet is the exception: it is in colour and replaces the paint look on Junk parts.</li>
+          <li><b>The car shell has no UVs yet.</b> <code>extrudeProfile</code> in carView.js would need the planar UVs this page generates (sides projected in metres, windows fitted to 0..1).</li>
+          <li><b>Road, barrier and building sheets keep the current sizes and layouts</b> (128x256 road with the same lane lines, 64x32 barrier, 64x128 facade with 4 px window cells), so the track and city UVs don't change.</li>
+          <li><b>The road adds a roughness map</b> so puddles and tyre tracks look glossier than the dry asphalt. Use it with <code>roughness: 1</code> on the road material.</li>
+          <li><b>This preview skips the game's dither, scanlines and rain.</b> Bloom and vertex snap are the same as in the game.</li>
+        </ul>
+      </div>
+    </main>
+
+    <script type="module">
+      import * as THREE from 'three';
+      import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+      import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+      import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+      import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+      import { createTextures, createEnvMap, makeRng, PALETTE } from '/src/render/textures.js';
+      import { standardMaterial, litMaterial, glowMaterial, additiveMaterial, retroUniforms } from '/src/render/retroMaterial.js';
+      import { SHELLS } from '/src/render/carShells.js';
+      import { drawText, textWidth, GLYPH_H } from '/src/ui/bitmapFont.js';
+
+      // ------------------------------------------------------------------------
+      // Pixel helpers
+      // ------------------------------------------------------------------------
+
+      function canvasTexture(w, h, draw, { repeat = true, color = true } = {}) {
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        draw(ctx, w, h);
+        const tex = new THREE.CanvasTexture(canvas);
+        tex.magFilter = tex.minFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false;
+        if (color) tex.colorSpace = THREE.SRGBColorSpace;
+        if (repeat) tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        return tex;
+      }
+
+      const rgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+      const mix = (a, b, t) => a.map((v, i) => v + (b[i] - v) * t);
+      const scale = (c, k) => c.map((v) => v * k);
+      const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+
+      // A wrapping pixel buffer: writes outside the edges land on the other side, so
+      // everything drawn through it tiles seamlessly.
+      class Pix {
+        constructor(w, h) {
+          this.w = w;
+          this.h = h;
+          this.d = new Float32Array(w * h * 3);
+        }
+        i(x, y) {
+          x = ((Math.round(x) % this.w) + this.w) % this.w;
+          y = ((Math.round(y) % this.h) + this.h) % this.h;
+          return (y * this.w + x) * 3;
+        }
+        get(x, y) {
+          const i = this.i(x, y);
+          return [this.d[i], this.d[i + 1], this.d[i + 2]];
+        }
+        set(x, y, c) {
+          const i = this.i(x, y);
+          this.d[i] = c[0];
+          this.d[i + 1] = c[1];
+          this.d[i + 2] = c[2];
+        }
+        blend(x, y, c, t) {
+          this.set(x, y, mix(this.get(x, y), c, t));
+        }
+        mul(x, y, k) {
+          this.set(x, y, scale(this.get(x, y), k));
+        }
+        rect(x, y, w, h, c) {
+          for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.set(x + i, y + j, c);
+        }
+        fill(fn) {
+          for (let y = 0; y < this.h; y++) for (let x = 0; x < this.w; x++) this.set(x, y, fn(x, y));
+        }
+        flush(ctx) {
+          const img = ctx.createImageData(this.w, this.h);
+          for (let k = 0, n = this.w * this.h; k < n; k++) {
+            img.data[k * 4] = clamp(this.d[k * 3], 0, 255);
+            img.data[k * 4 + 1] = clamp(this.d[k * 3 + 1], 0, 255);
+            img.data[k * 4 + 2] = clamp(this.d[k * 3 + 2], 0, 255);
+            img.data[k * 4 + 3] = 255;
+          }
+          ctx.putImageData(img, 0, 0);
+        }
+      }
+
+      // Tileable smooth value noise in 0..1; `cell` must divide w and h.
+      function valueNoise(w, h, rng, cell) {
+        const gw = w / cell;
+        const gh = h / cell;
+        const grid = Array.from({ length: gw * gh }, rng);
+        const at = (gx, gy) => grid[(gy % gh) * gw + (gx % gw)];
+        const s = (t) => t * t * (3 - 2 * t);
+        const out = new Float32Array(w * h);
+        for (let y = 0; y < h; y++)
+          for (let x = 0; x < w; x++) {
+            const gx = Math.floor(x / cell);
+            const gy = Math.floor(y / cell);
+            const tx = s(x / cell - gx);
+            const ty = s(y / cell - gy);
+            const top = at(gx, gy) + (at(gx + 1, gy) - at(gx, gy)) * tx;
+            const bot = at(gx, gy + 1) + (at(gx + 1, gy + 1) - at(gx, gy + 1)) * tx;
+            out[y * w + x] = top + (bot - top) * ty;
+          }
+        return out;
+      }
+      function fbm(w, h, rng, cells) {
+        const out = new Float32Array(w * h);
+        let total = 0;
+        cells.forEach((cell, k) => {
+          const amp = 1 / (k + 1);
+          const n = valueNoise(w, h, rng, cell);
+          for (let i = 0; i < out.length; i++) out[i] += n[i] * amp;
+          total += amp;
+        });
+        for (let i = 0; i < out.length; i++) out[i] /= total;
+        return out;
+      }
+
+      // Blob mask made from overlapping ellipses with ragged edges; wraps at the edges.
+      function blobs(w, h, rng, count, rMin, rMax, stretch = 1) {
+        const mask = new Float32Array(w * h);
+        for (let b = 0; b < count; b++) {
+          const cx = rng() * w;
+          const cy = rng() * h;
+          const lobes = 2 + Math.floor(rng() * 3);
+          for (let l = 0; l < lobes; l++) {
+            const lx = cx + (rng() - 0.5) * rMax;
+            const ly = cy + (rng() - 0.5) * rMax * stretch;
+            const rx = rMin + rng() * (rMax - rMin);
+            const ry = rx * stretch * (0.7 + rng() * 0.6);
+            for (let y = Math.floor(-ry - 1); y <= ry + 1; y++)
+              for (let x = Math.floor(-rx - 1); x <= rx + 1; x++) {
+                const d = (x / rx) ** 2 + (y / ry) ** 2;
+                if (d > 1) continue;
+                const px = (((Math.round(lx + x) % w) + w) % w);
+                const py = (((Math.round(ly + y) % h) + h) % h);
+                mask[py * w + px] = Math.max(mask[py * w + px], 1 - d);
+              }
+          }
+        }
+        return mask;
+      }
+
+      // Lit pixels of a string in the game's 5x7 font, for custom text styles.
+      function textMask(text) {
+        const w = Math.max(1, textWidth(text, 1));
+        const c = document.createElement('canvas');
+        c.width = w;
+        c.height = GLYPH_H;
+        const x = c.getContext('2d');
+        drawText(x, text, 0, 0, { scale: 1, color: '#fff' });
+        const d = x.getImageData(0, 0, w, GLYPH_H).data;
+        return { w, h: GLYPH_H, on: (i, j) => i >= 0 && j >= 0 && i < w && j < GLYPH_H && d[(j * w + i) * 4 + 3] > 128 };
+      }
+
+      // Neon tube lettering: dim halo, saturated tube, pale hot core.
+      function neonText(ctx, text, x, y, s, color) {
+        const m = textMask(text);
+        const c = rgb(color);
+        const css = (v) => `rgb(${v.map(Math.round).join(',')})`;
+        ctx.fillStyle = css(scale(c, 0.28));
+        for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) if (m.on(i, j)) ctx.fillRect(x + i * s - 1, y + j * s - 1, s + 2, s + 2);
+        ctx.fillStyle = color;
+        for (let j = 0; j < m.h; j++) for (let i = 0; i < m.w; i++) if (m.on(i, j)) ctx.fillRect(x + i * s, y + j * s, s, s);
+        if (s >= 3) {
+          ctx.fillStyle = css(mix(c, [255, 255, 255], 0.65));
+          // A 1 px core down the middle of each stroke, joined to lit neighbours.
+          const mid = Math.floor(s / 2);
+          for (let j = 0; j < m.h; j++)
+            for (let i = 0; i < m.w; i++) {
+              if (!m.on(i, j)) continue;
+              const px = x + i * s;
+              const py = y + j * s;
+              const l = m.on(i - 1, j) ? 0 : mid;
+              const r = m.on(i + 1, j) ? s : mid + 1;
+              const t = m.on(i, j - 1) ? 0 : mid;
+              const b = m.on(i, j + 1) ? s : mid + 1;
+              ctx.fillRect(px + l, py + mid, r - l, 1);
+              ctx.fillRect(px + mid, py + t, 1, b - t);
+            }
+        }
+      }
+
+      // LED screen look: every third row and column of pixels is a dark gap.
+      function ledGrid(ctx, x0, y0, w, h, dim = 0.35) {
+        const img = ctx.getImageData(x0, y0, w, h);
+        for (let y = 0; y < h; y++)
+          for (let x = 0; x < w; x++) {
+            if (x % 3 !== 2 && y % 3 !== 2) continue;
+            const i = (y * w + x) * 4;
+            img.data[i] *= dim;
+            img.data[i + 1] *= dim;
+            img.data[i + 2] *= dim;
+          }
+        ctx.putImageData(img, x0, y0);
+      }
+
+      // ------------------------------------------------------------------------
+      // Proposed textures
+      // ------------------------------------------------------------------------
+
+      function proposedTextures() {
+        const T = {};
+
+        // Wet asphalt, same 128x256 layout as the current road: edge lines, two dashed
+        // lane dividers. Adds tyre-polished wheel paths, repair patches, a manhole,
+        // oil stains and puddles, plus a roughness map so wet parts reflect.
+        {
+          const rng = makeRng(301);
+          const w = 128;
+          const h = 256;
+          const p = new Pix(w, h);
+          const rough = new Float32Array(w * h).fill(0.62);
+          const n = fbm(w, h, rng, [64, 32, 16, 8]);
+          const dark = rgb('#0f0e15');
+          const light = rgb('#211f2b');
+          p.fill((x, y) => mix(dark, light, clamp((n[y * w + x] - 0.3) * 1.8)));
+          // Aggregate: scattered light and dark stones.
+          for (let i = 0; i < w * h * 0.16; i++) {
+            const x = Math.floor(rng() * w);
+            const y = Math.floor(rng() * h);
+            const r = rng();
+            if (r < 0.45) p.blend(x, y, rgb('#2c2a36'), 0.8);
+            else if (r < 0.8) p.blend(x, y, rgb('#09080d'), 0.8);
+            else p.blend(x, y, rgb('#3a3746'), 0.6);
+          }
+          // Tyre-polished wheel paths: two per lane, darker and glossier.
+          const lane = w / 3;
+          for (let l = 0; l < 3; l++)
+            for (const off of [0.27, 0.73]) {
+              const cx = l * lane + off * lane;
+              for (let x = Math.floor(cx - 5); x <= cx + 5; x++) {
+                const t = 1 - Math.abs(x - cx) / 5.5;
+                for (let y = 0; y < h; y++) {
+                  p.blend(x, y, rgb('#0d0c12'), 0.35 * t);
+                  rough[((x + w) % w) + y * w] -= 0.22 * t;
+                }
+              }
+            }
+          // Repair patches: flatter tone, dark tar seams.
+          for (let k = 0; k < 4; k++) {
+            const pw = 10 + Math.floor(rng() * 24);
+            const ph = 14 + Math.floor(rng() * 40);
+            const px = Math.floor(8 + rng() * (w - pw - 16));
+            const py = Math.floor(rng() * h);
+            const tone = rgb(rng() < 0.5 ? '#1b1a23' : '#141319');
+            for (let y = 0; y < ph; y++)
+              for (let x = 0; x < pw; x++) {
+                const edge = x === 0 || y === 0 || x === pw - 1 || y === ph - 1;
+                p.set(px + x, py + y, edge ? rgb('#08070b') : mix(tone, p.get(px + x, py + y), 0.3));
+              }
+          }
+          // Manhole cover in the middle lane.
+          {
+            const cx = Math.round(w / 2 + 6);
+            const cy = 190;
+            for (let y = -7; y <= 7; y++)
+              for (let x = -7; x <= 7; x++) {
+                const d = Math.hypot(x, y);
+                if (d > 7.2) continue;
+                let c = rgb('#23222b');
+                if (d > 6.2) c = rgb('#08070b');
+                else if (d > 5.2) c = rgb('#3a3844');
+                else if ((x + y + 20) % 3 === 0 || (x - y + 20) % 3 === 0) c = rgb('#17161d');
+                p.set(cx + x, cy + y, c);
+                rough[(cy + y) * w + cx + x] = 0.35;
+              }
+          }
+          // Cracks: branching random walks.
+          for (let k = 0; k < 28; k++) {
+            let x = rng() * w;
+            let y = rng() * h;
+            let dir = rng() * Math.PI * 2;
+            const len = 6 + rng() * 22;
+            for (let s = 0; s < len; s++) {
+              p.set(x, y, rgb('#060509'));
+              if (rng() < 0.3) p.set(x + 1, y, rgb('#0a090e'));
+              dir += (rng() - 0.5) * 0.9;
+              x += Math.cos(dir);
+              y += Math.sin(dir);
+            }
+          }
+          // Oil stains in lane centres.
+          const oil = blobs(w, h, rng, 5, 2, 5, 1.4);
+          for (let i = 0; i < w * h; i++) {
+            if (oil[i] <= 0) continue;
+            const x = i % w;
+            const y = (i / w) | 0;
+            const lc = Math.abs(((x % lane) / lane) - 0.5);
+            if (lc > 0.2) continue;
+            p.blend(x, y, rgb('#07060a'), 0.6 * Math.min(1, oil[i] * 2));
+            if (rng() < 0.05) p.set(x, y, rgb('#2a1a3a')); // faint rainbow sheen
+            rough[i] = Math.min(rough[i], 0.3);
+          }
+          // Lane lines: worn white paint, same positions as the current road.
+          const lineAt = (x0, len) => {
+            for (let y = 0; y < len; y++)
+              for (let x = x0; x < x0 + 2; x++) {
+                const r = rng();
+                if (r < 0.05) continue; // chipped away
+                p.set(x, y, r < 0.18 ? rgb('#8e8e9c') : r < 0.3 ? rgb('#b8b8c6') : rgb(PALETTE.line));
+                rough[y * w + x] = 0.55;
+              }
+          };
+          lineAt(3, h);
+          lineAt(w - 5, h);
+          for (const lx of [Math.round(w / 3), Math.round((2 * w) / 3)]) lineAt(lx - 1, h / 2);
+          // Puddles last so they cover lines too: flat, deep blue-black, near mirror.
+          const pud = blobs(w, h, rng, 6, 2, 7, 2);
+          for (let i = 0; i < w * h; i++) {
+            const m = pud[i];
+            if (m <= 0.02) continue;
+            const x = i % w;
+            const y = (i / w) | 0;
+            const edge = m < 0.14;
+            p.set(x, y, edge ? mix(p.get(x, y), rgb('#1b1e33'), 0.7) : mix(p.get(x, y), rgb('#0a0c1a'), 0.82));
+            rough[i] = edge ? 0.25 : 0.04;
+          }
+          T.road = canvasTexture(w, h, (ctx) => p.flush(ctx));
+          T.roadRough = canvasTexture(
+            w,
+            h,
+            (ctx) => {
+              const r = new Pix(w, h);
+              r.fill((x, y) => {
+                const v = clamp(rough[y * w + x]) * 255;
+                return [v, v, v];
+              });
+              r.flush(ctx);
+            },
+            { color: false },
+          );
+        }
+
+        // Chevron barrier, current 64x32 layout: steel rail with bolts, chevron panel
+        // with road grime rising from the bottom, scrape marks and rust weeping from bolts.
+        {
+          const rng = makeRng(402);
+          const w = 64;
+          const h = 32;
+          const p = new Pix(w, h);
+          const n = fbm(w, h, rng, [16, 8, 4]);
+          p.fill(() => rgb('#0e0c14'));
+          for (let y = 7; y < h - 3; y++)
+            for (let x = 0; x < w; x++) {
+              const d = (x + Math.abs(y - 17.5)) % 16;
+              if (d < 6) p.set(x, y, d < 1 ? rgb('#8a6e00') : d > 5 ? rgb('#c49a00') : rgb(PALETTE.chevron));
+              else p.set(x, y, mix(rgb('#0e0c14'), rgb('#1a1822'), n[y * w + x]));
+            }
+          // Grime: heavier toward the road.
+          for (let y = 4; y < h; y++)
+            for (let x = 0; x < w; x++) {
+              const g = clamp(((y - 8) / (h - 8)) * 0.8 + (n[y * w + x] - 0.5) * 0.9);
+              p.mul(x, y, 1 - 0.55 * g);
+              if (rng() < 0.05 * g) p.set(x, y, rgb('#2a2016'));
+            }
+          // Chipped paint.
+          for (let i = 0; i < 60; i++) p.set(rng() * w, 7 + rng() * (h - 10), rgb('#16141c'));
+          // Scrapes from cars: long horizontal marks at wheel-hub height.
+          for (let k = 0; k < 5; k++) {
+            const y = 13 + Math.floor(rng() * 10);
+            const x = Math.floor(rng() * w);
+            const len = 6 + Math.floor(rng() * 22);
+            for (let i = 0; i < len; i++) p.blend(x + i, y, rgb('#8c8a98'), 0.55 + rng() * 0.3);
+            if (rng() < 0.6) for (let i = 2; i < len - 2; i++) p.blend(x + i, y + 1, rgb('#4a4855'), 0.4);
+          }
+          // Steel rail with highlight, bolts and rust drips.
+          for (let x = 0; x < w; x++) {
+            p.set(x, 0, rgb('#2e2c38'));
+            p.set(x, 1, rgb('#8a889c'));
+            p.set(x, 2, rgb('#5a5868'));
+            p.set(x, 3, rgb('#3a3846'));
+            p.set(x, 4, rgb('#121019'));
+          }
+          for (let bx = 4; bx < w; bx += 16) {
+            p.set(bx, 2, rgb('#c8c6d8'));
+            p.set(bx + 1, 3, rgb('#1a1822'));
+            const len = 2 + Math.floor(rng() * 6);
+            for (let j = 0; j < len; j++) p.blend(bx, 4 + j, rgb('#6a3418'), 0.8 - j * 0.1);
+          }
+          // Amber reflector.
+          p.set(24, 6, rgb('#ffcc40'));
+          p.set(25, 6, rgb('#c08010'));
+          for (let x = 0; x < w; x++) for (let y = h - 3; y < h; y++) p.set(x, y, rgb('#05040a'));
+          T.wallChevron = canvasTexture(w, h, (ctx) => p.flush(ctx));
+        }
+
+        // Concrete jersey barrier (concept 2), 64x32: cast segments with a joint,
+        // bevel line, rain streaks, reflective strip and the odd graffiti tag.
+        {
+          const rng = makeRng(417);
+          const w = 64;
+          const h = 32;
+          const p = new Pix(w, h);
+          const n = fbm(w, h, rng, [32, 16, 8, 4]);
+          p.fill((x, y) => mix(rgb('#34323c'), rgb('#4c4a56'), n[y * w + x]));
+          for (let i = 0; i < w * h * 0.25; i++) p.blend(rng() * w, rng() * h, rgb(rng() < 0.5 ? '#26242e' : '#5a5866'), 0.7);
+          // Top cap and the bevel where the profile widens.
+          for (let x = 0; x < w; x++) {
+            p.set(x, 0, rgb('#6a6876'));
+            p.set(x, 1, rgb('#56545f'));
+            p.set(x, 11, rgb('#62606c'));
+            p.set(x, 12, rgb('#24222b'));
+          }
+          // Segment joint.
+          for (let y = 0; y < h; y++) {
+            p.set(0, y, rgb('#0e0d12'));
+            p.set(1, y, rgb('#1e1c24'));
+            p.set(63, y, rgb('#5c5a66'));
+          }
+          // Rain streaks from the top.
+          for (let k = 0; k < 14; k++) {
+            const x = Math.floor(rng() * w);
+            const len = 4 + Math.floor(rng() * 20);
+            for (let y = 1; y < len; y++) p.mul(x, y, 0.72 + (y / len) * 0.25);
+          }
+          // Grime up from the road.
+          for (let y = 18; y < h; y++) for (let x = 0; x < w; x++) p.mul(x, y, 1 - ((y - 18) / 14) * 0.55 * (0.6 + n[y * w + x] * 0.8));
+          // Reflective strip, worn.
+          for (let x = 2; x < w - 1; x++) {
+            if (rng() < 0.12) continue;
+            p.set(x, 24, rgb(rng() < 0.2 ? '#8a6e00' : '#e8b800'));
+          }
+          // Graffiti tag.
+          {
+            const col = rgb(PALETTE.pink);
+            let x = 38;
+            let y = 17;
+            for (let s = 0; s < 34; s++) {
+              p.blend(x, y, col, 0.85);
+              x += rng() < 0.7 ? 1 : 0;
+              y += Math.round(Math.sin(s * 0.9) * 1.2 + (rng() - 0.5));
+              y = Math.max(14, Math.min(21, y));
+            }
+          }
+          for (let x = 0; x < w; x++) for (let y = h - 2; y < h; y++) p.set(x, y, rgb('#0a090e'));
+          T.wallConcrete = canvasTexture(w, h, (ctx) => p.flush(ctx));
+        }
+
+        // Armour plating for car bodies, 64x64, greyscale so it multiplies the paint:
+        // offset plates, rivets, welds, scratches, dents and a few bullet hits.
+        const armorLayout = (p, rng, base) => {
+          const w = 64;
+          const n = fbm(w, w, rng, [32, 16, 8]);
+          const rows = [0, 22, 43];
+          const cuts = [[0, 36], [18, 50], [8, 30]];
+          const tone = rows.map(() => cuts[0].map(() => 1 + (rng() - 0.5) * 0.12));
+          p.fill((x, y) => {
+            const r = y < 22 ? 0 : y < 43 ? 1 : 2;
+            const c = cuts[r];
+            const col = x >= c[0] && x < c[1] ? 0 : 1;
+            const g = base * tone[r][col] * (0.8 + n[y * w + x] * 0.25);
+            return [g, g, g];
+          });
+          // Seams: dark gap, lit lower/right lip, shaded upper/left lip.
+          const seamH = (y, x0, x1) => {
+            for (let x = x0; x < x1; x++) {
+              p.set(x, y, [60, 60, 60]);
+              p.mul(x, y - 1, 0.78);
+              p.set(x, y + 1, [255, 255, 255]);
+            }
+          };
+          const seamV = (x, y0, y1) => {
+            for (let y = y0; y < y1; y++) {
+              p.set(x, y, [60, 60, 60]);
+              p.mul(x - 1, y, 0.8);
+              p.set(x + 1, y, [250, 250, 250]);
+            }
+          };
+          rows.forEach((y, r) => seamH(y, 0, w));
+          rows.forEach((y0, r) => {
+            const y1 = rows[r + 1] ?? w;
+            for (const x of cuts[r]) seamV(x, y0 + 1, y1);
+          });
+          // Rivets along the seams.
+          const rivet = (x, y) => {
+            p.set(x, y, [255, 255, 255]);
+            p.set(x + 1, y + 1, [80, 80, 80]);
+            p.set(x + 1, y, [190, 190, 190]);
+          };
+          rows.forEach((y) => {
+            for (let x = 3; x < w; x += 6) {
+              rivet(x, y + 3);
+              rivet(x, y - 3);
+            }
+          });
+          rows.forEach((y0, r) => {
+            const y1 = rows[r + 1] ?? w;
+            for (const x of cuts[r]) for (let y = y0 + 6; y < y1 - 2; y += 6) rivet(x + 3, y);
+          });
+          return n;
+        };
+        const wear = (p, rng) => {
+          // Weld bead across one plate.
+          for (let x = 40; x < 60; x++) {
+            p.set(x, 33 + (x % 2), x % 2 ? [200, 200, 200] : [150, 150, 150]);
+            p.set(x, 34 - (x % 2), [120, 120, 120]);
+          }
+          // Scratches: bright line with a dark shadow under it.
+          for (let k = 0; k < 22; k++) {
+            let x = rng() * 64;
+            let y = rng() * 64;
+            const a = (rng() - 0.5) * 1.2 + (rng() < 0.5 ? 0 : Math.PI);
+            const len = 3 + rng() * 10;
+            for (let i = 0; i < len; i++) {
+              p.set(x, y, [255, 255, 255]);
+              p.mul(x, y + 1, 0.7);
+              x += Math.cos(a);
+              y += Math.sin(a) * 0.5;
+            }
+          }
+          // Dents.
+          for (let k = 0; k < 4; k++) {
+            const cx = rng() * 64;
+            const cy = rng() * 64;
+            for (let y = -2; y <= 2; y++) for (let x = -3; x <= 3; x++) if (x * x / 9 + y * y / 4 <= 1) p.mul(cx + x, cy + y, 0.75 + (y + 2) * 0.05);
+            p.set(cx - 1, cy - 2, [255, 255, 255]);
+          }
+          // Bullet hits.
+          for (let k = 0; k < 4; k++) {
+            const cx = Math.floor(rng() * 64);
+            const cy = Math.floor(rng() * 64);
+            for (const [dx, dy] of [[-1, -1], [0, -1], [1, -1], [-1, 0], [2, 0], [-1, 1], [2, 1], [0, 2], [1, 2]]) p.set(cx + dx, cy + dy, [175, 175, 175]);
+            p.set(cx - 1, cy - 1, [255, 255, 255]);
+            p.rect(cx, cy, 2, 2, [30, 30, 30]);
+          }
+        };
+        T.armor = canvasTexture(64, 64, (ctx) => {
+          const rng = makeRng(503);
+          const p = new Pix(64, 64);
+          armorLayout(p, rng, 232);
+          wear(p, rng);
+          p.flush(ctx);
+        });
+
+        // Junk finish: the same plates, eaten by rust with flaking paint round the edges.
+        T.rust = canvasTexture(64, 64, (ctx) => {
+          const rng = makeRng(503);
+          const p = new Pix(64, 64);
+          armorLayout(p, rng, 232);
+          wear(p, rng);
+          const r2 = makeRng(611);
+          const n = fbm(64, 64, r2, [32, 16, 8, 4]);
+          for (let y = 0; y < 64; y++)
+            for (let x = 0; x < 64; x++) {
+              const v = n[y * 64 + x] + (y / 64) * 0.18; // rust collects low on panels
+              if (v > 0.6) {
+                const t = clamp((v - 0.6) * 4);
+                const c = mix(rgb('#8a4a20'), rgb('#3a1a0c'), t);
+                const s = r2();
+                p.set(x, y, s < 0.12 ? rgb('#b06a30') : s < 0.2 ? rgb('#2a1208') : c);
+              } else if (v > 0.55) {
+                p.set(x, y, r2() < 0.5 ? [255, 255, 255] : rgb('#6a3418')); // flaking edge
+              }
+            }
+          p.flush(ctx);
+        });
+
+        // Window glass: dark with two reflection streaks. The cracked version adds a
+        // bullet hole with a spider-web of radial and ring cracks.
+        const glass = (cracked) =>
+          canvasTexture(
+            64,
+            32,
+            (ctx) => {
+              const rng = makeRng(707);
+              const p = new Pix(64, 32);
+              p.fill((x, y) => mix(rgb('#0a0d18'), rgb('#141a2c'), y / 32));
+              for (let y = 0; y < 32; y++)
+                for (let x = 0; x < 64; x++) {
+                  const d1 = x + y * 0.9 - 14;
+                  const d2 = x + y * 0.9 - 30;
+                  if (d1 >= 0 && d1 < 5) p.blend(x, y, rgb('#34405e'), 0.6);
+                  if (d2 >= 0 && d2 < 2) p.blend(x, y, rgb('#2a3450'), 0.5);
+                }
+              for (let x = 0; x < 64; x++) {
+                p.set(x, 0, rgb('#05060c'));
+                p.set(x, 31, rgb('#05060c'));
+              }
+              if (cracked) {
+                const cx = 40;
+                const cy = 13;
+                const crack = rgb('#b8c4dc');
+                const plot = (x, y, bright) => {
+                  if (x < 1 || y < 1 || x > 62 || y > 30) return;
+                  p.set(x, y, bright ? [255, 255, 255] : crack);
+                };
+                const ends = [];
+                for (let k = 0; k < 11; k++) {
+                  let a = (k / 11) * Math.PI * 2 + (rng() - 0.5) * 0.4;
+                  let x = cx;
+                  let y = cy;
+                  const len = 9 + rng() * 26;
+                  for (let s = 0; s < len; s++) {
+                    plot(Math.round(x), Math.round(y), rng() < 0.15);
+                    a += (rng() - 0.5) * 0.35;
+                    x += Math.cos(a);
+                    y += Math.sin(a) * 0.8;
+                  }
+                  ends.push(a);
+                }
+                for (const r of [3.5, 7.5, 13]) {
+                  for (let a = 0; a < Math.PI * 2; a += 0.08) {
+                    if (Math.sin(a * 3 + r) > 0.35) continue; // broken rings
+                    plot(Math.round(cx + Math.cos(a) * r * 1.25), Math.round(cy + Math.sin(a) * r), false);
+                  }
+                }
+                p.rect(cx - 1, cy - 1, 3, 3, rgb('#dfe6f5'));
+                p.set(cx, cy, rgb('#000000'));
+                p.set(cx + 1, cy, rgb('#05060c'));
+              }
+              p.flush(ctx);
+            },
+            { repeat: false },
+          );
+        T.glass = glass(false);
+        T.glassCracked = glass(true);
+
+        // Tail light, 16x8: segmented LED cells in a dark housing (emissive map).
+        T.tail = canvasTexture(
+          16,
+          8,
+          (ctx) => {
+            const p = new Pix(16, 8);
+            p.fill(() => rgb('#1a0206'));
+            for (let y = 1; y < 7; y++)
+              for (let x = 1; x < 15; x++) {
+                const cell = x % 2 === 1 && y % 2 === 1;
+                const mid = Math.abs(y - 3.5) < 1.5;
+                p.set(x, y, cell ? rgb(mid ? '#ff7080' : '#ff2a3a') : rgb('#7a0814'));
+              }
+            p.flush(ctx);
+          },
+          { repeat: false },
+        );
+        // Headlight, 16x8: twin reflector bowls.
+        T.head = canvasTexture(
+          16,
+          8,
+          (ctx) => {
+            const p = new Pix(16, 8);
+            p.fill(() => rgb('#10121a'));
+            for (const cx of [4, 11.5])
+              for (let y = 0; y < 8; y++)
+                for (let x = 0; x < 16; x++) {
+                  const d = Math.hypot(x + 0.5 - cx, y + 0.5 - 4);
+                  if (d < 1.4) p.set(x, y, rgb('#fffaf0'));
+                  else if (d < 2.6) p.set(x, y, rgb('#b8d4ff'));
+                  else if (d < 3.4) p.set(x, y, rgb('#4a5a78'));
+                }
+            p.flush(ctx);
+          },
+          { repeat: false },
+        );
+
+        // Tyre tread, 32x16: u runs round the tyre, v across it. Chevron blocks.
+        T.tread = canvasTexture(32, 16, (ctx) => {
+          const rng = makeRng(808);
+          const p = new Pix(32, 16);
+          p.fill((x, y) => {
+            if (y === 0 || y === 15) return rgb('#26262e');
+            const groove = (x + Math.abs(y - 7.5) * 0.8) % 8 < 1.6;
+            const centre = y === 7 || y === 8;
+            return groove || centre ? rgb('#070709') : rgb('#18181e');
+          });
+          for (let i = 0; i < 40; i++) p.blend(rng() * 32, 1 + rng() * 14, rgb('#2a2a32'), 0.6);
+          p.flush(ctx);
+        });
+        // Wheel face (cylinder cap UVs are a disc in 0..1): sidewall, spoked rim, hub.
+        T.rim = canvasTexture(
+          32,
+          32,
+          (ctx) => {
+            const p = new Pix(32, 32);
+            for (let y = 0; y < 32; y++)
+              for (let x = 0; x < 32; x++) {
+                const dx = x + 0.5 - 16;
+                const dy = y + 0.5 - 16;
+                const d = Math.hypot(dx, dy);
+                const a = Math.atan2(dy, dx);
+                let c;
+                if (d > 15) c = rgb('#0c0c10');
+                else if (d > 11) c = Math.abs(d - 13) < 0.5 && Math.sin(a * 18) > 0.3 ? rgb('#34343e') : rgb('#16161b'); // sidewall lettering
+                else if (d > 10) c = rgb('#9a9aa8'); // rim lip
+                else if (d > 3.5) {
+                  const spoke = Math.cos(a * 5) > 0.55;
+                  c = spoke ? (dx - dy > 0 ? rgb('#6a6a78') : rgb('#8e8e9c')) : rgb('#101014');
+                } else if (d > 2.5) c = rgb('#b8b8c6');
+                else c = rgb('#2a2a32');
+                p.set(x, y, c);
+              }
+            for (let k = 0; k < 5; k++) {
+              const a = (k / 5) * Math.PI * 2 + 0.6;
+              p.set(16 + Math.cos(a) * 4.5, 16 + Math.sin(a) * 4.5, rgb('#e0e0ea'));
+            }
+            p.flush(ctx);
+          },
+          { repeat: false },
+        );
+
+        // Apartment facade, same 64x128 / 4 px window cells as the current building:
+        // pilasters, ledges, grime runs, blinds, A/C units, and a glow map with varied
+        // warm/cool rooms, blinds half-drawn, TV flicker and people in windows.
+        {
+          const rng = makeRng(911);
+          const w = 64;
+          const h = 128;
+          const n = fbm(w, h, rng, [32, 16, 8]);
+          const wall = new Pix(w, h);
+          const glow = new Pix(w, h);
+          glow.fill(() => [0, 0, 0]);
+          wall.fill((x, y) => mix(rgb('#15131e'), rgb('#26233a'), n[y * w + x]));
+          for (let i = 0; i < w * h * 0.2; i++) wall.blend(rng() * w, rng() * h, rgb(rng() < 0.5 ? '#100e18' : '#2c2940'), 0.6);
+          for (let x = 0; x < w; x += 16) for (let y = 0; y < h; y++) {
+            wall.set(x, y, rgb('#2e2b42'));
+            wall.set(x + 1, y, rgb('#1a1826'));
+          }
+          const warm = ['#ffcf8a', '#ffd9a0', '#ffb860', '#fff0c8', '#ffe2b0'];
+          const cool = ['#cfe8ff', '#a8d8ff', '#e8f4ff'];
+          const neon = [PALETTE.cyan, PALETTE.pink, PALETTE.violet];
+          for (let fy = 0; fy < 32; fy++) {
+            const y = fy * 4;
+            for (let x = 0; x < w; x++) wall.set(x, y + 3, rgb('#34304a')); // floor ledge
+            const floorLit = rng() < 0.05;
+            for (let fx = 0; fx < 16; fx++) {
+              if (fx === 0 && fy === 0) continue; // texel (0,0) stays plain wall for roofs
+              const x = fx * 4 + 1;
+              const kind = rng();
+              // Dark glass, faint sky reflection on top.
+              wall.set(x, y, rgb('#161a2c'));
+              wall.set(x + 1, y, rgb('#10131f'));
+              wall.rect(x, y + 1, 2, 2, rgb('#0a0a12'));
+              wall.set(x + 2, y, rgb('#0c0b13')); // frame shadow
+              if (kind < 0.15) for (let j = 0; j < 3; j++) wall.set(x + (j % 2), y + j, rgb('#1c1a26')); // blinds
+              if (rng() < 0.08) wall.rect(x, y + 3, 2, 1, rgb('#4a4658')); // A/C unit
+              if (rng() < 0.18) for (let j = 4; j < 4 + Math.floor(rng() * 8); j++) wall.mul(x + Math.floor(rng() * 2), y + j, 0.8); // grime run
+              const on = floorLit || rng() < 0.16;
+              if (!on) continue;
+              const r = rng();
+              const c = rgb(r < 0.7 ? warm[Math.floor(rng() * warm.length)] : r < 0.9 ? cool[Math.floor(rng() * cool.length)] : neon[Math.floor(rng() * neon.length)]);
+              const style = rng();
+              for (let j = 0; j < 3; j++)
+                for (let i = 0; i < 2; i++) {
+                  let k = 1;
+                  if (style < 0.25 && j === 0) k = 0.35; // blind half down
+                  if (style > 0.9) k = 0.6 + 0.4 * ((i + j) % 2); // TV flicker
+                  glow.set(x + i, y + j, scale(style > 0.9 ? rgb('#7090ff') : c, k));
+                }
+              if (style > 0.75 && style <= 0.9) glow.set(x + (rng() < 0.5 ? 0 : 1), y + 2, rgb('#140e10')); // someone at the window
+            }
+          }
+          // Neon strip up one pilaster.
+          for (let y = 60; y < 100; y++) glow.set(32, y, rgb(PALETTE.pink));
+          T.building = canvasTexture(w, h, (ctx) => wall.flush(ctx));
+          T.buildingGlow = canvasTexture(w, h, (ctx) => glow.flush(ctx));
+        }
+
+        // Glass office tower facade, 64x128: blue glass bands with mullions, a neon
+        // reflection sweep, and whole runs of office floors lit in cool white.
+        {
+          const rng = makeRng(1013);
+          const w = 64;
+          const h = 128;
+          const wall = new Pix(w, h);
+          const glow = new Pix(w, h);
+          glow.fill(() => [0, 0, 0]);
+          for (let y = 0; y < h; y++)
+            for (let x = 0; x < w; x++) {
+              const band = y % 4 === 3;
+              const mull = x % 4 === 0;
+              let c = band ? rgb('#231f33') : mull ? rgb('#1c2236') : rgb('#0c1224');
+              const sweep = (x * 0.6 + y) % 128;
+              if (!band && !mull && sweep > 40 && sweep < 52) c = mix(c, rgb('#3a2050'), 0.55);
+              if (!band && !mull && y % 4 === 0) c = mix(c, rgb('#1e2a44'), 0.6);
+              wall.set(x, y, c);
+            }
+          wall.set(0, 0, rgb('#231f33'));
+          for (let fy = 0; fy < 32; fy++) {
+            let x = 0;
+            while (x < 16) {
+              const run = 2 + Math.floor(rng() * 6);
+              if (rng() < 0.16 && !(fy === 0 && x === 0)) {
+                const c = rgb(rng() < 0.75 ? '#9ab8d8' : '#6ac8d8');
+                for (let k = x; k < Math.min(16, x + run); k++)
+                  for (let j = 0; j < 3; j++) for (let i = 1; i < 4; i++) glow.set(k * 4 + i, fy * 4 + j, scale(c, j === 2 ? 0.7 : 1));
+              }
+              x += run;
+            }
+          }
+          T.tower = canvasTexture(w, h, (ctx) => wall.flush(ctx));
+          T.towerGlow = canvasTexture(w, h, (ctx) => glow.flush(ctx));
+        }
+
+        // --- Signs (emissive, not tiled) ---
+
+        // Skull billboard on an LED screen.
+        // Everything sits on a 3 px grid so the LED gaps fall between "pixels".
+        T.skull = canvasTexture(
+          150,
+          174,
+          (ctx, w, h) => {
+            const g = ctx.createLinearGradient(0, 0, 0, h);
+            g.addColorStop(0, '#2a0418');
+            g.addColorStop(1, '#0a0210');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, w, h);
+            drawText(ctx, 'DIE', 24, 9, { scale: 6, color: PALETTE.pink });
+            drawText(ctx, 'FAST', 6, 123, { scale: 6, color: PALETTE.pink });
+            const skull = ['..#######..', '.#########.', '###########', '##...#...##', '##...#...##', '###########', '.####.####.', '..#######..', '..#.#.#.#..', '..#######..'];
+            skull.forEach((row, ry) => {
+              for (let rx = 0; rx < row.length; rx++) {
+                if (row[rx] !== '#') continue;
+                ctx.fillStyle = ry < 3 ? '#ffb0d0' : '#ff6aa0';
+                ctx.fillRect(42 + rx * 6, 57 + ry * 6, 6, 6);
+              }
+            });
+            ledGrid(ctx, 0, 0, w, h);
+            ctx.fillStyle = '#2a2838';
+            ctx.fillRect(0, 0, w, 2);
+            ctx.fillRect(0, h - 2, w, 2);
+            ctx.fillRect(0, 0, 2, h);
+            ctx.fillRect(w - 2, 0, 2, h);
+          },
+          { repeat: false },
+        );
+
+        // Orange stacked ad (concept 2): dark text on a bright LED panel.
+        T.ad = canvasTexture(
+          120,
+          180,
+          (ctx, w, h) => {
+            ctx.fillStyle = '#ff7a1a';
+            ctx.fillRect(0, 0, w, h);
+            const g = ctx.createLinearGradient(0, 0, 0, h);
+            g.addColorStop(0, 'rgba(255,220,120,0.35)');
+            g.addColorStop(1, 'rgba(120,20,0,0.35)');
+            ctx.fillStyle = g;
+            ctx.fillRect(0, 0, w, h);
+            ['ARMOR', 'FUEL', 'AMMO', 'BIGGER', 'BOLDER', 'FASTER'].forEach((word, i) => {
+              drawText(ctx, word, 6, 9 + i * 27, { scale: 3, color: '#2a0800' });
+            });
+            ledGrid(ctx, 0, 0, w, h, 0.55);
+            ctx.fillStyle = '#1a1420';
+            ctx.fillRect(0, 0, w, 3);
+            ctx.fillRect(0, h - 3, w, 3);
+            ctx.fillRect(0, 0, 3, h);
+            ctx.fillRect(w - 3, 0, 3, h);
+          },
+          { repeat: false },
+        );
+
+        // Neon tube lettering on a dark backing board.
+        T.neonCity = canvasTexture(
+          130,
+          72,
+          (ctx, w, h) => {
+            ctx.fillStyle = '#07040f';
+            ctx.fillRect(0, 0, w, h);
+            neonText(ctx, 'NEON', Math.round((w - textWidth('NEON', 4)) / 2), 8, 4, PALETTE.pink);
+            neonText(ctx, 'SPRAWL', Math.round((w - textWidth('SPRAWL', 3)) / 2), 45, 3, PALETTE.cyan);
+          },
+          { repeat: false },
+        );
+        T.hotel = canvasTexture(
+          30,
+          128,
+          (ctx, w, h) => {
+            ctx.fillStyle = '#07040f';
+            ctx.fillRect(0, 0, w, h);
+            [...'HOTEL'].forEach((ch, k) => neonText(ctx, ch, 8, 6 + k * 24, 3, k % 2 ? '#ff5a8a' : PALETTE.pink));
+            ctx.fillStyle = PALETTE.violet;
+            ctx.fillRect(1, 1, w - 2, 1);
+            ctx.fillRect(1, h - 2, w - 2, 1);
+            ctx.fillRect(1, 1, 1, h - 2);
+            ctx.fillRect(w - 2, 1, 1, h - 2);
+          },
+          { repeat: false },
+        );
+
+        // Green highway signs (concept 2), two panels on one gantry.
+        T.highway = canvasTexture(
+          160,
+          48,
+          (ctx, w, h) => {
+            const rng = makeRng(1201);
+            ctx.fillStyle = '#16141c';
+            ctx.fillRect(0, 0, w, h);
+            const panel = (x0, lines) => {
+              const pw = 76;
+              ctx.fillStyle = '#0f5a38';
+              ctx.fillRect(x0, 2, pw, h - 4);
+              ctx.fillStyle = '#e8ece8';
+              ctx.fillRect(x0 + 2, 4, pw - 4, 1);
+              ctx.fillRect(x0 + 2, h - 5, pw - 4, 1);
+              ctx.fillRect(x0 + 2, 4, 1, h - 8);
+              ctx.fillRect(x0 + pw - 3, 4, 1, h - 8);
+              lines.forEach((t, i) => drawText(ctx, t, x0 + pw / 2, 9 + i * 10 + (lines.length === 1 ? 5 : 0), { scale: 1, color: '#f0f4f0', align: 'center' }));
+              // Up arrow.
+              const ax = x0 + pw / 2;
+              ctx.fillStyle = '#f0f4f0';
+              ctx.fillRect(ax - 1, 33, 2, 8);
+              for (let k = 0; k < 4; k++) ctx.fillRect(ax - 1 - k, 32 + k, 2 + k * 2, 1);
+              // Weathering: dark streaks down from the top, rust by the bolts.
+              for (let k = 0; k < 18; k++) {
+                const x = x0 + 3 + Math.floor(rng() * (pw - 6));
+                const len = 2 + Math.floor(rng() * 14);
+                ctx.fillStyle = 'rgba(0,0,0,0.25)';
+                ctx.fillRect(x, 5, 1, len);
+              }
+              ctx.fillStyle = 'rgba(0,0,0,0.3)';
+              ctx.fillRect(x0, h - 12, pw, 10);
+              ctx.fillStyle = '#6a3418';
+              for (const bx of [x0 + 6, x0 + pw - 7]) ctx.fillRect(bx, 6, 1, 3 + Math.floor(rng() * 4));
+            };
+            panel(2, ['DOWNTOWN']);
+            panel(82, ['INDUSTRIAL', 'DISTRICT']);
+          },
+          { repeat: false },
+        );
+
+        // Overhead direction sign (concept 1): cyan LED chevrons.
+        T.arrows = canvasTexture(
+          66,
+          18,
+          (ctx, w, h) => {
+            ctx.fillStyle = '#070a14';
+            ctx.fillRect(0, 0, w, h);
+            ctx.fillStyle = PALETTE.cyan;
+            for (let k = 0; k < 3; k++) {
+              const x0 = 9 + k * 18;
+              for (let j = 0; j < 12; j++) {
+                const off = 6 - Math.abs(j - 5.5);
+                ctx.fillRect(x0 + Math.round(off * 1.5), 3 + j, 4, 1);
+              }
+            }
+            ledGrid(ctx, 0, 0, w, h, 0.3);
+            ctx.fillStyle = '#3a4a6a';
+            ctx.fillRect(0, 0, w, 1);
+            ctx.fillRect(0, h - 1, w, 1);
+          },
+          { repeat: false },
+        );
+
+        return T;
+      }
+
+      // ------------------------------------------------------------------------
+      // Scene
+      // ------------------------------------------------------------------------
+
+      const canvas = document.getElementById('view');
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: false });
+      renderer.setPixelRatio(1);
+      const cur = createTextures();
+      cur.env = createEnvMap(renderer);
+      const P = proposedTextures();
+
+      const state = { set: 'proposed', paint: '#b01c2c', finish: 'armor', glass: 'clean', barrier: 'chevron', cam: 'chase' };
+      const scene = new THREE.Scene();
+      scene.background = cur.sky;
+      scene.fog = new THREE.FogExp2(PALETTE.haze, 0.0045);
+      scene.add(new THREE.HemisphereLight('#6a70c0', '#1a0b2e', 1.4));
+      const moon = new THREE.DirectionalLight('#9ab8ff', 1.2);
+      moon.position.set(-0.4, 1, 0.3);
+      scene.add(moon);
+      for (const [c, x, z] of [[PALETTE.pink, -10, -18], [PALETTE.cyan, 10, -34], [PALETTE.amber, 10, 2]]) {
+        const l = new THREE.PointLight(c, 60, 40, 1.4);
+        l.position.set(x, 6, z);
+        scene.add(l);
+      }
+
+      const HW = 8; // road half width
+      const CURB = 9.2;
+      const WALL = 11.2;
+      const LEN = 360;
+      const Z0 = 30;
+      const env = { envMap: cur.env };
+
+      // Scales BoxGeometry UVs to metres per texture repeat. Roofs (±y) sample the
+      // plain texel at (0,0) when `plainTop` is set, like the city buildings do.
+      function boxUV(geo, w, h, d, su, sv, plainTop = false) {
+        const dims = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]];
+        const uv = geo.attributes.uv;
+        for (let f = 0; f < 6; f++)
+          for (let k = f * 4; k < f * 4 + 4; k++) {
+            if (plainTop && (f === 2 || f === 3)) uv.setXY(k, 0.005, 0.995);
+            else uv.setXY(k, (uv.getX(k) * dims[f][0]) / su, (uv.getY(k) * dims[f][1]) / sv);
+          }
+        return geo;
+      }
+      function strip(x0, x1, uRepeat, vLen, y = 0) {
+        const g = new THREE.PlaneGeometry(x1 - x0, LEN);
+        g.rotateX(-Math.PI / 2);
+        g.translate((x0 + x1) / 2, y, Z0 - LEN / 2);
+        const uv = g.attributes.uv;
+        for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * uRepeat, uv.getY(k) * (LEN / vLen));
+        return g;
+      }
+
+      // Car shell extrusion with UVs. 'metres': plates tile every `size` metres.
+      // 'fit': each face gets the whole texture (windows).
+      function extrude(profile, halfWidth, topHalfWidth, mode, size = 1.4) {
+        const ys = profile.map((p) => p[1]);
+        const zs = profile.map((p) => p[0]);
+        const [yMin, yMax, zMin, zMax] = [Math.min(...ys), Math.max(...ys), Math.min(...zs), Math.max(...zs)];
+        const widthAt = (y) => halfWidth + (topHalfWidth - halfWidth) * ((y - yMin) / (yMax - yMin));
+        const vert = ([z, y], side) => [side * widthAt(y), y, z];
+        const pos = [];
+        const uvs = [];
+        const sideUV = ([z, y], side) =>
+          mode === 'fit' ? [side > 0 ? (zMax - z) / (zMax - zMin) : (z - zMin) / (zMax - zMin), (y - yMin) / (yMax - yMin)] : [(side > 0 ? -z : z) / size, y / size];
+        const n = profile.length;
+        for (let i = 1; i < n - 1; i++) {
+          for (const [side, order] of [[1, [0, i, i + 1]], [-1, [0, i + 1, i]]])
+            for (const o of order) {
+              pos.push(...vert(profile[o], side));
+              uvs.push(...sideUV(profile[o], side));
+            }
+        }
+        let run = 0;
+        for (let i = 0; i < n; i++) {
+          const a = profile[i];
+          const b = profile[(i + 1) % n];
+          const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+          const va = mode === 'fit' ? 0 : run / size;
+          const vb = mode === 'fit' ? 1 : (run + len) / size;
+          const u = (p, side) => (mode === 'fit' ? (side * widthAt(p[1]) + halfWidth) / (2 * halfWidth) : (side * widthAt(p[1])) / size);
+          const quad = [[a, 1, va], [b, 1, vb], [b, -1, vb], [a, 1, va], [b, -1, vb], [a, -1, va]];
+          for (const [p, side, v] of quad) {
+            pos.push(...vert(p, side));
+            uvs.push(u(p, side), v);
+          }
+          run += len;
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        g.computeVertexNormals();
+        return g;
+      }
+
+      // One copy of the world per texture set; switching is a visibility toggle.
+      const worlds = {};
+      const paintMats = [];
+      const swapMats = []; // {mesh, key, pick: () => material}
+
+      function makeWorld(set) {
+        const isNew = set === 'proposed';
+        const g = new THREE.Group();
+        const add = (geo, mat) => {
+          const m = new THREE.Mesh(geo, mat);
+          g.add(m);
+          return m;
+        };
+
+        // Road, curbs, shoulders, ground.
+        const roadMat = isNew
+          ? standardMaterial({ map: P.road, roughnessMap: P.roadRough, roughness: 1, metalness: 0, envMapIntensity: 0.7, ...env })
+          : standardMaterial({ map: cur.road, roughness: 0.45, metalness: 0, envMapIntensity: 0.5, ...env });
+        add(strip(-HW, HW, 1, 16), roadMat);
+        const curbMat = litMaterial({ map: cur.curb });
+        add(strip(-CURB, -HW, 1, 3), curbMat);
+        add(strip(HW, CURB, 1, 3), curbMat);
+        const shoulderMat = litMaterial({ map: cur.shoulder });
+        add(strip(-WALL, -CURB, 0.5, 4), shoulderMat);
+        add(strip(CURB, WALL, 0.5, 4), shoulderMat);
+        const groundTex = cur.ground.clone();
+        groundTex.repeat.set(40, 40);
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(320, 320).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ map: groundTex }));
+        ground.position.set(0, -0.05, -100);
+        g.add(ground);
+
+        // Barriers: thin boxes, textured on the road-facing side.
+        const barrierMats = isNew
+          ? { chevron: litMaterial({ map: P.wallChevron }), concrete: litMaterial({ map: P.wallConcrete }) }
+          : { chevron: litMaterial({ map: cur.wall }), concrete: litMaterial({ map: cur.wall }) };
+        for (const s of [-1, 1]) {
+          const geo = boxUV(new THREE.BoxGeometry(0.4, 1.1, LEN), 0.4, 1.1, LEN, 3.4, 1.1);
+          const m = add(geo, barrierMats.chevron);
+          m.position.set(s * (WALL + 0.2), 0.55, Z0 - LEN / 2);
+          swapMats.push({ mesh: m, pick: () => barrierMats[state.barrier] });
+        }
+
+        // City blocks.
+        const rng = makeRng(5);
+        const bMats = isNew
+          ? [
+              litMaterial({ map: P.building, emissiveMap: P.buildingGlow, emissive: 0xffffff, emissiveIntensity: 0.9 }),
+              litMaterial({ map: P.tower, emissiveMap: P.towerGlow, emissive: 0xffffff, emissiveIntensity: 0.9 }),
+            ]
+          : [litMaterial({ map: cur.building, emissiveMap: cur.buildingGlow, emissive: 0xffffff, emissiveIntensity: 0.9 })];
+        const blocks = [];
+        for (const s of [-1, 1]) {
+          let z = Z0;
+          while (z > Z0 - LEN + 20) {
+            const d = 14 + rng() * 14;
+            const w = 12 + rng() * 10;
+            const h = 18 + rng() * 70;
+            const x = s * (WALL + 3 + w / 2 + rng() * 2);
+            const geo = boxUV(new THREE.BoxGeometry(w, h, d), w, h, d, 48, 96, true);
+            const m = add(geo, bMats[Math.floor(rng() * bMats.length)]);
+            m.position.set(x, h / 2, z - d / 2);
+            blocks.push({ s, x, z: z - d / 2, w, d, h });
+            z -= d + 1 + rng() * 4;
+          }
+        }
+
+        // Signs on the building faces that look at the road.
+        const signQuad = (tex, rect, w, h, intensity) => {
+          const geo = new THREE.PlaneGeometry(w, h);
+          if (rect) {
+            const uv = geo.attributes.uv;
+            for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) ? rect.u1 : rect.u0, uv.getY(k) ? rect.v1 : rect.v0);
+          }
+          return new THREE.Mesh(geo, glowMaterial({ map: tex, intensity, side: THREE.DoubleSide }));
+        };
+        const onBlock = (i, mesh, y, dz = 0) => {
+          const b = blocks[i];
+          mesh.position.set(b.x - b.s * (b.w / 2 + 0.15), y, b.z + dz);
+          mesh.rotation.y = b.s < 0 ? Math.PI / 2 : -Math.PI / 2;
+          g.add(mesh);
+        };
+        const atlas = cur.signs;
+        const left = blocks.map((b, i) => [b, i]).filter(([b]) => b.s < 0);
+        const right = blocks.map((b, i) => [b, i]).filter(([b]) => b.s > 0);
+        const L = (k) => left[k % left.length][1];
+        const R = (k) => right[k % right.length][1];
+        if (isNew) {
+          onBlock(L(1), signQuad(P.skull, null, 7, 8.1, 2.2), 12);
+          onBlock(L(2), signQuad(P.hotel, null, 2, 8.5, 2.4), 14);
+          onBlock(R(1), signQuad(P.ad, null, 6, 9, 1.05), 11);
+          onBlock(R(2), signQuad(P.neonCity, null, 10, 5.5, 2.4), 16);
+          onBlock(L(4), signQuad(P.neonCity, null, 9, 5, 2.4), 22);
+          onBlock(R(4), signQuad(P.skull, null, 6, 7, 2.2), 14);
+        } else {
+          onBlock(L(1), signQuad(atlas.texture, atlas.skull, 7, 9.9, 2.4), 12);
+          onBlock(L(2), signQuad(atlas.texture, atlas.vertical[0], 2, 2 / atlas.vertical[0].aspect, 2.4), 14);
+          onBlock(R(1), signQuad(atlas.texture, atlas.rects[4], 8, 8 / atlas.rects[4].aspect, 2.4), 11);
+          onBlock(R(2), signQuad(atlas.texture, atlas.rects[1], 10, 10 / atlas.rects[1].aspect, 2.4), 16);
+          onBlock(L(4), signQuad(atlas.texture, atlas.rects[5], 9, 9 / atlas.rects[5].aspect, 2.4), 22);
+          onBlock(R(4), signQuad(atlas.texture, atlas.skull, 6, 8.5, 2.4), 14);
+        }
+
+        // Gantries over the road.
+        const steel = litMaterial({ color: '#3a3848' });
+        const gantry = (z, signs) => {
+          for (const s of [-1, 1]) {
+            const post = add(new THREE.BoxGeometry(0.35, 7.2, 0.35), steel);
+            post.position.set(s * (WALL - 0.4), 3.6, z);
+          }
+          const beam = add(new THREE.BoxGeometry(WALL * 2, 0.4, 0.4), steel);
+          beam.position.set(0, 7, z);
+          for (const [mesh, x, y] of signs) {
+            mesh.position.set(x, y, z + 0.25);
+            g.add(mesh);
+          }
+        };
+        if (isNew) {
+          gantry(-62, [[signQuad(P.highway, null, 12, 3.6, 0.9), 0, 5.2]]);
+          gantry(-130, [[signQuad(P.arrows, null, 6, 1.6, 2.4), 0, 6.1]]);
+        } else {
+          const r0 = atlas.rects[0];
+          gantry(-62, [[signQuad(atlas.texture, r0, 12, 12 / r0.aspect, 2.4), 0, 5.8]]);
+          const r1 = atlas.rects[3];
+          gantry(-130, [[signQuad(atlas.texture, r1, 6, 6 / r1.aspect, 2.4), 0, 6.1]]);
+        }
+
+        // Skyline ring.
+        const skyTex = cur.skyline;
+        skyTex.repeat.set(5, 1);
+        const sky = new THREE.Mesh(
+          new THREE.CylinderGeometry(900, 900, 260, 48, 1, true),
+          new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, alphaTest: 0.5, fog: false }),
+        );
+        sky.position.set(0, 100, -100);
+        sky.renderOrder = -1;
+        g.add(sky);
+
+        // Cars: the player's and one rival ahead.
+        g.add(makeCar(isNew, true, 0, 0));
+        g.add(makeCar(isNew, false, 4.5, -16));
+        return g;
+      }
+
+      function makeCar(isNew, player, x, z) {
+        const shell = SHELLS.muscle;
+        const W = 1.9;
+        const car = new THREE.Group();
+        const body = new THREE.Group();
+        body.position.y = 0.76; // wheel centres at 0.36 above the road
+        car.add(body);
+        car.position.set(x, 0, z);
+        const add = (geo, mat, px = 0, py = 0, pz = 0) => {
+          const m = new THREE.Mesh(geo, mat);
+          m.position.set(px, py, pz);
+          body.add(m);
+          return m;
+        };
+        const box = (w, h, d, mat, px, py, pz) => add(boxUV(new THREE.BoxGeometry(w, h, d), w, h, d, 1.4, 1.4), mat, px, py, pz);
+        const cyl = (r, len, mat, px, py, pz) => add(new THREE.CylinderGeometry(r, r, len, 8).rotateZ(Math.PI / 2), mat, px, py, pz);
+        const envP = { ...env, side: THREE.DoubleSide };
+
+        const paint = player ? state.paint : '#3a3a42';
+        const paintMat = standardMaterial({ color: paint, roughness: 0.55, metalness: 0.5, envMapIntensity: 1.2, ...envP });
+        if (player) paintMats.push(paintMat);
+        const darkMat = standardMaterial({ color: isNew ? '#3a3844' : '#16151c', map: isNew ? P.armor : null, metalness: 0.4, roughness: 0.6, ...envP });
+        const gunMat = standardMaterial({ color: isNew ? '#5a5866' : '#6a6878', map: isNew ? P.armor : null, metalness: 0.8, roughness: 0.4, ...envP });
+        const glassMats = {
+          clean: standardMaterial({ color: isNew ? '#ffffff' : '#0a0d18', map: isNew ? P.glass : null, metalness: 0.2, roughness: 0.08, envMapIntensity: 1.8, ...envP }),
+          cracked: standardMaterial({ color: isNew ? '#ffffff' : '#0a0d18', map: isNew ? P.glassCracked : null, metalness: 0.2, roughness: 0.08, envMapIntensity: 1.8, ...envP }),
+        };
+
+        const bodyMesh = add(extrude(shell.body, W / 2, (W / 2) * 0.95, 'metres'), paintMat);
+        if (isNew) {
+          swapMats.push({
+            mesh: bodyMesh,
+            pick: () => {
+              const junk = !player || state.finish === 'junk'; // the rival is always a junker
+              paintMat.map = junk ? P.rust : P.armor;
+              paintMat.roughness = junk ? 0.9 : 0.55;
+              paintMat.needsUpdate = true;
+              return paintMat;
+            },
+          });
+        }
+        const cabin = add(extrude(shell.cabin, (W / 2) * 0.86, (W / 2) * 0.65, 'fit'), glassMats.clean);
+        swapMats.push({ mesh: cabin, pick: () => glassMats[player ? state.glass : 'clean'] });
+
+        box(W + 0.04, 0.16, (shell.rear - shell.front) * 0.78, darkMat, 0, -0.36, (shell.front + shell.rear) / 2);
+        box(W - 0.05, 0.18, 0.18, darkMat, 0, -0.3, shell.front - 0.04);
+        box(W - 0.05, 0.18, 0.18, darkMat, 0, -0.3, shell.rear + 0.04);
+
+        // Roof gun and a rear wing, as in the concept art.
+        const r = shell.roof;
+        box(0.5, 0.16, 0.6, gunMat, 0, r.y + 0.08, r.z);
+        box(0.3, 0.22, 0.4, gunMat, 0, r.y + 0.27, r.z - 0.05);
+        add(new THREE.CylinderGeometry(0.05, 0.05, 0.9, 6).rotateX(Math.PI / 2), gunMat, 0, r.y + 0.3, r.z - 0.6);
+        const d = shell.deck;
+        for (const s of [-1, 1]) box(0.06, 0.3, 0.12, darkMat, s * 0.6, d.y + 0.15, d.z + 0.2);
+        box(W * 0.95, 0.05, 0.4, darkMat, 0, d.y + 0.32, d.z + 0.25);
+
+        // Lights.
+        const tailMat = isNew ? glowMaterial({ map: P.tail, intensity: 1.5 }) : glowMaterial({ color: '#ff1030', intensity: 1.2 });
+        const headMat = isNew ? glowMaterial({ map: P.head, intensity: 2.4 }) : glowMaterial({ color: '#fff0d0', intensity: 3 });
+        for (const s of [-1, 1]) {
+          add(new THREE.BoxGeometry(0.42, 0.1, 0.06), headMat, s * (W / 2 - 0.35), 0.0, shell.front + 0.02);
+          add(new THREE.BoxGeometry(0.46, 0.13, 0.06), tailMat, s * (W / 2 - 0.35), 0.07, shell.rear - 0.02);
+        }
+
+        // Wheels: tread on the side, rim on the caps.
+        const wheelMats = isNew
+          ? [litMaterial({ map: P.tread }), litMaterial({ map: P.rim }), litMaterial({ map: P.rim })]
+          : litMaterial({ color: '#111116' });
+        for (const wz of [-1.45, 1.45])
+          for (const s of [-1, 1]) {
+            const geo = new THREE.CylinderGeometry(0.36, 0.36, 0.3, 12);
+            geo.rotateZ(Math.PI / 2);
+            const wm = new THREE.Mesh(geo, wheelMats);
+            wm.position.set(s * (W / 2 - 0.02), -0.4, wz);
+            body.add(wm);
+          }
+
+        // Exhaust flames (always the same, so the comparison stays about textures).
+        if (player)
+          for (const s of [-0.45, 0.45]) {
+            const f = new THREE.Mesh(new THREE.ConeGeometry(0.12, 1.1, 6).rotateX(-Math.PI / 2), additiveMaterial({ color: '#6a7aff', opacity: 0.9 }));
+            f.position.set(s, -0.3, shell.rear + 0.7);
+            body.add(f);
+          }
+
+        const shadow = new THREE.Mesh(
+          new THREE.PlaneGeometry(W + 0.7, shell.rear - shell.front + 0.6).rotateX(-Math.PI / 2),
+          new THREE.MeshBasicMaterial({ map: cur.shadow, transparent: true, depthWrite: false, opacity: 0.9 }),
+        );
+        shadow.position.y = 0.02;
+        car.add(shadow);
+        return car;
+      }
+
+      worlds.current = makeWorld('current');
+      worlds.proposed = makeWorld('proposed');
+      scene.add(worlds.current, worlds.proposed);
+
+      // --- Rendering at a low internal resolution with bloom ---
+      const camera = new THREE.PerspectiveCamera(68, 16 / 9, 0.3, 1500);
+      const composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      const bloom = new UnrealBloomPass(new THREE.Vector2(640, 360), 0.55, 0.35, 0.9);
+      composer.addPass(bloom);
+      composer.addPass(new OutputPass());
+      function setRes(lines) {
+        const h = lines;
+        const w = Math.round((h * 16) / 9);
+        renderer.setSize(w, h, false);
+        composer.setPixelRatio(1);
+        composer.setSize(w, h);
+        retroUniforms.uSnapRes.value.set(w / 2, h / 2);
+      }
+
+      const CAMS = {
+        chase: { yaw: 0, pitch: 0.22, dist: 7.8, target: [0, 1.0, 0] },
+        side: { yaw: 1.15, pitch: 0.12, dist: 5.2, target: [0, 0.8, 0] },
+        street: { yaw: -0.35, pitch: 0.05, dist: 11, target: [0, 3.5, -12] },
+      };
+      const cam = { ...CAMS.chase };
+      function placeCamera() {
+        const [tx, ty, tz] = cam.target;
+        camera.position.set(tx + Math.sin(cam.yaw) * Math.cos(cam.pitch) * cam.dist, ty + Math.sin(cam.pitch) * cam.dist, tz + Math.cos(cam.yaw) * Math.cos(cam.pitch) * cam.dist);
+        camera.lookAt(tx, ty - (state.cam === 'chase' ? 0.6 : 0), tz - (state.cam === 'chase' ? 8 : 0));
+      }
+      let drag = null;
+      canvas.addEventListener('pointerdown', (e) => {
+        drag = { x: e.clientX, y: e.clientY, yaw: cam.yaw, pitch: cam.pitch };
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        cam.yaw = drag.yaw - (e.clientX - drag.x) * 0.006;
+        cam.pitch = clamp(drag.pitch + (e.clientY - drag.y) * 0.004, -0.05, 1.3);
+      });
+      canvas.addEventListener('pointerup', () => (drag = null));
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        cam.dist = clamp(cam.dist * (1 + Math.sign(e.deltaY) * 0.1), 2.5, 40);
+      }, { passive: false });
+
+      function apply() {
+        worlds.current.visible = state.set === 'current';
+        worlds.proposed.visible = state.set === 'proposed';
+        for (const s of swapMats) s.mesh.material = s.pick();
+        for (const m of paintMats) m.color.set(state.paint);
+        document.getElementById('badge').textContent = state.set === 'current' ? 'CURRENT' : 'PROPOSED';
+        document.getElementById('badge').style.borderColor = state.set === 'current' ? '#a89fd0' : '';
+        document.getElementById('badge').style.color = state.set === 'current' ? '#a89fd0' : '';
+      }
+
+      let flip = null;
+      function frame() {
+        placeCamera();
+        composer.render();
+        requestAnimationFrame(frame);
+      }
+
+      // --- Controls ---
+      const group = (attr, fn) =>
+        document.querySelectorAll(`[data-${attr}]`).forEach((b) =>
+          b.addEventListener('click', () => {
+            document.querySelectorAll(`[data-${attr}]`).forEach((o) => o.classList.toggle('on', o === b));
+            fn(b.dataset[attr]);
+          }),
+        );
+      const setSet = (v) => {
+        state.set = v;
+        document.querySelectorAll('[data-set]').forEach((o) => o.classList.toggle('on', o.dataset.set === v));
+        apply();
+      };
+      group('set', (v) => {
+        clearInterval(flip);
+        flip = null;
+        document.getElementById('flip').classList.remove('on');
+        setSet(v);
+      });
+      document.getElementById('flip').addEventListener('click', (e) => {
+        if (flip) {
+          clearInterval(flip);
+          flip = null;
+        } else flip = setInterval(() => setSet(state.set === 'current' ? 'proposed' : 'current'), 1500);
+        e.target.classList.toggle('on', !!flip);
+      });
+      group('finish', (v) => ((state.finish = v), apply()));
+      group('glass', (v) => ((state.glass = v), apply()));
+      group('barrier', (v) => ((state.barrier = v), apply()));
+      group('cam', (v) => {
+        state.cam = v;
+        Object.assign(cam, CAMS[v], { target: [...CAMS[v].target] });
+      });
+      document.getElementById('res').addEventListener('change', (e) => setRes(+e.target.value));
+      const paints = ['#b01c2c', '#5a5660', '#1a1a22', '#d8d8e0', '#2a5ac8', '#e8a000', '#2a8a3a', '#8a2ac8'];
+      const paintBox = document.getElementById('paints');
+      for (const c of paints) {
+        const b = document.createElement('button');
+        b.className = 'swatch' + (c === state.paint ? ' on' : '');
+        b.style.background = c;
+        b.setAttribute('aria-label', c);
+        b.addEventListener('click', () => {
+          state.paint = c;
+          paintBox.querySelectorAll('.swatch').forEach((o) => o.classList.toggle('on', o === b));
+          apply();
+        });
+        paintBox.appendChild(b);
+      }
+
+      // --- Gallery ---
+      const SHEETS = [
+        { name: 'Road', key: 'road', cur: cur.road, use: 'Track surface. Same lane layout; adds wheel paths, patches, manhole, oil and puddles.', tile: true },
+        { name: 'Road roughness', key: 'roadRough', use: 'New. Dark = glossy. Puddles near mirror, wheel paths semi-gloss, dry asphalt matte.', tile: true },
+        { name: 'Barrier: chevron', key: 'wallChevron', cur: cur.wall, use: 'Track walls. Bolted rail, grime from the road, scrape marks, rust drips.', tile: true },
+        { name: 'Barrier: concrete', key: 'wallConcrete', cur: cur.wall, use: 'Alternative wall (concept 2): cast segments, rain streaks, reflector strip, graffiti.', tile: true },
+        { name: 'Armour plate', key: 'armor', use: 'New. Car body, bumpers, weapons. Greyscale, multiplies the paint colour.', tile: true, tint: true },
+        { name: 'Rust (junk parts)', key: 'rust', use: 'New. Junk-quality bodywork: the same plates with rust and flaking paint.', tile: true, tint: true },
+        { name: 'Glass', key: 'glass', use: 'New. Windows with reflection streaks.' },
+        { name: 'Glass: cracked', key: 'glassCracked', use: 'New. Damage state: bullet hole with spider-web cracks.' },
+        { name: 'Tail light', key: 'tail', use: 'New. Segmented LED cells. Brighter centre row blooms first.' },
+        { name: 'Headlight', key: 'head', use: 'New. Twin reflector bowls.' },
+        { name: 'Tyre tread', key: 'tread', use: 'New. Chevron blocks around the tyre.', tile: true },
+        { name: 'Wheel face', key: 'rim', use: 'New. Sidewall lettering, five-spoke rim, lug nuts.' },
+        { name: 'Facade: apartments', key: 'building', cur: cur.building, use: 'City blocks. Pilasters, blinds, A/C units, grime runs.', tile: true },
+        { name: 'Facade glow: apartments', key: 'buildingGlow', cur: cur.buildingGlow, use: 'Emissive windows: half-drawn blinds, TV flicker, people, a neon strip.', tile: true },
+        { name: 'Facade: glass tower', key: 'tower', use: 'New second building style: glass bands with a neon reflection sweep.', tile: true },
+        { name: 'Facade glow: glass tower', key: 'towerGlow', use: 'Emissive: whole runs of lit office floors.', tile: true },
+        { name: 'Billboard: skull', key: 'skull', use: 'Replaces the atlas skull sign with an LED-screen version.' },
+        { name: 'Billboard: ad', key: 'ad', use: 'New (concept 2). Bright panel: use a lower glow intensity (~1.0).' },
+        { name: 'Neon: NEON SPRAWL', key: 'neonCity', use: 'Neon-tube lettering: halo, tube, hot core.' },
+        { name: 'Neon: HOTEL', key: 'hotel', use: 'Vertical tube sign.' },
+        { name: 'Highway signs', key: 'highway', use: 'New (concept 2). Weathered green panels for gantries.' },
+        { name: 'Direction arrows', key: 'arrows', use: 'New (concept 1). LED chevrons for overhead gantries.' },
+      ];
+      const view = { zoom: 3, tile: 1 };
+      function sheetCanvas(tex, tint) {
+        const src = tex.image;
+        const t = view.tile;
+        const c = document.createElement('canvas');
+        c.width = src.width * t;
+        c.height = src.height * t;
+        const x = c.getContext('2d');
+        for (let j = 0; j < t; j++) for (let i = 0; i < t; i++) x.drawImage(src, i * src.width, j * src.height);
+        if (tint) {
+          x.globalCompositeOperation = 'multiply';
+          x.fillStyle = state.paint;
+          x.fillRect(0, 0, c.width, c.height);
+        }
+        // Sheets are scaled toward a common size: small ones up, big ones down.
+        const z = Math.max(1, Math.round(view.zoom * Math.min(4, 64 / Math.max(src.width, src.height / 2))));
+        c.style.width = `${c.width * z}px`;
+        return c;
+      }
+      function renderGallery() {
+        const root = document.getElementById('gallery');
+        root.innerHTML = '';
+        for (const s of SHEETS) {
+          const tex = P[s.key];
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `<h3>${s.name}</h3><p>${s.use}</p><div class="meta">${tex.image.width} x ${tex.image.height} px${s.tint ? ' · shown multiplied by the selected paint' : ''}</div>`;
+          const pair = document.createElement('div');
+          pair.className = 'pair';
+          const fig = (label, texture, isNew, tint) => {
+            const f = document.createElement('figure');
+            f.appendChild(sheetCanvas(texture, tint));
+            const cap = document.createElement('figcaption');
+            cap.textContent = label;
+            if (isNew) cap.className = 'new';
+            f.appendChild(cap);
+            pair.appendChild(f);
+          };
+          if (s.cur) fig('Current', s.cur, false, false);
+          fig('Proposed', tex, true, s.tint);
+          if (s.tint) fig('Raw', tex, true, false);
+          card.appendChild(pair);
+          root.appendChild(card);
+        }
+      }
+      group('zoom', (v) => ((view.zoom = +v), renderGallery()));
+      group('tile', (v) => ((view.tile = +v), renderGallery()));
+      paintBox.addEventListener('click', renderGallery);
+
+      // Deep links, e.g. texture-lab.html?set=current&cam=side&glass=cracked
+      for (const [k, v] of new URLSearchParams(location.search)) {
+        document.querySelector(`[data-${k}="${CSS.escape(v)}"]`)?.click();
+      }
+      setRes(360);
+      apply();
+      renderGallery();
+      frame();
+    </script>
+  </body>
+</html>

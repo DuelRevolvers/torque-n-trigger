@@ -40,14 +40,15 @@ src/
     combat.js         weapons, projectiles, mines, utility, damage, part wear, heat, collisions, wrecks
     event.js          event rules: countdown/launch, finishing, laps, pit, arena scoring, drag rules, style bonuses
     arena.js          enclosed arena venue (same query interface as tracks)
+    trackgen.js       seeded circuit/sprint/arena generators with jumps, shortcuts and pickup spots
     ai.js             AI drivers: racing line, overtaking, weapons, utility, recovery (same InputFrames as players)
     vehicle.js        raycast vehicle physics
     track.js          spline track + nearest-point query
     input.js          InputFrame, InputQueue
     carParams.js      hand-tuned reference car used by the physics tests
     tracks/           track and arena definitions (venues.js)
-  career/             career save, garage operations, event list, rewards and salvage
-  screens/            starter selection, garage, event select, race/results
+  career/             career save, districts, shops, garage operations, rewards and salvage
+  screens/            starter selection, garage, city map, race/results
   parts/              part catalog, named AI drivers, starter generation,, quality/traits/condition, fitting rules, stats + PR, physics params, generator
   core/fixedLoop.js   fixed-timestep loop with render interpolation
   input/              keyboard, gamepad, touch -> InputFrame

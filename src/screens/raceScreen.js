@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { buildTrack } from '../sim/track.js';
 import { buildArena } from '../sim/arena.js';
-import { VENUES } from '../sim/tracks/venues.js';
+import { getVenue } from '../sim/tracks/venues.js';
 import { createWorld, stepWorld } from '../sim/world.js';
 import { createEventState, gridPoses, standings } from '../sim/event.js';
 import { InputQueue, neutralInput } from '../sim/input.js';
@@ -12,6 +12,7 @@ import { computeBuild } from '../parts/build.js';
 import { DRIVERS, buildDriver, tierForPr } from '../parts/drivers.js';
 import { partType, partName } from '../parts/catalog.js';
 import { saveCareer } from '../career/career.js';
+import { DISTRICTS } from '../career/districts.js';
 import { EVENTS, computeRewards, rollSalvage, ordinal } from '../career/events.js';
 import { PALETTE } from '../render/textures.js';
 import { buildTrackView } from '../render/trackView.js';
@@ -42,7 +43,8 @@ export class RaceScreen {
   constructor(app) {
     this.app = app;
     const scene = new THREE.Scene();
-    scene.add(new THREE.HemisphereLight('#6a70c0', '#1a0b2e', 1.4));
+    this.hemi = new THREE.HemisphereLight('#6a70c0', '#1a0b2e', 1.4);
+    scene.add(this.hemi);
     const moon = new THREE.DirectionalLight('#9ab8ff', 1.2);
     moon.position.set(-0.4, 1, 0.3);
     scene.add(moon);
@@ -62,10 +64,18 @@ export class RaceScreen {
     this.shake = 0;
   }
 
-  // Venue geometry is built once and cached.
-  venue(id) {
-    if (this.venues.has(id)) return this.venues.get(id);
-    const v = VENUES[id];
+  // Venue geometry is built once and cached (the last few only; they're big).
+  venue(def) {
+    const id = def.venue;
+    const key = `${id}:${def.finishS || ''}:${def.pit ? 'pit' : ''}`;
+    if (this.venues.has(key)) return this.venues.get(key);
+    if (this.venues.size >= 3) {
+      const [oldKey, old] = this.venues.entries().next().value;
+      this.scene.remove(old.group);
+      old.group.traverse((o) => o.geometry?.dispose());
+      this.venues.delete(oldKey);
+    }
+    const v = getVenue(id);
     const tex = this.app.tex;
     let track;
     const group = new THREE.Group();
@@ -74,16 +84,14 @@ export class RaceScreen {
       group.add(buildArenaView(track, tex));
     } else {
       track = buildTrack(v.def);
-      const withFinish = EVENTS.find((e) => e.venue === id && e.finishS);
-      if (withFinish) track.finishS = withFinish.finishS;
+      if (def.finishS) track.finishS = def.finishS;
       group.add(buildTrackView(track, tex), buildCityView(track, tex));
-      const pitEvent = EVENTS.find((e) => e.venue === id && e.pit);
-      if (pitEvent) group.add(pitZoneMesh(track, pitEvent.pit, tex));
+      if (def.pit) group.add(pitZoneMesh(track, def.pit, tex));
     }
     group.visible = false;
     this.scene.add(group);
     const entry = { track, group, outdoor: v.kind !== 'arena' };
-    this.venues.set(id, entry);
+    this.venues.set(key, entry);
     return entry;
   }
 
@@ -91,21 +99,40 @@ export class RaceScreen {
     this.args = { build, car, event };
     this.def = event || EVENTS.find((e) => e.type === 'circuit');
     this.careerCar = car || null;
+    if (this.careerCar && this.def.entryFee && this.app.career) {
+      this.app.career.cash -= this.def.entryFee;
+      saveCareer(this.app.career);
+    }
     for (const v of this.venues.values()) v.group.visible = false;
-    const venue = this.venue(this.def.venue);
+    const venue = this.venue(this.def);
     venue.group.visible = true;
     this.track = venue.track;
     this.outdoor = venue.outdoor;
-    this.scene.fog = venue.outdoor ? new THREE.FogExp2(PALETTE.haze, 0.0045) : new THREE.Fog('#07050d', 40, 160);
+    // District look and event modifiers.
+    const theme = DISTRICTS.find((d) => d.id === this.def.district)?.theme;
+    const mods = this.def.modifiers || [];
+    const blackout = mods.includes('blackout');
+    const haze = mods.includes('acidRain') ? '#10241a' : theme?.haze || PALETTE.haze;
+    this.scene.fog = venue.outdoor
+      ? new THREE.FogExp2(haze, (theme?.fog || 0.0045) * (blackout ? 2.4 : 1))
+      : new THREE.Fog('#07050d', blackout ? 15 : 40, blackout ? 70 : 160);
+    this.hemi.intensity = blackout ? 0.3 : 1.4;
+    this.forceRain = mods.includes('acidRain');
     this.scene.background = venue.outdoor ? this.app.tex.sky : new THREE.Color('#07050d');
 
     // AI field: random named drivers at a tier matching the player's car.
     const seed = Math.floor(Math.random() * 1e9);
     this.seed = seed;
-    this.tier = tierForPr(computeBuild(build).pr);
-    const drivers = [...DRIVERS].sort((a, b) => ((hashId(a.id) ^ seed) >>> 0) - ((hashId(b.id) ^ seed) >>> 0)).slice(0, this.def.cars - 1);
-    const entries = drivers.map((d, k) => buildDriver(d, this.tier, seed + k));
-    this.names = ['YOU', ...entries.map((e) => e.name)];
+    // Career events run at their district's tier; a rival or boss (one tier up)
+    // always takes the first AI slot.
+    this.tier = this.def.tier ?? tierForPr(computeBuild(build).pr);
+    const special = this.def.driver || this.def.rivalDriver || null;
+    const pool = [...DRIVERS].sort((a, b) => ((hashId(a.id) ^ seed) >>> 0) - ((hashId(b.id) ^ seed) >>> 0)).filter((d) => d.id !== special);
+    const drivers = [...(special ? [DRIVERS.find((d) => d.id === special)] : []), ...pool].slice(0, this.def.cars - 1);
+    const fieldTier = special ? Math.max(0, this.tier - 1) : this.tier;
+    const entries = drivers.map((d, k) => buildDriver(d, special && k === 0 ? this.tier : fieldTier, seed + k));
+    this.specialIndex = special ? 1 : -1;
+    this.names = ['YOU', ...entries.map((e, k) => (special && k === 0 ? `${e.name} ${this.def.boss ? 'BOSS' : 'RIVAL'}` : e.name))];
     this.builds = [build, ...entries.map((e) => e.build)];
     this.computed = this.builds.map((b) => computeBuild(pristine(b)));
     const n = this.builds.length;
@@ -123,6 +150,12 @@ export class RaceScreen {
     this.cameraRig = new CameraRig(this.camera, this.track);
     this.prevPoses = this.capturePoses();
     this.victims = new Set();
+    this.pickupMeshes = this.world.state.event.pickups.map((pk) => {
+      const m = makePickupMesh(pk.type);
+      m.position.set(pk.x, pk.y, pk.z);
+      this.scene.add(m);
+      return m;
+    });
     this.popups = [];
     this.resultsAt = null;
     this.resultsShown = false;
@@ -148,6 +181,7 @@ export class RaceScreen {
       saveCareer(this.app.career);
     }
     for (const v of this.views) v.removeFrom(this.scene);
+    for (const m of this.pickupMeshes) this.scene.remove(m);
     this.app.ui.innerHTML = '';
     this.app.hud.clear();
   }
@@ -271,10 +305,17 @@ export class RaceScreen {
       if (e.car === 0) {
         if (e.type === 'style') this.popup(`${e.kind} +$${e.amount}`, PALETTE.amber);
         if (e.type === 'launch') this.popup('PERFECT LAUNCH!', PALETTE.green);
+        if (e.type === 'pickup') this.popup(`+${e.kind.toUpperCase()}`, PALETTE.cyan);
         if (e.type === 'falseStart') this.popup('FALSE START!', PALETTE.pink);
       }
     }
     for (const p of this.popups) p.age += dt;
+    state.event.pickups.forEach((pk, k) => {
+      const m = this.pickupMeshes[k];
+      m.visible = pk.active;
+      m.rotation.y += dt * 2;
+      m.position.y = pk.y + Math.sin(this.time * 3 + k) * 0.2;
+    });
     this.popups = this.popups.filter((p) => p.age < 1.8);
 
     state.cars.forEach((car, i) => this.views[i].update(this.pose(i, paused ? 1 : alpha), car, this.track, this.time));
@@ -291,7 +332,7 @@ export class RaceScreen {
     const fxOn = settings.speedFx !== false && !this.resultsShown;
     this.speedFx = fxOn ? this.cameraRig.intensity || 0 : 0;
     this.speedLines.update(paused ? 0 : dt, Math.hypot(player.vel.x, player.vel.z), this.speedFx);
-    this.rain.mesh.visible = settings.rain && this.outdoor;
+    this.rain.mesh.visible = (settings.rain || this.forceRain) && this.outdoor;
     if (this.rain.mesh.visible) this.rain.update(this.camera.position, dt);
 
     // Results a moment after the player finishes, is eliminated, or the event ends.
@@ -328,13 +369,38 @@ export class RaceScreen {
     const place = order.findIndex((r) => r.id === 0) + 1;
     const player = state.cars[0];
     const rewards = computeRewards(this.def, place, player, this.tier);
-    const salvage = rollSalvage([...this.victims].map((i) => this.builds[i]), this.seed ^ 0xa5a5);
     const career = this.app.career;
+    // Salvage: normal cars drop worn, downgraded parts; a wrecked rival or boss
+    // drops a full-quality part, and beating a boss always pays one.
+    const victims = [...this.victims];
+    const salvage = rollSalvage(victims.filter((i) => i !== this.specialIndex).map((i) => this.builds[i]), this.seed ^ 0xa5a5);
+    let bossBeaten = false;
+    let unlocked = null;
+    if (this.def.boss && career && this.careerCar) {
+      const bossRank = order.findIndex((r) => r.id === this.specialIndex);
+      bossBeaten = place - 1 < bossRank;
+      const d = DISTRICTS.findIndex((x) => x.id === this.def.district);
+      if (bossBeaten && !career.bosses.includes(this.def.district)) {
+        career.bosses.push(this.def.district);
+        if (d + 1 < DISTRICTS.length && career.district < d + 1) {
+          career.district = d + 1;
+          unlocked = DISTRICTS[d + 1];
+        }
+      }
+    }
+    if (this.specialIndex > 0 && (bossBeaten || victims.includes(this.specialIndex))) {
+      salvage.push(...rollSalvage([this.builds[this.specialIndex]], this.seed ^ 0x5a5a, { chance: 1, downgrade: false }));
+    }
     if (career && this.careerCar) {
       career.cash = (career.cash || 0) + rewards.total;
       career.inventory.push(...salvage);
+      career.eventsRun = (career.eventsRun || 0) + 1;
       saveCareer(career);
     }
+    const fee = this.def.entryFee || 0;
+    const banner = bossBeaten
+      ? `<div class="boss-banner">BOSS BEATEN! ${unlocked ? `${unlocked.name} is now open.` : this.def.district === 'spire' ? 'You are the champion of Neon Sprawl!' : ''}</div>`
+      : this.def.boss ? '<div class="err">Finish ahead of the boss to open the next district.</div>' : '';
 
     const rows = order.map((r, k) => {
       let result;
@@ -349,14 +415,35 @@ export class RaceScreen {
     this.app.ui.innerHTML = `<div class="screen results"><div class="results-panel">
       <h1>${esc(this.def.name)}</h1>
       <h2>${ordinal(place)} place</h2>
+      ${banner}
       <table class="standings">${rows}</table>
       <h3>Winnings</h3>${lines}<div class="reward-line total"><span>Total</span><b>$${rewards.total}</b></div>
       <h3>Salvage</h3>${salv}
-      <div class="row"><button class="btn primary again">RACE AGAIN</button><button class="btn garage">GARAGE</button></div>
+      <div class="row"><button class="btn primary again" ${fee > (career?.cash ?? 0) ? 'disabled' : ''}>RACE AGAIN${fee ? ` ($${fee})` : ''}</button><button class="btn city">CITY MAP</button><button class="btn garage">GARAGE</button></div>
     </div></div>`;
     this.app.ui.querySelector('.again').addEventListener('click', () => this.app.go('race', this.args));
     this.app.ui.querySelector('.garage').addEventListener('click', () => this.app.go('garage'));
+    this.app.ui.querySelector('.city').addEventListener('click', () => this.app.go('city'));
   }
+}
+
+// Floating pickup: red cross (health), cyan canister (nitro), amber crate (ammo).
+function makePickupMesh(type) {
+  const g = new THREE.Group();
+  const color = { health: '#ff2040', nitro: '#05d9e8', ammo: '#ffb000' }[type];
+  const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(2.2) });
+  if (type === 'health') {
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.36, 0.36), mat), new THREE.Mesh(new THREE.BoxGeometry(0.36, 1.2, 0.36), mat));
+  } else if (type === 'nitro') {
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 1.1, 8), mat));
+  } else {
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.6, 0.6), mat));
+  }
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.05, 4, 20), new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(1.5), transparent: true, opacity: 0.6 }));
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = -0.7;
+  g.add(ring);
+  return g;
 }
 
 // Glowing strip marking the pit zone on the right of the road.
