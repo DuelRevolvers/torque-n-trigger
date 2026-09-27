@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#160a2b" />
+    <title>Torque &amp; Trigger</title>
+    <style>
+      :root {
+        --night: #160a2b;
+        --pink: #ff2a6d;
+        --cyan: #05d9e8;
+        --amber: #ffb000;
+        --ink: #e8e8ff;
+        --panel: rgba(12, 5, 30, 0.88);
+        --font: 'Courier New', ui-monospace, monospace;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #000;
+        color: var(--ink);
+        font-family: var(--font);
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+      }
+      #game { display: block; width: 100vw; height: 100vh; }
+      [hidden] { display: none !important; }
+
+      #pause-btn {
+        position: fixed;
+        top: max(8px, env(safe-area-inset-top));
+        right: max(8px, env(safe-area-inset-right));
+        width: 40px;
+        height: 40px;
+        border: 2px solid var(--cyan);
+        background: var(--panel);
+        color: var(--cyan);
+        font: bold 16px var(--font);
+        cursor: pointer;
+        z-index: 3;
+      }
+
+      /* Pause menu */
+      #menu {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(8, 2, 20, 0.55);
+        z-index: 4;
+        padding: 16px;
+      }
+      .menu-panel {
+        width: min(440px, 100%);
+        max-height: 100%;
+        overflow-y: auto;
+        background: var(--panel);
+        border: 3px solid var(--pink);
+        box-shadow: 0 0 0 3px #000, 6px 6px 0 3px var(--cyan);
+        padding: 16px;
+      }
+      .menu-panel h1 {
+        margin: 0 0 12px;
+        font-size: 28px;
+        letter-spacing: 4px;
+        color: var(--pink);
+        text-shadow: 3px 3px 0 #000;
+      }
+      .menu-row, .menu-resume {
+        display: flex;
+        justify-content: space-between;
+        width: 100%;
+        padding: 9px 10px;
+        margin-bottom: 4px;
+        background: #1a1030;
+        border: 2px solid #33245a;
+        color: var(--ink);
+        font: bold 15px var(--font);
+        text-transform: uppercase;
+        cursor: pointer;
+      }
+      .menu-row:hover, .menu-row:focus-visible { border-color: var(--cyan); outline: none; }
+      .menu-value { color: var(--cyan); }
+      .menu-resume {
+        justify-content: center;
+        margin-top: 10px;
+        background: var(--pink);
+        border-color: #000;
+        color: #000;
+        font-size: 18px;
+      }
+      .menu-help { margin-top: 12px; font-size: 12px; line-height: 1.5; color: #a89fd0; }
+      .menu-help b { color: var(--amber); }
+
+      /* Touch controls */
+      #touch { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
+      #touch > * { pointer-events: auto; }
+      .t-steer {
+        position: absolute;
+        left: 0;
+        bottom: 0;
+        width: 42%;
+        height: 55%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        padding-bottom: max(28px, env(safe-area-inset-bottom));
+      }
+      .t-steer-track {
+        width: 150px;
+        height: 22px;
+        border: 2px solid var(--cyan);
+        background: rgba(12, 5, 30, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+      .t-steer-knob { width: 34px; height: 34px; background: var(--cyan); border: 2px solid #000; }
+      .t-label { margin-top: 6px; font: bold 11px var(--font); color: var(--cyan); opacity: 0.7; }
+      .t-buttons {
+        position: absolute;
+        right: max(14px, env(safe-area-inset-right));
+        bottom: max(18px, env(safe-area-inset-bottom));
+        display: grid;
+        grid-template-columns: 78px 92px;
+        grid-template-rows: 64px 92px;
+        gap: 10px;
+      }
+      .t-btn {
+        border: 2px solid var(--ink);
+        background: rgba(12, 5, 30, 0.55);
+        color: var(--ink);
+        font: bold 14px var(--font);
+        touch-action: none;
+      }
+      .t-btn.down { background: var(--ink); color: #000; }
+      .t-gas { grid-column: 2; grid-row: 2; border-color: var(--cyan); color: var(--cyan); }
+      .t-brake { grid-column: 1; grid-row: 2; border-color: var(--pink); color: var(--pink); }
+      .t-nitro { grid-column: 2; grid-row: 1; border-color: var(--amber); color: var(--amber); }
+      .t-drift { grid-column: 1; grid-row: 1; }
+      .t-top {
+        position: absolute;
+        top: max(8px, env(safe-area-inset-top));
+        right: calc(max(8px, env(safe-area-inset-right)) + 50px);
+        display: flex;
+        gap: 8px;
+      }
+      .t-small { width: 64px; height: 40px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="touch" hidden></div>
+    <button id="pause-btn" aria-label="Pause">II</button>
+    <div id="menu" hidden></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
