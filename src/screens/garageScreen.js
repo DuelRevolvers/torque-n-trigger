@@ -137,13 +137,15 @@ export class GarageScreen {
     const slotButtons = SLOTS.map((slot) => {
       const p = parts[slot];
       return `<button class="slot-btn ${slot === this.slot ? 'active' : ''} ${p ? '' : 'empty'}" data-slot="${slot}">
-        <span>${SLOT_NAMES[slot]}</span><small class="${p ? `q-${p.quality}` : ''}">${p ? esc(partName(p)) : '&mdash; empty &mdash;'}</small></button>`;
+        <span>${SLOT_NAMES[slot]}${p && p.condition < 100 ? ` <em class="${p.condition <= 0 ? 'down' : 'warn-text'}">${Math.round(p.condition)}%</em>` : ''}</span><small class="${p ? `q-${p.quality}` : ''}">${p ? esc(partName(p)) : '&mdash; empty &mdash;'}</small></button>`;
     }).join('');
 
     const pv = this.preview;
-    const stats = statBarsHtml(this.computed.stats, pv?.ok ? pv.result.stats : null, this.computed.pr, pv?.ok ? pv.result.pr : null);
+    const stats = statBarsHtml(this.computed.stats, pv?.ok ? pv.result.stats : null, this.computed.pr, pv?.ok ? pv.result.pr : null, this.app.settings.units);
     const weightLine = `<div class="build-line">Weight <b>${Math.round(this.computed.weight)}</b> / ${Math.round(this.computed.capacity)} kg &middot; Power <b>${Math.round(this.computed.powerDraw)}</b> / ${Math.round(this.computed.powerSupply)} kW</div>`;
     const warnings = (pv?.ok ? pv.result.warnings : this.computed.warnings).map((w) => `<div class="warn">${esc(w)}</div>`).join('');
+    const worn = Object.values(parts).some((p) => p && p.condition < 100);
+    const repair = worn ? '<button class="btn small repair">REPAIR ALL (FREE UNTIL M6)</button>' : '';
 
     let detail = `<div class="hint">Select a slot to inspect or swap parts. Drag the car to turn it.</div>`;
     if (this.slot === 'paint') {
@@ -176,14 +178,19 @@ export class GarageScreen {
       </div>
       <div class="g-slots">${slotButtons}</div>
       <div class="g-side">
-        <div class="g-stats">${stats}${weightLine}${warnings}</div>
+        <div class="g-stats">${stats}${weightLine}${warnings}${repair}</div>
         <div class="g-detail">${detail}</div>
       </div>
     </div>`;
 
     const on = (sel, fn) => this.root.querySelectorAll(sel).forEach((el) => el.addEventListener('click', () => fn(el)));
     on('.slot-btn', (el) => this.select(el.dataset.slot));
-    on('.race', () => this.app.go('race', { build: this.car.build }));
+    on('.race', () => this.app.go('race', { build: this.car.build, car: this.car }));
+    on('.repair', () => {
+      for (const p of Object.values(car.build.parts)) if (p) p.condition = 100;
+      this.save();
+      this.refresh();
+    });
     on('.spare', (el) => {
       this.previewUid = this.previewUid === el.dataset.uid ? null : el.dataset.uid;
       this.refresh();

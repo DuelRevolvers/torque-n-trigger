@@ -18,6 +18,8 @@ export class TouchControls {
         <div class="t-label">STEER</div>
       </div>
       <div class="t-buttons">
+        <button class="t-btn t-fire" data-action="fire1">FIRE</button>
+        <button class="t-btn t-alt" data-action="fire2">ALT</button>
         <button class="t-btn t-nitro" data-action="nitro">N2O</button>
         <button class="t-btn t-drift" data-action="handbrake">DRIFT</button>
         <button class="t-btn t-gas" data-action="throttle">GAS</button>
@@ -25,6 +27,7 @@ export class TouchControls {
       </div>
       <div class="t-top">
         <button class="t-btn t-small" data-action="lookBack">LOOK</button>
+        <button class="t-btn t-small" data-action="utility">UTIL</button>
         <button class="t-btn t-small" data-action="reset">RESET</button>
       </div>`;
 
@@ -87,5 +90,8 @@ export class TouchControls {
     frame.nitro ||= this.held.has('nitro');
     frame.lookBack ||= this.held.has('lookBack');
     frame.reset ||= this.held.has('reset');
+    frame.fire1 ||= this.held.has('fire1');
+    frame.fire2 ||= this.held.has('fire2');
+    frame.utility ||= this.held.has('utility');
   }
 }

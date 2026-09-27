@@ -167,7 +167,7 @@ function updateDrivetrain(car, p, input, dt) {
   const ratio = ratioOf(car.gear);
   // Below the launch RPM the clutch slips, so the engine can make torque from a standstill.
   const rpm = Math.max(wheelRpm(ratio), e.idleRpm + throttle * (e.launchRpm - e.idleRpm));
-  let torque = engineTorque(e, rpm) * throttle;
+  let torque = engineTorque(e, rpm) * throttle * (car.mods ? car.mods.torque : 1);
   if (rpm > e.redline) torque = 0;
 
   let drive = (torque * ratio * t.efficiency) / p.wheelRadius;
@@ -263,11 +263,11 @@ function physicsSubstep(car, p, ctl, track, h) {
     const vLong = dot(vc, wf);
     const vLat = dot(vc, wr);
 
-    const maxF = (w.front ? p.gripFront : p.gripRear) * (p.surfaceGrip || SURFACE_GRIP)[hit.g.surface] * load;
+    const maxF = (w.front ? p.gripFront : p.gripRear) * (p.surfaceGrip || SURFACE_GRIP)[hit.g.surface] * load * (car.mods ? car.mods.grip : 1);
 
     // Longitudinal: drive, brakes, rolling resistance.
     let fx = w.drive ? ctl.drive / drivenCount : 0;
-    let brakeF = ctl.brake * p.brakeForce * (w.front ? p.brakeBias : 1 - p.brakeBias) * 0.5;
+    let brakeF = ctl.brake * p.brakeForce * (w.front ? p.brakeBias : 1 - p.brakeBias) * 0.5 * (car.mods ? car.mods.brake : 1);
     if (ctl.handbrake && !w.front) brakeF += p.handbrakeForce * 0.5;
     if (brakeF > 0) fx -= Math.sign(vLong) * Math.min(brakeF, (Math.abs(vLong) * massShare) / h);
     fx -= Math.sign(vLong) * Math.min(p.rollingResistance, (Math.abs(vLong) * massShare) / h);
@@ -382,7 +382,7 @@ function resolveBodyContacts(car, p, track) {
       if (excess > 0) {
         const side = -Math.sign(g.lateral);
         const n = v3(g.rx * side, 0, g.rz * side);
-        applyContactImpulse(car, p, r, n, 0.25, 0.3);
+        car.impact = Math.max(car.impact || 0, -applyContactImpulse(car, p, r, n, 0.25, 0.3));
         if (excess > wallPen) {
           wallPen = excess;
           wallN = n;
@@ -402,7 +402,7 @@ function invInertiaWorld(car, p, v) {
 function applyContactImpulse(car, p, r, n, restitution, friction) {
   const vc = add(car.vel, cross(car.angVel, r));
   const vn = dot(vc, n);
-  if (vn >= 0) return;
+  if (vn >= 0) return 0;
 
   const effMass = (dir) => 1 / p.mass + dot(cross(invInertiaWorld(car, p, cross(r, dir)), r), dir);
   const jn = (-(1 + restitution) * vn) / effMass(n);
@@ -418,6 +418,7 @@ function applyContactImpulse(car, p, r, n, restitution, friction) {
 
   car.vel = add(car.vel, scale(impulse, 1 / p.mass));
   car.angVel = add(car.angVel, invInertiaWorld(car, p, cross(r, impulse)));
+  return vn;
 }
 
 // Visual wheel rotation, kept in state so every peer renders the same thing.

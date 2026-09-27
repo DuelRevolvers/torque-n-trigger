@@ -4,16 +4,25 @@
 import { SIM_DT } from '../config.js';
 import { createCarState, placeCar, stepCar, carUp, carSpeed } from './vehicle.js';
 import { yawFromDirection } from './math.js';
+import { initCombat, initCombatWorld, updateMods, updateCombat, collideCars } from './combat.js';
+import { neutralInput } from './input.js';
+
+const NEUTRAL = neutralInput();
 
 const SPAWN_HEIGHT = 0.9; // centre of mass above the road when (re)spawning
 
-export function createWorld({ track, cars }) {
+// cars: [{ params, conditions? }]. Wrecked cars respawn unless respawnOnWreck is
+// false (deathmatch elimination). world.events collects visual events for the
+// renderer; it is not part of the snapshot state.
+export function createWorld({ track, cars, respawnOnWreck = true }) {
   const params = cars.map((c) => c.params);
   const state = {
     tick: 0,
     cars: cars.map((c, i) => createCarState(i, c.params, gridPose(track, i))),
   };
-  return { track, params, state };
+  initCombatWorld(state);
+  state.cars.forEach((car, i) => initCombat(car, params[i], cars[i].conditions));
+  return { track, params, state, respawnOnWreck, events: [] };
 }
 
 // Advances the world one tick. `inputs[i]` is the InputFrame for car i.
@@ -21,11 +30,14 @@ export function stepWorld(world, inputs) {
   const { track, params, state } = world;
   for (let i = 0; i < state.cars.length; i++) {
     const car = state.cars[i];
-    const input = inputs[i];
+    const input = car.wrecked ? NEUTRAL : inputs[i] || NEUTRAL;
+    updateMods(world, i);
     stepCar(car, params[i], input, track, SIM_DT);
-    updateRecovery(world, car, params[i], input);
+    if (!car.wrecked) updateRecovery(world, car, params[i], input);
     updateLap(track, car, state.tick);
   }
+  collideCars(world);
+  updateCombat(world, state.cars.map((c, i) => (c.wrecked ? NEUTRAL : inputs[i] || NEUTRAL)), SIM_DT, respawnCar);
   state.tick++;
 }
 

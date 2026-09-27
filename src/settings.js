@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS = {
   autoAccelerate: false,
   touchControls: 'auto', // 'auto' | 'on' | 'off'
   showFps: true,
+  units: 'kmh', // 'kmh' | 'mph'
 };
 
 export function loadSettings() {

@@ -16,7 +16,11 @@ export const STAT_ROWS = [
 const fmt = (s) => `${s.value}${s.unit && s.unit !== 'x' ? (s.unit.startsWith('s') || s.unit === '%' ? '' : ' ') + s.unit : ''}`;
 
 // stats: computeBuild(...).stats; preview: stats of the candidate build, or null.
-export function statBarsHtml(stats, preview = null, pr = null, previewPr = null) {
+// units: 'kmh' | 'mph' for top speed.
+export function statBarsHtml(stats, preview = null, pr = null, previewPr = null, units = 'kmh') {
+  const conv = (s) => (s && units === 'mph' ? { ...s, topSpeed: { ...s.topSpeed, value: Math.round(s.topSpeed.value * 0.6214), unit: 'mph' } } : s);
+  stats = conv(stats);
+  preview = conv(preview);
   let html = '';
   if (pr !== null) {
     const d = previewPr !== null ? previewPr - pr : 0;

@@ -22,7 +22,7 @@ export function resolvePart(part) {
   const traits = (part.traits || []).map((t) => TRAITS[t]);
   const perf = traits.reduce((m, t) => m * (t.perfMul || 1), 1);
   const cf = conditionFactor(part.condition ?? 100);
-  const out = { ...base, broken: cf === 0 };
+  const out = { ...base, type: part.type, broken: cf === 0 };
   for (const [key, s] of Object.entries(SCALING)) {
     if (typeof base[key] === 'number') out[key] = base[key] * (1 + (q - 1) * s) * perf * cf;
   }
@@ -184,7 +184,13 @@ function deriveParams(eff, mass, overweight, powerSupply, powerDraw) {
     nitro: eff.nitrous
       ? { charges: eff.nitrous.charges, duration: eff.nitrous.duration, force: eff.nitrous.force, rechargeTime: eff.nitrous.rechargeTime }
       : { charges: 0, duration: 0, force: 0, rechargeTime: 1 },
-    // Used from M3 on (combat, heat, damage); the driving sim ignores these.
+    weapons: {
+      primary: weaponParams(eff.primaryWeapon),
+      secondary: weaponParams(eff.secondaryWeapon),
+      utility: eff.utility ? { type: eff.utility.type, cooldown: eff.utility.cooldown } : null,
+    },
+    durability: Object.fromEntries(Object.entries(eff).map(([slot, e]) => [slot, e.durability])),
+    // Combat, heat and damage (sim/combat.js).
     combat: {
       hp: ch.hp + (eff.armor?.hp || 0) + (eff.fuelTank?.hp || 0),
       armor: Math.min(0.6, eff.armor?.armor || 0),
@@ -200,6 +206,14 @@ function deriveParams(eff, mass, overweight, powerSupply, powerDraw) {
     },
   };
 }
+
+const weaponParams = (w) =>
+  w
+    ? {
+        type: w.type, kind: w.kind, damage: w.damage, fireRate: w.fireRate, range: w.range,
+        ammo: w.ammo !== undefined ? Math.round(w.ammo) : null, reload: w.reload || 0, heatPerShot: w.heatPerShot || 0,
+      }
+    : null;
 
 // Straight-line estimate of 0-100 km/h and top speed with the same torque curve,
 // gearing, traction limit and drag as the physics.

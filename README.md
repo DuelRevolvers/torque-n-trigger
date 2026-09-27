@@ -25,6 +25,8 @@ name breaks npm's Windows command shims (`npx vite` fails here for that reason).
 | Nitro | Shift | B | N2O |
 | Look back | Q | R3 | LOOK |
 | Reset car | R | Back | RESET |
+| Primary / secondary weapon | Left / right click | RB / LB | FIRE / ALT |
+| Utility | E | Y | UTIL |
 | Pause & settings | Esc | Start | II button |
 
 ## Code layout
@@ -34,6 +36,8 @@ src/
   config.js           fixed timestep constants
   sim/                simulation: plain data, no three.js or DOM
     world.js          world state, stepWorld(), snapshot/restore, laps, respawn
+    combat.js         weapons, projectiles, mines, utility, damage, part wear, heat, collisions, wrecks
+    pilots.js         simple cruising driver for target cars (until M4 AI)
     vehicle.js        raycast vehicle physics
     track.js          spline track + nearest-point query
     input.js          InputFrame, InputQueue

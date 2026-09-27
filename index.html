@@ -130,7 +130,7 @@
         bottom: max(18px, env(safe-area-inset-bottom));
         display: grid;
         grid-template-columns: 78px 92px;
-        grid-template-rows: 64px 92px;
+        grid-template-rows: 64px 64px 92px;
         gap: 10px;
       }
       .t-btn {
@@ -141,10 +141,15 @@
         touch-action: none;
       }
       .t-btn.down { background: var(--ink); color: #000; }
-      .t-gas { grid-column: 2; grid-row: 2; border-color: var(--cyan); color: var(--cyan); }
-      .t-brake { grid-column: 1; grid-row: 2; border-color: var(--pink); color: var(--pink); }
-      .t-nitro { grid-column: 2; grid-row: 1; border-color: var(--amber); color: var(--amber); }
-      .t-drift { grid-column: 1; grid-row: 1; }
+      .t-gas { grid-column: 2; grid-row: 3; border-color: var(--cyan); color: var(--cyan); }
+      .t-brake { grid-column: 1; grid-row: 3; border-color: var(--pink); color: var(--pink); }
+      .t-nitro { grid-column: 2; grid-row: 2; border-color: var(--amber); color: var(--amber); }
+      .t-drift { grid-column: 1; grid-row: 2; }
+      .t-fire { grid-column: 2; grid-row: 1; border-color: #ff2030; color: #ff2030; }
+      .t-alt { grid-column: 1; grid-row: 1; border-color: #b04dff; color: #b04dff; }
+      .warn-text { color: var(--amber); font-style: normal; }
+      .slot-btn em { font-style: normal; }
+      .repair { margin-top: 8px; width: 100%; }
       .t-top {
         position: absolute;
         top: max(8px, env(safe-area-inset-top));

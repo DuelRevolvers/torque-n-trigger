@@ -58,7 +58,7 @@ export class StarterScreen {
         return `<div class="card" data-i="${i}">
           <div class="card-title"><span class="tag">${ARCHETYPES[s.archetype].name}</span> ${s.name}</div>
           <div class="card-sub">${partName(s.build.parts.chassis).replace(QUALITY[s.build.parts.chassis.quality].name + ' ', '')}</div>
-          ${statBarsHtml(r.stats, null, r.pr)}
+          ${statBarsHtml(r.stats, null, r.pr, null, this.app.settings.units)}
           <ul class="parts">${parts}</ul>
           <button class="btn primary choose" data-i="${i}">CHOOSE</button>
         </div>`;

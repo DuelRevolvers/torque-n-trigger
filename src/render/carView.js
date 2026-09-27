@@ -93,10 +93,12 @@ export class CarView {
     });
     this.holo = !!paintType?.holo;
     const darkMat = standardMaterial({ color: '#16151c', metalness: 0.4, roughness: 0.6, ...envParams });
+    this.darkMat = darkMat;
     const glassMat = standardMaterial({ color: '#0a0d18', metalness: 0.2, roughness: 0.08, envMapIntensity: 1.8, ...envParams });
+    this.glassMat = glassMat;
     const steelMat = standardMaterial({ color: '#6a6878', metalness: 0.8, roughness: 0.35, ...envParams });
 
-    add(extrudeProfile(shell.body, W / 2, (W / 2) * 0.95), this.paintMat);
+    this.bodyMesh = add(extrudeProfile(shell.body, W / 2, (W / 2) * 0.95), this.paintMat);
     if (shell.cabin) add(extrudeProfile(shell.cabin, (W / 2) * (shell.cabinWidth || 0.86), (W / 2) * (shell.cabinWidth || 0.65)), glassMat);
     box(W + 0.04, 0.16, (shell.rear - shell.front) * 0.78, darkMat, 0, -0.36, (shell.front + shell.rear) / 2); // skirts
     box(W - 0.05, 0.18, 0.18, darkMat, 0, -0.3, shell.front - 0.04); // bumpers
@@ -353,11 +355,12 @@ export class CarView {
 
     // --- Lights ---
     this.slot = 'lights';
+    this.headlights = [];
     const lightsType = parts.lights?.type || 'halogen';
     const headMat = glowMaterial({ color: lightsType === 'halogen' ? '#fff0d0' : '#e8fbff', intensity: 3 });
     this.tailMat = glowMaterial({ color: '#ff1030', intensity: 1.2 });
     for (const s of [-1, 1]) {
-      box(0.42, 0.1, 0.06, headMat, s * (W / 2 - 0.35), 0.0, m.front + 0.02);
+      this.headlights.push(box(0.42, 0.1, 0.06, headMat, s * (W / 2 - 0.35), 0.0, m.front + 0.02));
       for (const dx of [-0.13, 0.13]) box(0.2, 0.12, 0.06, this.tailMat, s * (W / 2 - 0.35) + dx, 0.07, m.rear - 0.02);
     }
     if (lightsType === 'strips') for (const s of [-1, 1]) box(0.02, 0.03, (m.rear - m.front) * 0.7, trimMat, s * (W / 2 + 0.03), -0.22, 0);
@@ -434,7 +437,7 @@ export class CarView {
         pivot.add(cal);
       }
       this.group.add(pivot);
-      return { def: w, pivot, tire };
+      return { def: w, pivot, tire, hub };
     });
 
     // Blob shadow, placed on the ground under the car every frame.
@@ -520,6 +523,85 @@ export class CarView {
     return { center: new THREE.Vector3(...anchors[slot]), radius: 0.5 };
   }
 
+  // A named point on the car in world space (for effects).
+  worldPoint(name) {
+    const { shell: m } = this.mounts;
+    const local = {
+      hood: [0, m.hood.y + 0.2, m.hood.z], rear: [0, 0.1, m.rear], underRear: [0, -0.4, m.rear],
+      roof: [0, m.roof.y + 0.2, m.roof.z], muzzle: [0, m.roof.y + 0.25, m.roof.z - 1.2],
+    }[name];
+    return this.group.localToWorld(new THREE.Vector3(...local));
+  }
+
+  forward() {
+    return new THREE.Vector3(0, 0, -1).applyQuaternion(this.group.quaternion);
+  }
+
+  // Pushes body vertices inward around a hit (body-local point).
+  dent(local, amount) {
+    const pos = this.bodyMesh.geometry.attributes.position;
+    const strength = Math.min(1, amount / 40) * 0.14;
+    const r = 0.9;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const y = pos.getY(i);
+      const z = pos.getZ(i);
+      const d = Math.hypot(x - local.x, y - local.y, z - local.z);
+      if (d > r) continue;
+      const k = strength * (1 - d / r);
+      const len = Math.hypot(x, y * 0.5, z * 0.3) || 1;
+      pos.setXYZ(i, x - (x / len) * k, y - ((y * 0.5) / len) * k, z - ((z * 0.3) / len) * k);
+    }
+    pos.needsUpdate = true;
+    this.bodyMesh.geometry.computeVertexNormals();
+  }
+
+  // Visible damage stages from remaining HP (design doc section 9), plus the
+  // looks of broken parts. Stages only get worse; a respawn builds a fresh car.
+  damageState(car) {
+    const frac = car.wrecked ? 0 : car.hp / car.maxHp;
+    const stage = car.wrecked ? 4 : frac > 0.75 ? 0 : frac > 0.5 ? 1 : frac > 0.25 ? 2 : 3;
+    while ((this.stage ?? 0) < stage) this.applyStage((this.stage = (this.stage ?? 0) + 1));
+    if (stage >= 1 && stage < 4 && this.underglow) this.underglow.visible = Math.random() > (stage >= 3 ? 0.4 : 0.1);
+    if (stage === 3) for (const h of this.headlights.slice(1)) h.visible = Math.random() > 0.25;
+    if (car.condition?.wheels !== undefined && car.condition.wheels <= 0) {
+      for (const { tire } of this.wheels) tire.scale.set(1, 0.8, 0.8); // running on the rims
+    }
+    if (!this.weaponDrooped && car.condition?.primaryWeapon !== undefined && car.condition.primaryWeapon <= 0) {
+      this.weaponDrooped = true;
+      for (const mesh of this.slotMeshes.primaryWeapon || []) {
+        mesh.rotation.x -= 0.35;
+        mesh.position.y -= 0.12;
+      }
+    }
+  }
+
+  applyStage(stage) {
+    const charcoal = new THREE.Color('#1a1614');
+    if (stage === 1) {
+      this.glassMat.color.set('#3a4458'); // cracked windscreen
+      this.wheels[0].hub.visible = false; // a hubcap comes off
+    } else if (stage === 2) {
+      const loose = this.slotMeshes.bodyKit?.length ? this.slotMeshes.bodyKit : this.slotMeshes.spoiler || [];
+      for (const mesh of loose) {
+        mesh.rotation.x += 0.35;
+        mesh.position.y -= 0.12;
+      }
+      this.headlights[0].material = this.darkMat; // one headlight out
+    } else if (stage === 3) {
+      this.holo = false;
+      this.paintMat.color.lerp(charcoal, 0.4);
+    } else if (stage === 4) {
+      this.holo = false;
+      this.paintMat.color.copy(charcoal);
+      this.paintMat.metalness = 0;
+      this.paintMat.roughness = 1;
+      for (const h of this.headlights) h.visible = false;
+      this.tailMat.color.set('#000000');
+      if (this.underglow) this.underglow.visible = false;
+    }
+  }
+
   // pose: interpolated { pos, quat } (three.js types); car: latest sim state.
   update(pose, car, track, time) {
     this.group.position.copy(pose.pos);
@@ -533,8 +615,9 @@ export class CarView {
       tire.rotation.x = -ws.spin;
     });
 
-    this.tailMat.color.set('#ff1030').multiplyScalar(car.braking ? 3.5 : 1.2);
+    if (!car.wrecked) this.tailMat.color.set('#ff1030').multiplyScalar(car.braking ? 3.5 : 1.2);
     this.tick(time);
+    this.damageState(car);
 
     const boosting = car.nitro.active > 0;
     this.flames.forEach((flame, k) => {
