@@ -1,6 +1,8 @@
 # 1. Rustline Docks
 
-**Status:** agreed and built, ready to test (everything is open to change after playtesting). **Tier:** 1 (the starter district). **Faction:** Dock Rats.
+**Status:** agreed. The layout and routes are built, but some parts don't match
+this doc yet (see "Built vs this doc" at the end). Everything is open to change
+after playtesting. **Tier:** 1 (the starter district). **Faction:** Dock Rats.
 **On the city map:** bottom left. Home is up the highway to the north-west, and Dock Road leaves east for the Neon Strip.
 
 ## Identity
@@ -119,10 +121,10 @@ Numbers match the pins on the city map.
   into the container terminal on the haul road → through the first container
   tunnel, across the jog, through the second → out onto Dock Road → east to the
   finish at East Gate.
-- **Shortcuts:**
-  - the Cannery Row alley, which cuts the corner onto Crane St;
-  - a gap in the rail yard fence at Rail Lane and West Gate: across the tracks to
-    Gate Road, bumpy, with wagons in the way.
+- **Shortcut:** a gap in the rail yard fence at Rail Lane and West Gate: across
+  the tracks to Gate Road, bumpy, with wagons in the way.
+  - This doc used to list a Cannery Row alley shortcut onto Crane St too. It was
+    dropped because on this grid it's exactly the same length as the streets.
 
 **2. Rail Yard Loop** (circuit, 5 cars, 3 laps, about 1.8 km a lap). Round the rail yard.
 - **Route:** Rail Lane (start/finish on its long straight) → Tar St north → Gate Road
@@ -139,13 +141,15 @@ Numbers match the pins on the city map.
 - **The south side is open to the dry dock basin.** Knock a car in and it counts as
   a takedown (a "ring-out").
 
-**4. Rival: Pier Run** (sprint, 4 cars, about 2.9 km). Across the docks and out to the end of Pier 1.
+**4. Rival: Pier Run** (sprint, 4 cars, about 2.7 km). Across the docks and out to the end of Pier 1.
 - **Route:** grid on Dock Road at East Gate, facing west → Dock Road west → south on
   Rope St past the dry dock → west along Quay Road under the cranes → north up Kiln St →
   west on Dock Road → south on West Gate → east onto Quay Road → out along Pier 1 to
   the finish at its end.
-- **Shortcut:** the terminal haul road isn't on this route. Instead there's the
-  Cannery Row alley between Rope and Anchor.
+- **Shortcut:** the service alley behind the Cannery Row warehouses between Kiln
+  St and West Gate (z ≈ +15). It cuts out the Dock Road corner.
+  - This doc used to name the alley between Rope and Anchor, but that one doesn't
+    touch this route.
 
 **5. Boss: Brick** (arena, last one standing, 4 cars, 4 min). Warehouse Row: the catwalk decks, the loading-bay lifts and the rolling overhead crane.
 
@@ -187,6 +191,52 @@ Everything above is drivable. Also:
 - **Piers:** four for now.
 
 All of these can change after playtesting.
+
+## Built vs this doc
+
+This was checked against the game by building Rustline's events from the code.
+The owner's rule is that nothing on a district map is generated: everything is
+hand-authored to this doc.
+
+**Built as specified:**
+- **Layout:** the street grid and names, every site and lot, the four piers, and
+  Wrench & Rust.
+- **Details:** the cranes along the quay, the terminal's stack maze with its two
+  gantry cranes and two container tunnels, and the freight line with rails and
+  signal posts.
+- **The freight train:** rare, random and fast.
+- **Routes and lengths:** every event route follows this doc's streets. Dockside
+  Dash is 3.7 km, Rail Yard Loop 1.8 km a lap, and Pier Run 2.7 km.
+- **Race dressing:** container-stack closures and floodlights at the start.
+
+**Still to do, replacing generated or missing parts:**
+1. **Dry Dock Brawl arena:** the game uses the random arena generator. Build it
+   to this doc instead:
+   - the gantry deck across the middle, with ramps up and room to drive under;
+   - container stacks;
+   - the cargo lift;
+   - the swinging crane hook as the sweeper;
+   - the south side open to the dry dock basin, with ring-outs counted as
+     takedowns.
+2. **Boss arena, Warehouse Row:** also generated. Build it to this doc:
+   - the half-demolished warehouse;
+   - roof-truss catwalk decks;
+   - loading bays with dock lifts;
+   - the rolling overhead crane as the sweeper.
+3. **The dry dock basin and freighter hull** (free roam, fall in and respawn):
+   missing.
+4. **Shortcuts:** the game picks them automatically. Author them to this doc:
+   - Dockside Dash: the rail yard fence gap only (it's there now by chance);
+   - Rail Yard Loop: the goods-shed loading platform jump. The goods shed isn't
+     built, and the game picks a rail yard crossing instead;
+   - Pier Run: the Kiln–West Gate service alley (it's there now by chance).
+5. **The Back-alley Sprint:** it runs along Cannery Row. This doc says it runs
+   through the service alleys, west to east.
+6. **Start dressing:** Dock Rats standing on container tops, and a banner slung
+   from a crane. Both missing.
+7. **The fish and ice sheds by the quay:** they're ordinary warehouses now.
+8. **Level crossings:** the rails and signal posts are there. Check that there's
+   a bump in the road and flashing warning lights.
 
 ## Earlier open questions (answered above)
 

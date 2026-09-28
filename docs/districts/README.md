@@ -32,12 +32,13 @@ What they want instead:
 
 ## How we work
 
-1. **One district at a time.** Write its doc (the spec), then have the owner
-   review it and answer the open questions.
-2. **Build the district to the doc,** then the owner playtests it.
+1. **All the docs first.** Write every district's doc (the spec), one at a time,
+   and have the owner review each and answer its open questions. Nothing new is
+   built into the game until all six are agreed.
+2. **Then build the districts to their docs,** in campaign order, and the owner
+   playtests each.
 3. **Adjust the doc and the build together** from their feedback. All decisions
    can change after playtesting.
-4. **Then move on** to the next district.
 
 A district doc covers:
 - identity and look;
@@ -52,16 +53,18 @@ A district doc covers:
 
 ## Status
 
-The table is in campaign order.
+The table is in campaign order. **All six docs are agreed.** The next step is
+building, in campaign order, starting with the Neon Strip, which introduces the
+`city.plan` format the others use.
 
 | # | District | Theme | Status |
 |---|----------|-------|--------|
-| 1 | [Rustline Docks](01-rustline-docks.md) | Working port, grid | Agreed and built, awaiting playtest feedback |
-| 2 | Neon Strip | Casinos and clubs: a main strip with diagonals and curves, a central car park | Next: write the doc |
-| 3 | Maple Hollow | Suburbs: curving loops and cul-de-sacs (new district, not in the game yet) | Not started |
-| 4 | Chrome Heights | Winding hill roads; the current build races across rooftops with gaps to jump | Not started |
-| 5 | The Undercity | Organic, ramshackle streets round a big sinkhole, with a long straight | Not started |
-| 6 | Corporate Spire | Radial downtown: central roundabout, diagonal avenues. The finale | Not started |
+| 1 | [Rustline Docks](01-rustline-docks.md) | Working port, grid | Agreed. Its layout and routes are built, but not all of it matches the doc (see its "Built vs this doc" list). |
+| 2 | [Neon Strip](02-neon-strip.md) | Casinos and clubs: a main strip with diagonals and curves, a central car park | Agreed, ready to build |
+| 3 | [Maple Hollow](03-maple-hollow.md) | Suburbs: curving loops and cul-de-sacs (new district, not in the game yet) | Agreed, ready to build |
+| 4 | [Chrome Heights](04-chrome-heights.md) | Skyscraper rooftops: roof decks in three tiers, skybridges, ramp bridges and gap jumps over the street canyons | Agreed, ready to build |
+| 5 | [The Undercity](05-the-undercity.md) | A sinkhole city, half under the upper city's deck: twisting streets round the pit, and a storm drain along the south | Agreed, ready to build |
+| 6 | [Corporate Spire](06-corporate-spire.md) | Radial downtown: the Spire on a central roundabout, diagonal avenues, two octagonal rings, Central Park. The finale | Agreed, ready to build |
 
 **City map positions:**
 - **Top row:** Corporate Spire (left, just up the road from home), Maple Hollow
@@ -70,26 +73,62 @@ The table is in campaign order.
 - **Water:** a river runs down between Maple Hollow and Chrome Heights, then east
   between Chrome and the Undercity. The bay runs along the bottom.
 
-The overview map is drawn in `src/screens/cityScreen.js`: district outlines, home,
-highways, the river, and `UPCOMING` for Maple Hollow's placeholder. District
-outlines are the `map` field in `src/career/districts.js`.
+**Outlines and highways:** districts have abstract outlines, not squares. Each
+district's streets are to be designed to fill its outline.
+- **Rustline:** stepped like stacked containers, with the quay on the bay.
+- **Neon Strip:** pointed at the top, ragged sides.
+- **Maple Hollow:** lobed.
+- **Chrome Heights:** a ridge of hilltops, with the river along its west and south.
+- **The Undercity:** ragged.
+- **Corporate Spire:** faceted.
 
-Only Rustline is built to a doc so far. The other four playable districts still use
-the old generator, which makes a grid with randomly placed sites. That's what the
-docs replace.
+The highways wind between the districts: an S-bend (Spire to Maple), railed
+bridges over the river (Maple to Chrome, Chrome to the Undercity), switchbacks
+(Maple to the Strip), a hairpin from home down to the docks, and a corkscrew ramp
+(the Strip to the Undercity). The bay rises to meet Rustline's quay, and the piers
+run out over it.
+
+The overview map is drawn in `src/screens/cityScreen.js`:
+- `RIVER` and `ROADS` are point lists, drawn as smooth curves. Bridges appear
+  automatically where a road crosses the river.
+- `HOME` is the garage icon, and `UPCOMING` holds Maple Hollow's placeholder.
+- The legend runs along the bay.
+
+In `src/career/districts.js`, each district has:
+- `map`: its outline, as any polygon;
+- `frame`: the quad its streets are drawn into (default: the outline's bounding
+  box, clipped to the outline);
+- `label`: where its name plate goes.
+
+Only Rustline is built to a doc so far, and only partly: its arenas, a few
+shortcuts and some set pieces are still generic. The other four playable districts still use
+the old generator, which makes a grid with randomly placed sites, and Maple Hollow
+isn't in the game yet. That's what the docs replace.
 
 ## Owner decisions that apply everywhere
 
 - **Campaign order:** Rustline, Neon Strip, Maple Hollow, Chrome Heights, the
   Undercity, Corporate Spire.
-- **Randomness:** nothing about a district is random except small details.
-  Streets, sites, lots and event routes are authored.
+- **Nothing is generated.** Every district is custom-made and hand-tailored to its
+  doc. That covers streets, sites, lots, buildings, arena structures, shortcuts,
+  jumps, set pieces, props and race dressing. The only things allowed to vary are
+  small cosmetic details, such as which windows are lit.
+  - Ordinary buildings fill each block the way its doc describes it (for
+    example, motels along Motel Row). They're placed by fixed rules, the same
+    every time, and never at random.
+  - The old generator's random grids, random arenas and automatically chosen
+    shortcuts are all to be replaced by authored data.
 - **Hazards are rare and random, never on a timer or triggered by play.** For
   example, the Rustline freight train is fast and turns up about one minute in five.
 - **Races can use more than streets:** yards and lots, and set pieces such as the
   drive-through container tunnels in Rustline's terminal.
 - **Boss events unlock at 75% of a district's other events completed** (podium
   finishes). Free roam is available per district, with a setting to open every district.
+- **No acid rain.** It's removed from the game. Rain is only the video setting.
+- **Tiers:** the map shows campaign position (Tier 1–6). The five AI difficulty
+  levels run 0, 1, 2, 3, 3, 4 across the six districts.
+- **Rivals:** one per district, in campaign order: Jackal, Ghost, Mule, Redline
+  (new, in Chrome Heights), Vixen, Static.
 
 ## How a district is built (code map)
 
@@ -125,6 +164,9 @@ docs replace.
   - `cityVenue` and `authoredRoute` build the event tracks.
   - Along the way they add shortcuts, side-street closures (containers stacked
     across them) and narrow sections (the container tunnels).
+  - Today the shortcuts are picked automatically, and arenas are built by a
+    random generator (`cityArena`). Both are to be replaced by the authored
+    shortcuts and arena structures in each doc.
 - **Everything solid:** `src/sim/cityLayout.js` places buildings and props once.
   - The renderer (`src/render/districtView.js`) draws exactly those.
   - Free roam (`cityRoam` in `city.js`) collides with exactly those.
@@ -156,6 +198,13 @@ So the next doc should also define the authored format for those. The plan:
 That means generalising `generateMap`, `cityLayout` (fills for polygon lots) and
 `districtView` (curved roads) beyond grid cells. Build it with the Neon Strip, the
 first district that needs it.
+
+**Where it's defined:**
+- **The format (`city.plan`):** in [the Neon Strip doc](02-neon-strip.md).
+- **Extras (terrain, turning circles, dirt, causeways):** in
+  [the Maple Hollow doc](03-maple-hollow.md).
+- **The boundary:** each plan's `boundary` is its city-map outline, and the
+  streets fill it.
 
 ## Working with the owner
 
