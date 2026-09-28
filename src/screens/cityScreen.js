@@ -404,6 +404,7 @@ export class CityScreen {
       construction: '#5c3e1e', plaza: '#4a4660', parking: '#2a2832', arena: mix(d.color, '#0b0814', 0.45),
       park: '#1f5a2a', housing: '#2e4030', quad: mix(d.color, '#1c1828', 0.68), market: '#6a2a58', casino: mix(d.color, '#1c1828', 0.35),
       railyard: '#3e3630', tanks: '#44444c', terminal: '#3a3440',
+      warehouses: mix(d.color, '#1c1828', 0.78), fish: '#34464e', shop: mix(d.color, '#1c1828', 0.5),
     };
     for (const c of map.cells) {
       const [x0, x1, z0, z1] = c.lot;

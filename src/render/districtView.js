@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
-import { makeRng } from './textures.js';
+import { makeRng, textTexture } from './textures.js';
 import { setUvRect, streetRoadMaterial } from './trackView.js';
 import { SETBACK, STREET, edgeSpans, TUNNEL_HALF } from '../sim/city.js';
 import { districtLayout, archEdge, samplePath } from '../sim/cityLayout.js';
+import { CRANE_LEGS } from '../sim/authoredLayout.js';
 
 // A whole city district, built once and shared by every event held there:
 // streets and sidewalks in the district's own surface (roof decks with gaps to
@@ -122,6 +123,9 @@ export function buildDistrictView(map, tex) {
   const windowGeos = [];
   const shackGeos = [];
   const beaconGeos = [];
+  const shutterGeos = []; // Warehouse Row's doorways, shown shut for the boss fight
+  const crossingGeos = []; // level crossing lamps, lit while a train is coming
+  const quayCranes = [];
   const walkways = new Surface();
 
   // --- Streets and sidewalks ---
@@ -228,7 +232,7 @@ export function buildDistrictView(map, tex) {
   // --- Lots ---
   const lotSurf = { lot: new Surface(), tiles: new Surface(), dirt: new Surface(), parking: new Surface(), grass: new Surface() };
   const surfFor = {
-    buildings: 'lot', yard: 'lot', terminal: 'lot', alley: 'lot', arena: 'lot', tanks: 'lot', plaza: 'tiles', quad: 'tiles', market: 'tiles', casino: 'tiles',
+    buildings: 'lot', warehouses: 'lot', fish: 'lot', shop: 'lot', yard: 'lot', terminal: 'lot', alley: 'lot', arena: 'lot', tanks: 'lot', plaza: 'tiles', quad: 'tiles', market: 'tiles', casino: 'tiles',
     construction: 'dirt', railyard: 'dirt', parking: 'parking', park: 'grass', housing: 'grass',
   };
   for (const c of map.cells) flat(lotSurf[surfFor[c.kind]], c.lot[0], c.lot[1], c.lot[2], c.lot[3], -0.06, c.kind === 'parking' ? 12 : 8);
@@ -248,7 +252,7 @@ export function buildDistrictView(map, tex) {
     g.translate((x0 + x1) / 2, base + tall / 2, (z0 + z1) / 2);
     bGeos.push(g);
     const top = base + tall;
-    if (rng() < 0.5 && !style.ramshackle) {
+    if (!map.authored && rng() < 0.5 && !style.ramshackle) {
       for (let k = 0; k < 1 + Math.floor(rng() * 2); k++) {
         const s = 2 + rng() * 3;
         darkGeos.push(box(s, 1.5 + rng(), s, x0 + s + rng() * Math.max(0, x1 - x0 - 2 * s), top + 0.7, z0 + s + rng() * Math.max(0, z1 - z0 - 2 * s)));
@@ -370,7 +374,7 @@ export function buildDistrictView(map, tex) {
     if (it.lift) return;
     if (style.ramshackle) ramshackle(x0, x1, z0, z1, gMin, top);
     if (it.casino) casinoCrown(it.unit, x0, x1, z0, z1, top);
-    else if (it.unit && rng() < look.signs) buildingSign(it.unit, it.r, top);
+    else if (it.unit && !map.authored && rng() < look.signs) buildingSign(it.unit, it.r, top);
   };
   const tree = (x, z, s = 1) => {
     const y = H(x, z);
@@ -438,7 +442,8 @@ export function buildDistrictView(map, tex) {
         const y = g0(x, z);
         const g = new THREE.CylinderGeometry(rad, rad, hgt, 16);
         g.translate(x, y + hgt / 2, z);
-        paintedGeos.push(tint(g, rng() < 0.5 ? '#c8c2b8' : '#8a6a50'));
+        const rust = it.rust ?? rng() < 0.5;
+        paintedGeos.push(tint(g, rust ? '#8a6a50' : '#c8c2b8'));
         const cap = new THREE.CylinderGeometry(rad * 0.6, rad, 1.5, 16);
         cap.translate(x, y + hgt + 0.75, z);
         paintedGeos.push(tint(cap, '#6a6660'));
@@ -609,7 +614,12 @@ export function buildDistrictView(map, tex) {
       case 'signal': {
         const y = g0(x, z);
         steelGeos.push(box(0.3, 4, 0.3, x, y + 2, z), box(1.6, 0.5, 0.2, x, y + 3.6, z));
-        beaconGeos.push(box(0.4, 0.4, 0.3, x - 0.5, y + 3.6, z), box(0.4, 0.4, 0.3, x + 0.5, y + 3.6, z));
+        const lamps = (s) => [-0.5, 0.5].map((dx) => box(0.4 * s, 0.4 * s, 0.3 * s, x + dx, y + 3.6, z));
+        if (map.authored) {
+          // Dark lamps, and lit ones over them that the race screen flashes.
+          darkGeos.push(...lamps(1));
+          crossingGeos.push(...lamps(1.1));
+        } else beaconGeos.push(...lamps(1));
         break;
       }
       case 'gantry': {
@@ -671,8 +681,192 @@ export function buildDistrictView(map, tex) {
         for (const e of [-1, 1]) glowGeos.push(box(2 * SETBACK + 1, 0.6, 0.6, x + ux * e * (D / 2), y + 9.2, z + uz * e * (D / 2), yaw));
         break;
       }
+      // --- Authored districts (sim/authoredLayout.js) ---
+      case 'dock': {
+        // A concrete loading dock, a yellow line along its drop to the street.
+        const [x0, x1, z0, z1] = it.r;
+        paintedGeos.push(colorBox(x1 - x0, it.h, z1 - z0, (x0 + x1) / 2, it.h / 2, (z0 + z1) / 2, '#8a8680'));
+        const ez = it.face === 'n' ? z0 + 0.2 : z1 - 0.2;
+        yellowGeos.push(box(x1 - x0, 0.06, 0.4, (x0 + x1) / 2, it.h + 0.03, ez));
+        break;
+      }
+      case 'dockRamp':
+      case 'platformRamp':
+        paintedGeos.push(tint(rampGeometry(it.ramp), '#7a7670'));
+        break;
+      case 'wall': {
+        // Brick walls closing the alley between warehouses.
+        const [x0, x1, z0, z1] = it.r;
+        paintedGeos.push(colorBox(x1 - x0, it.h, z1 - z0, (x0 + x1) / 2, it.h / 2, (z0 + z1) / 2, '#6a4238'));
+        darkGeos.push(box(x1 - x0 + 0.1, 0.2, z1 - z0 + 0.2, (x0 + x1) / 2, it.h + 0.1, (z0 + z1) / 2));
+        break;
+      }
+      case 'shellWall': {
+        const [x0, x1, z0, z1] = it.r;
+        const g = new THREE.BoxGeometry(x1 - x0, it.h, z1 - z0);
+        boxUvs(g, x1 - x0, it.h, z1 - z0, uvScale, rng);
+        g.translate((x0 + x1) / 2, it.h / 2, (z0 + z1) / 2);
+        bGeos.push(g);
+        break;
+      }
+      case 'shell': {
+        // Warehouse Row: trusses across the hall, roof panels left at the ends
+        // and the middle open to the sky; walls over the doorways, and the
+        // shutters that come down for the boss fight.
+        const [x0, x1, z0, z1] = it.r;
+        for (let tx = x0 + 10; tx < x1; tx += 20) steelGeos.push(box(0.6, 0.8, z1 - z0, tx, it.h - 0.6, (z0 + z1) / 2));
+        for (const [a, b] of [[x0, x0 + 120], [x1 - 80, x1]]) {
+          const g = new THREE.BoxGeometry(b - a, 0.3, z1 - z0 + 2);
+          boxUvs(g, b - a, 0.3, z1 - z0, uvScale, rng);
+          g.translate((a + b) / 2, it.h, (z0 + z1) / 2);
+          bGeos.push(g);
+        }
+        for (const [wz, list] of [[z0 - 0.5, it.doors.n], [z1 + 0.5, it.doors.s]]) {
+          for (const [a, b] of list) {
+            const g = new THREE.BoxGeometry(b - a, it.h - 6, 1);
+            boxUvs(g, b - a, it.h - 6, 1, uvScale, rng);
+            g.translate((a + b) / 2, 6 + (it.h - 6) / 2, wz);
+            bGeos.push(g);
+            shutterGeos.push(box(b - a, 6, 0.3, (a + b) / 2, 3, wz));
+          }
+        }
+        break;
+      }
+      case 'shed': {
+        // Fish and ice sheds: painted, low, two doors on the street face.
+        const [x0, x1, z0, z1] = it.r;
+        paintedGeos.push(colorBox(x1 - x0, it.h, z1 - z0, (x0 + x1) / 2, it.h / 2, (z0 + z1) / 2, ['#d8dce0', '#b8c8d8', '#c8c0b0'][it.tone || 0]));
+        paintedGeos.push(colorBox(x1 - x0 + 0.6, 0.4, z1 - z0 + 0.6, (x0 + x1) / 2, it.h + 0.2, (z0 + z1) / 2, '#6a7480'));
+        const fz = it.face === 'n' ? z0 - 0.06 : z1 + 0.06;
+        for (const f of [0.3, 0.7]) darkGeos.push(box(5, 4, 0.1, x0 + (x1 - x0) * f, 2, fz));
+        break;
+      }
+      case 'iceplant': {
+        const [x0, x1, z0, z1] = it.r;
+        paintedGeos.push(colorBox(x1 - x0, it.h, z1 - z0, x, it.h / 2, z, '#e8eef2'));
+        for (const dx of [-5, 0, 5]) steelGeos.push(box(3, 1.6, 3, x + dx, it.h + 0.8, z));
+        glowGeos.push(box(x1 - x0 + 0.2, 0.3, z1 - z0 + 0.2, x, it.h - 0.4, z));
+        break;
+      }
+      case 'crates':
+        for (let k = 0; k < it.n; k++) paintedGeos.push(colorBox(2.4, 1.15, 2.4, x, 0.6 + k * 1.2, z, k % 2 ? '#7a5a3a' : '#8a6a44'));
+        break;
+      case 'tyres':
+        for (let k = 0; k < 4; k++) {
+          const g = new THREE.CylinderGeometry(1.2, 1.2, 0.42, 10);
+          g.translate(x, 0.22 + k * 0.44, z);
+          darkGeos.push(g);
+        }
+        break;
+      case 'trailer': {
+        // A box trailer on its wheels; every third has its cab on, all inside the bay.
+        const len = it.cab ? 12 : 15.6;
+        const tz = it.cab ? z + 1.9 : z;
+        const color = CONTAINER_COLORS[(((Math.round(x) + Math.round(z)) % 7) + 7) % 7];
+        paintedGeos.push(colorBox(2.5, 2.8, len, x, 2.6, tz, color));
+        for (const dz of [-len / 2 + 1.5, len / 2 - 2.5, len / 2 - 1.2]) darkGeos.push(box(2.4, 1, 1, x, 0.5, tz + dz));
+        if (it.cab) {
+          paintedGeos.push(colorBox(2.5, 3, 3.4, x, 1.8, z - 6.2, '#c83a2a'));
+          darkGeos.push(box(2.3, 0.9, 0.1, x, 2.6, z - 7.95), box(2.4, 1, 1, x, 0.5, z - 6.2));
+        }
+        break;
+      }
+      case 'goodsShed': {
+        // The old goods shed across the yard's corner, a canopy over its platform.
+        const o = it.obb;
+        const g = obbBox(o, it.h, 0);
+        boxUvs(g, o.hw * 2, it.h, o.hd * 2, uvScale, rng);
+        bGeos.push(g);
+        paintedGeos.push(tint(obbBox({ ...o, hw: o.hw + 0.6, hd: o.hd + 0.6 }, 0.5, it.h), '#6a4a3a'));
+        const dx = Math.sin(o.yaw);
+        const dz = Math.cos(o.yaw);
+        darkGeos.push(obbBox({ ...o, x: o.x - dz * (o.hw + 5), z: o.z + dx * (o.hw + 5), hw: 5, hd: o.hd - 4 }, 0.4, 6.5));
+        break;
+      }
+      case 'loadPlatform': {
+        const o = it.obb;
+        paintedGeos.push(tint(obbBox(o, it.h, 0), '#8a8680'));
+        const dx = Math.sin(o.yaw);
+        const dz = Math.cos(o.yaw);
+        for (const s of [-1, 1]) yellowGeos.push(obbBox({ ...o, x: o.x + dz * s * (o.hw - 0.2), z: o.z - dx * s * (o.hw - 0.2), hw: 0.2 }, 0.06, it.h));
+        break;
+      }
+      case 'drydock': {
+        // The dry dock: sunken floor, walls up to quay level (you can drive on
+        // their tops), keel blocks, and the caisson gate against the bay.
+        const { x0, x1, z0, z1, depth, wall } = it;
+        paintedGeos.push(colorBox(x1 - x0, 0.4, z1 - z0, (x0 + x1) / 2, -depth - 0.2, (z0 + z1) / 2, '#4a4844'));
+        paintedGeos.push(colorBox(x1 - x0 + 2 * wall, depth, wall, (x0 + x1) / 2, -depth / 2, z0 - wall / 2, '#6a6660'));
+        for (const sx of [x0 - wall / 2, x1 + wall / 2]) paintedGeos.push(colorBox(wall, depth, z1 - z0 + wall, sx, -depth / 2, (z0 + z1 + wall) / 2, '#6a6660'));
+        paintedGeos.push(colorBox(x1 - x0, depth, wall, (x0 + x1) / 2, -depth / 2, z1 + wall / 2, '#3a3a40'));
+        yellowGeos.push(box(x1 - x0, 0.06, 0.5, (x0 + x1) / 2, 0.03, z0 - 0.3));
+        for (const sx of [x0 + 0.3, x1 - 0.3]) yellowGeos.push(box(0.5, 0.06, z1 - z0, sx, 0.03, (z0 + z1) / 2));
+        for (let k = 0; k < 3; k++) steelGeos.push(box(x1 - x0, 0.3, 0.3, (x0 + x1) / 2, -depth + 3 + k * 3, z0 + 0.3));
+        const hl = it.hull;
+        for (let kx = hl.x - hl.hw + 8; kx < hl.x + hl.hw - 4; kx += 8) darkGeos.push(box(2, 1.5, hl.hd * 1.4, kx, -depth + 0.75, hl.z));
+        break;
+      }
+      case 'hull': {
+        // A rusting freighter on the keel blocks: hull, hatches, the bridge at the stern.
+        const { hw, hd } = it;
+        const base = it.y;
+        const shape = new THREE.Shape([new THREE.Vector2(-hw, -hd), new THREE.Vector2(hw - 22, -hd), new THREE.Vector2(hw, 0), new THREE.Vector2(hw - 22, hd), new THREE.Vector2(-hw, hd)]);
+        for (const [y0, hgt, col] of [[base, 8, '#7a3a24'], [base + 8, it.h - 8, '#2a2a30']]) {
+          const g = new THREE.ExtrudeGeometry(shape, { depth: hgt, bevelEnabled: false });
+          g.rotateX(-Math.PI / 2);
+          g.translate(x, y0, z);
+          paintedGeos.push(tint(g, col));
+        }
+        const top = base + it.h;
+        for (let k = 0; k < 6; k++) paintedGeos.push(colorBox(18, 1.2, hd * 1.3, x - hw + 60 + k * 26, top + 0.6, z, '#5a3a2a'));
+        paintedGeos.push(colorBox(20, 12, hd * 1.6, x - hw + 18, top + 6, z, '#d8d0c0'));
+        darkGeos.push(box(20.4, 1.2, hd * 1.6 + 0.4, x - hw + 18, top + 9, z));
+        paintedGeos.push(colorBox(4, 8, 4, x - hw + 12, top + 16, z, '#2a2a30'));
+        glowGeos.push(box(0.6, 0.6, 0.6, x - hw + 18, top + 13, z));
+        break;
+      }
+      case 'gate': {
+        // Where a road leaves the district: barriers across it and a boom.
+        const [, , z0, z1] = it.r;
+        for (let bz = z0 + 1; bz < z1; bz += 2.1) barrierGeos.push(box(0.5, 0.9, 2, x, 0.45, bz));
+        paintedGeos.push(colorBox(0.3, 1.4, 0.3, x, 0.7, z0 + 0.5, '#c83a2a'));
+        paintedGeos.push(colorBox(0.2, 0.2, z1 - z0, x, 1.3, (z0 + z1) / 2, '#e8e0d0'));
+        break;
+      }
+      case 'quayCrane':
+        quayCranes.push([x, z]);
+        break;
+      case 'yardGantry':
+        steelGeos.push(box(0.8, 0.8, it.z1 - it.z0 + 0.6, x, 8, (it.z0 + it.z1) / 2));
+        for (let lz = it.z0 + 4; lz < it.z1; lz += 6) glowGeos.push(box(0.5, 0.5, 0.5, x, 7.3, lz));
+        break;
+      case 'pipes': {
+        for (const py of [3.4, 4.1]) {
+          const g = new THREE.CylinderGeometry(0.3, 0.3, it.x1 - it.x0, 6);
+          g.rotateZ(Math.PI / 2);
+          g.translate((it.x0 + it.x1) / 2, py, it.z);
+          steelGeos.push(g);
+        }
+        for (let px = it.x0; px <= it.x1; px += 12) steelGeos.push(box(0.4, 4.2, 0.4, px, 2.1, it.z));
+        break;
+      }
+      case 'shopSign': {
+        const t = textTexture('WRENCH & RUST', '#ff7a1a');
+        const w = it.w;
+        const h = (w * t.image.height) / t.image.width;
+        const g = new THREE.PlaneGeometry(w, h);
+        g.translate(x, 7.6 - h / 2 + 1.2, z + 0.25);
+        add(new THREE.Mesh(g, glowMaterial({ map: t, intensity: 2 })));
+        break;
+      }
       default:
         break;
+    }
+    if (it.t === 'bldg' && it.warehouse) {
+      // Roller doors on a warehouse's street face.
+      const [x0, x1, z0, z1] = it.r;
+      const fz = it.face === 'n' ? z0 - 0.06 : z1 + 0.06;
+      for (const f of [0.3, 0.7]) darkGeos.push(box(6, 5, 0.1, x0 + (x1 - x0) * f, 2.5, fz));
     }
   }
 
@@ -693,6 +887,27 @@ export function buildDistrictView(map, tex) {
       for (let k = 2; k < path.length; k += 5) {
         const [x, z, dx, dz] = path[k];
         for (const s of [-1, 1]) glowGeos.push(box(0.3, 0.9, 0.3, x + dz * s * 5.5, g0(x, z) + 0.45, z - dx * s * 5.5));
+      }
+    } else if (c.kind === 'railyard' && c.tracksZ) {
+      // Authored yard: ballast and rails on every track, clear of the goods
+      // shed and its platform (the yard's gantries are layout items).
+      const gs = map.goodsShed;
+      const yaw = gs ? Math.atan2(gs.platform.dirX, gs.platform.dirZ) : 0;
+      const inside = (px, pz, o, hw, hd) => {
+        const dx = Math.sin(yaw);
+        const dz = Math.cos(yaw);
+        const across = (px - o.x) * dz - (pz - o.z) * dx;
+        const along = (px - o.x) * dx + (pz - o.z) * dz;
+        return Math.abs(across) < hw && Math.abs(along) < hd;
+      };
+      const blocked = (px, pz) => gs && (inside(px, pz, gs.shed, gs.shed.wid / 2 + 2, gs.shed.len / 2 + 2) || inside(px, pz, gs.platform, gs.platform.wid / 2 + 2, gs.platform.len / 2 + 8));
+      for (const z of c.tracksZ) {
+        for (let x = lx0; x < lx1; x += 10) {
+          const seg = Math.min(10, lx1 - x);
+          if (blocked(x + seg / 2, z)) continue;
+          darkGeos.push(box(seg, 0.12, 3, x + seg / 2, 0.0, z));
+          for (const o of [-0.72, 0.72]) steelGeos.push(box(seg, 0.16, 0.12, x + seg / 2, 0.14, z + o));
+        }
       }
     } else if (c.kind === 'railyard') {
       // Ballast and rails along the yard, gantry beams with signal lights.
@@ -735,7 +950,7 @@ export function buildDistrictView(map, tex) {
       const y = g0(mx, mz);
       darkGeos.push(box(20, 1.2, 34, mx, y + 8.6, mz, yaw));
       glowGeos.push(box(18, 0.2, 32, mx, y + 7.9, mz, yaw));
-    } else if (c.kind === 'tanks') {
+    } else if (c.kind === 'tanks' && !map.authored) {
       for (const z of [lz0 + 3, lz1 - 3]) steelGeos.push(box(lx1 - lx0 - 6, 0.7, 0.7, (lx0 + lx1) / 2, g0((lx0 + lx1) / 2, z) + 3.4, z));
     }
   }
@@ -820,17 +1035,74 @@ export function buildDistrictView(map, tex) {
   const minY = Math.min(...nodes.map((n) => n.y));
   if (f.includes('waterfront')) {
     const edge = bounds.maxZ + SETBACK + 30;
-    // Concrete quay apron between the last street and the water.
-    const apron = new Surface();
-    flat(apron, bounds.minX - SETBACK - 3, bounds.maxX + SETBACK + 3, bounds.maxZ + SETBACK, edge, -0.06, 8);
-    add(apron.mesh(mats.lot));
-    add(new THREE.Mesh(new THREE.PlaneGeometry(4000, 1500).rotateX(-Math.PI / 2).translate(0, minY - 1.2, edge + 750), mats.water));
-    // Quay edge, broken where the piers run out over the water.
-    let qx = bounds.minX - 200;
-    for (const gx of [...map.piers.map((p) => p.x).sort((p, q) => p - q), bounds.maxX + 200 + SETBACK + 1]) {
-      const x1 = gx - SETBACK - 1;
-      if (x1 > qx) steelGeos.push(box(x1 - qx, 2, 3, (qx + x1) / 2, minY - 0.3, edge));
-      qx = gx + SETBACK + 1;
+    const b = map.authored ? map.basin : null;
+    // Stretches of [x0, x1] left once the piers (and the dry dock) are cut out.
+    const cuts = [...map.piers.map((p) => [p.x - SETBACK - 1, p.x + SETBACK + 1]), ...(b ? [[b.x0 - b.wall, b.x1 + b.wall]] : [])].sort((p, q) => p[0] - q[0]);
+    const between = (x0, x1) => {
+      const out = [];
+      let x = x0;
+      for (const [c0, c1] of cuts) {
+        if (c0 > x) out.push([x, Math.min(c0, x1)]);
+        x = Math.max(x, c1);
+      }
+      if (x1 > x) out.push([x, x1]);
+      return out.filter(([a, c]) => c > a);
+    };
+    if (map.authored) {
+      // The quay apron between Quay Road and the water, open where the dry dock
+      // cuts into it; the bay at the district's water level.
+      const apron = new Surface();
+      const ax0 = bounds.minX - SETBACK - 50;
+      const ax1 = bounds.maxX + SETBACK + 50;
+      const bx = b ? [b.x0 - b.wall, b.x1 + b.wall] : null;
+      for (const [x0, x1] of bx ? [[ax0, bx[0]], [bx[1], ax1]] : [[ax0, ax1]]) flat(apron, x0, x1, bounds.maxZ + SETBACK, edge, -0.06, 8);
+      if (bx) flat(apron, bx[0], bx[1], bounds.maxZ + SETBACK, b.z0 - b.wall, -0.06, 8);
+      add(apron.mesh(mats.lot));
+      const wy = style.waterY ?? -0.5;
+      const far = edge + 1500;
+      const water = (x0, x1, z0) => add(new THREE.Mesh(new THREE.PlaneGeometry(x1 - x0, far - z0).rotateX(-Math.PI / 2).translate((x0 + x1) / 2, wy, (z0 + far) / 2), mats.water));
+      if (bx) {
+        water(-2500, bx[0], edge);
+        water(bx[1], 2500, edge);
+        water(bx[0], bx[1], b.z1 + b.wall);
+      } else water(-2500, 2500, edge);
+      // The quay wall face down to the water, a yellow line along the top.
+      for (const [x0, x1] of between(ax0, ax1)) {
+        steelGeos.push(box(x1 - x0, 2.5, 3, (x0 + x1) / 2, -1.33, edge - 1.5));
+        yellowGeos.push(box(x1 - x0, 0.06, 0.4, (x0 + x1) / 2, -0.03, edge - 0.6));
+      }
+      // Quay cranes on their rails: legs on the apron, the boom out over the bay.
+      const [la, lb] = CRANE_LEGS;
+      for (const lz of CRANE_LEGS) for (const [x0, x1] of between(ax0, ax1)) steelGeos.push(box(x1 - x0, 0.1, 0.3, (x0 + x1) / 2, -0.01, edge + lz));
+      for (const [x] of quayCranes) {
+        for (const lz of CRANE_LEGS) {
+          for (const dx of [-9, 9]) paintedGeos.push(colorBox(1.6, 32, 1.6, x + dx, 16, edge + lz, '#c83a2a'));
+          paintedGeos.push(colorBox(22, 3, 3, x, 32, edge + lz, '#e0e0e8'));
+          darkGeos.push(box(3, 1.4, 4, x - 9, 0.7, edge + lz), box(3, 1.4, 4, x + 9, 0.7, edge + lz));
+        }
+        for (const dx of [-9, 9]) paintedGeos.push(colorBox(1.2, 1.2, lb - la, x + dx, 14, edge + (la + lb) / 2, '#c83a2a'));
+        paintedGeos.push(colorBox(3, 2.5, 84, x, 34.8, edge + 8, '#c83a2a'));
+        paintedGeos.push(colorBox(9, 5, 9, x, 38.5, edge + la - 6, '#e0e0e8'));
+        darkGeos.push(box(4, 2, 5, x, 32.6, edge + 22), box(12.2, 0.6, 2.6, x, 16, edge + 22));
+        steelGeos.push(box(0.15, 15.6, 0.15, x - 1.2, 23.8, edge + 22), box(0.15, 15.6, 0.15, x + 1.2, 23.8, edge + 22));
+        glowGeos.push(box(0.8, 0.8, 0.8, x, 36.6, edge + 49));
+      }
+    } else {
+      // Concrete quay apron between the last street and the water.
+      const apron = new Surface();
+      flat(apron, bounds.minX - SETBACK - 3, bounds.maxX + SETBACK + 3, bounds.maxZ + SETBACK, edge, -0.06, 8);
+      add(apron.mesh(mats.lot));
+      add(new THREE.Mesh(new THREE.PlaneGeometry(4000, 1500).rotateX(-Math.PI / 2).translate(0, minY - 1.2, edge + 750), mats.water));
+      // Quay edge, broken where the piers run out over the water.
+      for (const [x0, x1] of between(bounds.minX - 200, bounds.maxX + 200)) steelGeos.push(box(x1 - x0, 2, 3, (x0 + x1) / 2, minY - 0.3, edge));
+      for (let x = bounds.minX; x <= bounds.maxX; x += 140) {
+        const y = minY;
+        if (map.piers.some((p) => Math.abs(p.x - x) < 32)) continue;
+        for (const dz of [4, 20]) for (const dx of [-9, 9]) paintedGeos.push(colorBox(1.6, 32, 1.6, x + dx, y + 16, edge + dz, '#c83a2a'));
+        paintedGeos.push(colorBox(22, 3, 3, x, y + 32, edge + 4, '#e0e0e8'), colorBox(22, 3, 3, x, y + 32, edge + 20, '#e0e0e8'));
+        paintedGeos.push(colorBox(3, 2.5, 60, x, y + 34, edge + 30, '#c83a2a'));
+        glowGeos.push(box(0.8, 0.8, 0.8, x, y + 36, edge + 58));
+      }
     }
     // Piers: concrete decks on pilings, bollards and fenders along the edges.
     for (const p of map.piers) {
@@ -844,14 +1116,6 @@ export function buildDistrictView(map, tex) {
       yellowGeos.push(box(0.4, 0.3, len, p.x - SETBACK - 0.8, top + 0.15, zc), box(0.4, 0.3, len, p.x + SETBACK + 0.8, top + 0.15, zc));
       for (let z = p.z0 + 4; z < p.z1 + 10; z += 9) for (const s of [-1, 1]) darkGeos.push(box(0.6, 0.8, 0.6, p.x + s * (SETBACK + 0.5), top + 0.4, z));
       for (let z = p.z0 + 36; z < p.z1 + 10; z += 12) for (const s of [-1, 1]) darkGeos.push(box(0.8, 6, 0.8, p.x + s * SETBACK, minY - 3, z));
-    }
-    for (let x = bounds.minX; x <= bounds.maxX; x += 140) {
-      const y = minY;
-      if (map.piers.some((p) => Math.abs(p.x - x) < 32)) continue;
-      for (const dz of [4, 20]) for (const dx of [-9, 9]) paintedGeos.push(colorBox(1.6, 32, 1.6, x + dx, y + 16, edge + dz, '#c83a2a'));
-      paintedGeos.push(colorBox(22, 3, 3, x, y + 32, edge + 4, '#e0e0e8'), colorBox(22, 3, 3, x, y + 32, edge + 20, '#e0e0e8'));
-      paintedGeos.push(colorBox(3, 2.5, 60, x, y + 34, edge + 30, '#c83a2a'));
-      glowGeos.push(box(0.8, 0.8, 0.8, x, y + 36, edge + 58));
     }
   }
   if (f.includes('arches')) {
@@ -916,14 +1180,27 @@ export function buildDistrictView(map, tex) {
     [bounds.maxX + SETBACK + 3, bounds.maxX + SETBACK + 50, bounds.minZ - SETBACK, bounds.maxZ + SETBACK],
   ];
   const [hmin, hmax] = style.heights;
+  // Authored districts use a fixed run of widths and heights, with gaps where
+  // the roads out of the district pass through.
+  const RING_W = [30, 22, 40, 26, 34, 18, 28];
+  const RING_H = [0.2, 0.7, 0.4, 0.9, 0.1, 0.6, 0.3, 0.8, 0.5];
+  const exits = (map.stubs || []).map((st) => nodes[st.a].z);
+  let ringK = 0;
   for (const [x0, x1, z0, z1] of ring) {
     const alongX = x1 - x0 > z1 - z0;
     const len = alongX ? x1 - x0 : z1 - z0;
     for (let p = 0; p < len; ) {
-      const s = 18 + rng() * 26;
+      const s = map.authored ? RING_W[ringK % RING_W.length] : 18 + rng() * 26;
       const a = Math.min(len, p + s);
-      if (alongX) addBuilding(x0 + p, x0 + a, z0, z1, hmin + rng() * (hmax - hmin) * 1.2);
-      else addBuilding(x0, x1, z0 + p, z0 + a, hmin + rng() * (hmax - hmin) * 1.2);
+      const h = hmin + (map.authored ? RING_H[ringK % RING_H.length] : rng()) * (hmax - hmin) * 1.2;
+      ringK++;
+      const open = !alongX && exits.some((ez) => z0 + a > ez - SETBACK - 2 && z0 + p < ez + SETBACK + 2);
+      if (open) {
+        p = a + 2;
+        continue;
+      }
+      if (alongX) addBuilding(x0 + p, x0 + a, z0, z1, h);
+      else addBuilding(x0, x1, z0 + p, z0 + a, h);
       p = a + 2;
     }
   }
@@ -942,6 +1219,19 @@ export function buildDistrictView(map, tex) {
   add(mergedMesh(waterGeos, mats.water));
   add(mergedMesh(windowGeos, mats.windows));
   add(mergedMesh(beaconGeos, mats.beacon));
+  // Hidden until the race screen needs them.
+  const shutters = mergedMesh(shutterGeos, litMaterial({ map: tex.corrugated, color: '#8a8478' }));
+  if (shutters) {
+    shutters.name = 'shutters';
+    shutters.visible = false;
+    add(shutters);
+  }
+  const crossing = mergedMesh(crossingGeos, mats.beacon);
+  if (crossing) {
+    crossing.name = 'crossingLights';
+    crossing.visible = false;
+    add(crossing);
+  }
   add(mergedMesh(glowGeos, neon(0)));
   add(mergedMesh(signGeos, glowMaterial({ map: tex.signs.texture, intensity: 2.4, side: DS })));
   add(mergedMesh(lampGeos, mats.steel));
@@ -963,6 +1253,52 @@ export function buildDistrictView(map, tex) {
   return group;
 }
 
+// Whether (x, z) is open ground in a district: not inside anything in its
+// layout, not in the bay or the dry dock. Race dressing uses it to stand
+// things only where there's room.
+export function districtClear(map) {
+  const items = districtLayout(map).items.filter((it) => it.r);
+  const edge = map.bounds.maxZ + SETBACK + 30;
+  const water = map.style.features.includes('waterfront');
+  const b = map.basin;
+  return (x, z) => {
+    if (items.some(({ r }) => x > r[0] - 0.5 && x < r[1] + 0.5 && z > r[2] - 0.5 && z < r[3] + 0.5)) return false;
+    if (b && x > b.x0 - b.wall && x < b.x1 + b.wall && z > b.z0 - b.wall) return false;
+    if (water && z > edge - 1) return map.piers.some((p) => Math.abs(x - p.x) < SETBACK && z < p.z1 + 11);
+    return true;
+  };
+}
+
+// A ramp wedge in world space: rises `height` over `len` along (dirX, dirZ) from (x, z).
+export function rampGeometry({ x, z, dirX, dirZ, len, width, height, base = 0 }, y = 0) {
+  const g = new THREE.BufferGeometry();
+  const w = width / 2;
+  const P = [[-w, 0, 0], [w, 0, 0], [w, height, len], [-w, height, len], [-w, 0, len], [w, 0, len]];
+  const faces = [[0, 1, 2], [0, 2, 3], [1, 5, 2], [0, 3, 4], [3, 2, 5], [3, 5, 4]];
+  const pos = [];
+  const uvs = [];
+  for (const f of faces) {
+    for (const k of f) {
+      pos.push(...P[k]);
+      uvs.push(P[k][0] / 2, P[k][2] / 3);
+    }
+  }
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.computeVertexNormals();
+  g.rotateY(Math.atan2(dirX, dirZ));
+  g.translate(x, y + base, z);
+  return g;
+}
+
+// A rotated box: hw across, hd along the yaw direction, from y0 up h.
+const obbBox = (o, h, y0) => {
+  const g = new THREE.BoxGeometry(o.hw * 2, h, o.hd * 2);
+  g.rotateY(o.yaw);
+  g.translate(o.x, y0 + h / 2, o.z);
+  return g;
+};
+
 function cone(x, y, z) {
   const g = new THREE.ConeGeometry(0.35, 0.9, 6);
   g.translate(x, y + 0.45, z);
@@ -970,6 +1306,8 @@ function cone(x, y, z) {
 }
 
 function tint(g, color) {
+  // Non-indexed shapes (ramps, extrusions) get an index so they merge with boxes.
+  if (!g.index) g.setIndex([...Array(g.attributes.position.count).keys()]);
   const c = new THREE.Color(color);
   const colors = new Float32Array(g.attributes.position.count * 3);
   for (let k = 0; k < colors.length; k += 3) colors.set([c.r, c.g, c.b], k);

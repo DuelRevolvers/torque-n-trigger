@@ -19,8 +19,9 @@ import { PALETTE } from '../render/textures.js';
 import { buildTrackView } from '../render/trackView.js';
 import { buildCityView } from '../render/cityView.js';
 import { buildArenaView } from '../render/arenaView.js';
-import { buildDistrictView } from '../render/districtView.js';
+import { buildDistrictView, districtClear } from '../render/districtView.js';
 import { buildTrainView, updateTrainView } from '../render/trainView.js';
+import { trainAt } from '../sim/train.js';
 import { additiveMaterial } from '../render/retroMaterial.js';
 import { CarView } from '../render/carView.js';
 import { CameraRig } from '../render/cameraRig.js';
@@ -86,7 +87,8 @@ export class RaceScreen {
     const group = new THREE.Group();
     if (v.kind === 'arena') {
       track = buildArena(v.def);
-      if (!v.def.roam) {
+      // Free roam in an authored district still shows the arenas' structures.
+      if (!v.def.roam || v.def.authored) {
         const view = buildArenaView(track, tex, { outdoor: !!def.city, look: def.city?.look });
         animate = view.userData.animate;
         group.add(view);
@@ -95,7 +97,7 @@ export class RaceScreen {
       track = buildTrack(v.def);
       if (def.finishS) track.finishS = def.finishS;
       if (def.city) {
-        group.add(buildTrackView(track, tex, { city: true, sidewalk: def.city.rooftop ? tex.lot : tex.sidewalk, barrierColor: def.city.look.barrier, look: def.city.look }));
+        group.add(buildTrackView(track, tex, { city: true, sidewalk: def.city.rooftop ? tex.lot : tex.sidewalk, barrierColor: def.city.look.barrier, look: def.city.look, clear: def.city.authored ? districtClear(districtMap(def.city)) : null }));
       } else {
         group.add(buildTrackView(track, tex), buildCityView(track, tex));
       }
@@ -142,7 +144,14 @@ export class RaceScreen {
     this.venueEntry = venue;
     venue.group.visible = true;
     for (const env of this.envs.values()) env.visible = false;
-    if (this.def.city) this.env(this.def.city).visible = true;
+    this.envGroup = this.def.city ? this.env(this.def.city) : null;
+    if (this.envGroup) {
+      this.envGroup.visible = true;
+      // Warehouse Row's doorways are shuttered for the boss fight.
+      const shutters = this.envGroup.getObjectByName('shutters');
+      if (shutters) shutters.visible = !!venue.track.def?.shell;
+    }
+    this.crossingLights = this.envGroup?.getObjectByName('crossingLights') || null;
     this.track = venue.track;
     this.outdoor = venue.outdoor;
     // District look and event modifiers.
@@ -469,6 +478,12 @@ export class RaceScreen {
     this.time += dt;
     const { state } = this.world;
     if (this.venueEntry?.train) updateTrainView(this.venueEntry.train, this.track.train, state.tick - 1 + alpha);
+    if (this.crossingLights) {
+      // Level crossing lamps flash from a few seconds before a train until it's gone.
+      const line = this.track.train;
+      const coming = line && [0, 3, 6].some((s) => trainAt(line, state.tick + Math.round(s / SIM_DT)));
+      this.crossingLights.visible = !!coming && Math.floor(this.time * 2.5) % 2 === 0;
+    }
     const ev = state.event;
 
     // Events: effects, dents, respawns (a fresh car model), popups and shake.

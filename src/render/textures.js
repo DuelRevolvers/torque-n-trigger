@@ -49,6 +49,17 @@ export function canvasTexture(w, h, draw, { repeat = true, filter = THREE.Neares
   return tex;
 }
 
+// A pixel-font sign: text on a dark panel, drawn crisp.
+export function textTexture(text, color = '#ffb000', bg = '#140c08') {
+  const w = textWidth(text) + 6;
+  const h = GLYPH_H + 6;
+  return canvasTexture(w, h, (ctx) => {
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, w, h);
+    drawText(ctx, text, w / 2, 3, { color, align: 'center' });
+  }, { repeat: false });
+}
+
 export function speckle(ctx, w, h, rng, colors, density) {
   for (let i = 0; i < w * h * density; i++) {
     ctx.fillStyle = colors[Math.floor(rng() * colors.length)];

@@ -9,11 +9,12 @@
 
 import { makeRng } from '../parts/generate.js';
 import { SETBACK, quadRing, splitLot, nearPath, edgeSpans, TUNNEL_HALF } from './city.js';
+import { authoredLayout } from './authoredLayout.js';
 
 const cache = new WeakMap();
 
 export function districtLayout(map) {
-  if (!cache.has(map)) cache.set(map, buildLayout(map));
+  if (!cache.has(map)) cache.set(map, map.authored ? authoredLayout(map) : buildLayout(map));
   return cache.get(map);
 }
 

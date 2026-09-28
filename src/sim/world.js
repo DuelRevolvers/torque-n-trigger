@@ -5,7 +5,7 @@ import { SIM_DT } from '../config.js';
 import { createCarState, placeCar, stepCar, carUp, carSpeed } from './vehicle.js';
 import { yawFromDirection } from './math.js';
 import { hitByTrain } from './train.js';
-import { initCombat, initCombatWorld, updateMods, updateCombat, collideCars } from './combat.js';
+import { initCombat, initCombatWorld, updateMods, updateCombat, collideCars, ringOut } from './combat.js';
 import { neutralInput } from './input.js';
 import { initEventCar, eventInput, updateEvent } from './event.js';
 
@@ -88,7 +88,13 @@ function updateRecovery(world, car, params, input) {
   if (carUp(car).y < 0.3 && carSpeed(car) < 4) car.stuckTime += SIM_DT;
   else car.stuckTime = 0;
 
-  const lost = car.pos.y < track.minY - 30 || Math.abs(car.lateral) > track.wallDist + 10;
+  // Into a pit: a ring-out in an arena (a takedown), a respawn in free roam.
+  const pit = track.fellIn?.(car.pos);
+  if (pit === 'ringOut') {
+    ringOut(world, car.id, 1 / SIM_DT);
+    return;
+  }
+  const lost = pit === 'respawn' || car.pos.y < track.minY - 30 || Math.abs(car.lateral) > track.wallDist + 10;
   const resetPressed = input.reset && !car.prevReset;
   car.prevReset = input.reset;
   if (resetPressed || car.stuckTime > 2 || lost) respawnCar(world, car.id);

@@ -53,13 +53,13 @@ A district doc covers:
 
 ## Status
 
-The table is in campaign order. **All six docs are agreed.** The next step is
-building, in campaign order, starting with the Neon Strip, which introduces the
-`city.plan` format the others use.
+The table is in campaign order. **All six docs are agreed.** They're being built
+in campaign order. Rustline Docks is done. Next is the Neon Strip, which
+introduces the `city.plan` format the others use.
 
 | # | District | Theme | Status |
 |---|----------|-------|--------|
-| 1 | [Rustline Docks](01-rustline-docks.md) | Working port, grid | Agreed. Its layout and routes are built, but not all of it matches the doc (see its "Built vs this doc" list). |
+| 1 | [Rustline Docks](01-rustline-docks.md) | Working port, grid | Agreed and built: rebuilt from the ground up, everything authored to the doc (see its "Build spec"). |
 | 2 | [Neon Strip](02-neon-strip.md) | Casinos and clubs: a main strip with diagonals and curves, a central car park | Agreed, ready to build |
 | 3 | [Maple Hollow](03-maple-hollow.md) | Suburbs: curving loops and cul-de-sacs (new district, not in the game yet) | Agreed, ready to build |
 | 4 | [Chrome Heights](04-chrome-heights.md) | Skyscraper rooftops: roof decks in three tiers, skybridges, ramp bridges and gap jumps over the street canyons | Agreed, ready to build |
@@ -100,10 +100,10 @@ In `src/career/districts.js`, each district has:
   box, clipped to the outline);
 - `label`: where its name plate goes.
 
-Only Rustline is built to a doc so far, and only partly: its arenas, a few
-shortcuts and some set pieces are still generic. The other four playable districts still use
-the old generator, which makes a grid with randomly placed sites, and Maple Hollow
-isn't in the game yet. That's what the docs replace.
+Only Rustline is built to its doc so far, and it's fully authored: streets,
+lots, arenas, shortcuts, set pieces and race dressing. The other four playable
+districts still use the old generator, which makes a grid with randomly placed
+sites, and Maple Hollow isn't in the game yet. That's what the docs replace.
 
 ## Owner decisions that apply everywhere
 
@@ -134,21 +134,31 @@ isn't in the game yet. That's what the docs replace.
 
 - **The district definition:** in `src/career/districts.js`, each district has a
   `city` style and its `events`.
-- **Authored districts** (Rustline so far) add `city.grid`:
+- **Authored districts** (Rustline so far) live in `src/districts/` and set
+  `authored: true`. Nothing in them is generated.
+  - `src/sim/authoredMap.js` builds the map from the data.
+  - `src/sim/authoredLayout.js` fills the lots by fixed rules.
+  - Rustline's data is `city.grid` plus its arenas:
 
   ```js
   grid: {
     xs: [...], zs: [...],           // street centrelines, metres (x east, z south, origin mid-district)
     avenue: 2,                      // index into zs of the main avenue
     cols: { WG: 0, ... }, rows: { gate: 0, ... },  // names for route paths
-    closed: [[i, j, 'h' | 'v']],    // street links that don't exist
-    piers: [colIndex, ...],         // piers off the south row
+    streets: [{ name, row | col, from, to }],       // every street run (nothing else is a street)
+    stubs: [{ from: 'WG.gate', to: [x, z] }],       // roads out of the district
+    piers: [colIndex, ...], pierLength,             // piers off the south row
     freight: { x, from },           // freight line (train, level crossings)
     shop: [i, j],                   // parts shop block (map pin)
-    lots: [{ at: [i, j], kind, axis? }],   // what each special block is
+    lots: [{ at: [i, j], kind, alley? }],           // what each block is
+    corridors: [{ id, points, halfWidth, wallDist }], // named ways through lots (shortcuts, the haul road)
+    tunnels, wagons, goodsShed, basin,              // set pieces, placed exactly
   },
-  sites: [{ kind, name, at: [i0, j0, w, h], path?: { axis, at } }],  // multi-block landmarks; arenas first
+  sites: [{ kind, name, at: [i0, j0, w, h] }],      // multi-block landmarks; arenas first
+  arenas: { 'Dry Dock Yard': { bounds, obstacles, platforms, ramps, lifts, movers, holes, spawns, pickups } },
   ```
+
+  Event routes name their shortcuts, for example `shortcuts: ['fence-gap']`.
 
 - **Event routes** are named junction paths, for example
   `route: { kind: 'sprint', path: ['TR.pier', 'TR.quay', ..., 'terminal', 'EG.dock'] }`:
@@ -164,13 +174,17 @@ isn't in the game yet. That's what the docs replace.
   - `cityVenue` and `authoredRoute` build the event tracks.
   - Along the way they add shortcuts, side-street closures (containers stacked
     across them) and narrow sections (the container tunnels).
-  - Today the shortcuts are picked automatically, and arenas are built by a
-    random generator (`cityArena`). Both are to be replaced by the authored
-    shortcuts and arena structures in each doc.
-- **Everything solid:** `src/sim/cityLayout.js` places buildings and props once.
+  - For authored districts, `authoredShortcuts`, `authoredArena` and
+    `authoredRoam` use the district's data. Generated districts still pick
+    shortcuts automatically and build arenas at random (`cityArena`) until
+    their docs are built.
+- **Everything solid:** `src/sim/cityLayout.js` places buildings and props once
+  (`authoredLayout` for authored districts).
   - The renderer (`src/render/districtView.js`) draws exactly those.
-  - Free roam (`cityRoam` in `city.js`) collides with exactly those.
-  - Keep that rule. Anything solid goes in the layout.
+  - Free roam (`cityRoam` or `authoredRoam` in `city.js`) collides with exactly
+    those, plus the arenas' structures.
+  - Arena structures and moving cranes are drawn by `src/render/arenaView.js`.
+  - Keep that rule. Anything solid goes in the layout or the arena data.
 - **The track** (`src/sim/track.js`) supports:
   - jumps;
   - `gaps` (drops between rooftops);

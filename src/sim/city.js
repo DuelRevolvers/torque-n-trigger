@@ -14,6 +14,7 @@ import { buildTrack } from './track.js';
 import { valid, placeJumps } from './trackgen.js';
 import { yawFromDirection } from './math.js';
 import { districtLayout } from './cityLayout.js';
+import { authoredGridMap } from './authoredMap.js';
 
 export const STREET = { halfWidth: 8, curbWidth: 1.2, shoulderWidth: 4 };
 export const SETBACK = STREET.halfWidth + STREET.curbWidth + STREET.shoulderWidth; // centreline to lot edge
@@ -33,6 +34,8 @@ export function districtMap(style) {
 }
 
 function generateMap(style) {
+  // Authored districts (docs/districts) are built from their data, not generated.
+  if (style.authored) return authoredGridMap(style);
   const rng = makeRng(style.seed);
   const span = ([a, b]) => a + rng() * (b - a);
   const { cols, rows } = style;
@@ -994,14 +997,138 @@ function cityRoam(map) {
   };
 }
 
+// Legs under a raised deck (a gantry deck or a catwalk), every 25 m along both long edges.
+function deckLegs(p) {
+  const out = [];
+  const long = p.hw >= p.hd;
+  const L = long ? p.hw : p.hd;
+  const side = (long ? p.hd : p.hw) - 0.6;
+  for (let t = -L + 2; t <= L - 2; t += 25) {
+    for (const s of [-1, 1]) {
+      const [x, z] = long ? [p.x + t, p.z + s * side] : [p.x + s * side, p.z + t];
+      out.push({ x, z, hw: 0.4, hd: 0.4, h: p.h - (p.thick || 0.8), kind: 'leg', render: true });
+    }
+  }
+  return out;
+}
+
+// A solid layout item as an arena obstacle, relative to (cx, cz).
+function layoutObstacle(it, cx, cz) {
+  const [x0, x1, z0, z1] = it.r;
+  const base = it.y ?? -2;
+  const top = (it.y ?? 0) + it.h;
+  if (it.obb) return { x: it.obb.x - cx, z: it.obb.z - cz, hw: it.obb.hw, hd: it.obb.hd, yaw: it.obb.yaw, y: base, h: top - base };
+  return { x: (x0 + x1) / 2 - cx, z: (z0 + z1) / 2 - cz, hw: (x1 - x0) / 2, hd: (z1 - z0) / 2, y: base, h: top - base };
+}
+
+// An authored arena (district file): its own structures, plus everything
+// solid the district has inside its bounds (lamp posts, fences, masts), so
+// what you see is what you hit.
+function authoredArena(map, site, spec) {
+  const [x0, x1, z0, z1] = spec.bounds;
+  const cx = (x0 + x1) / 2;
+  const cz = (z0 + z1) / 2;
+  const L = ({ x, z, ...rest }) => ({ ...rest, x: x - cx, z: z - cz });
+  const platforms = (spec.platforms || []).map((p) => ({ ...L(p), render: true }));
+  const obstacles = [
+    ...(spec.obstacles || []).map((o) => ({ ...L(o), render: true })),
+    ...platforms.filter((p) => p.under).flatMap(deckLegs),
+  ];
+  for (const it of districtLayout(map).items) {
+    if (!it.solid || !it.r) continue;
+    const [a0, a1, b0, b1] = it.r;
+    if (a1 < x0 || a0 > x1 || b1 < z0 || b0 > z1) continue;
+    obstacles.push(layoutObstacle(it, cx, cz));
+  }
+  const holes = (spec.holes || []).map((h) => ({ ...h, r: [h.r[0] - cx, h.r[1] - cx, h.r[2] - cz, h.r[3] - cz] }));
+  const spawnPoints = spec.spawns.map((p) => ({ x: p.x - cx, z: p.z - cz, yaw: yawFromDirection(cx - p.x, cz - p.z) }));
+  const deckTop = (p) => platforms.find((q) => Math.abs(p.x - q.x) <= q.hw && Math.abs(p.z - q.z) <= q.hd)?.h || 0;
+  const pickups = (spec.pickups || []).map((p) => {
+    const q = L(p);
+    return { type: p.type, x: q.x, z: q.z, y: (p.deck ? deckTop(q) : 0) + 0.8 };
+  });
+  return {
+    name: site.name, authored: true, sizeX: x1 - x0, sizeZ: z1 - z0, cx, cz, y: 0, minY: -20,
+    spawns: spawnPoints.length, spawnRadius: 0, spawnPoints, pickups,
+    obstacles, platforms, ramps: (spec.ramps || []).map((r) => ({ ...L(r), render: true })),
+    lifts: (spec.lifts || []).map(L), movers: (spec.movers || []).map(L), sweepers: [], hazards: [], holes,
+    fence: spec.fence || null, shell: !!spec.shell,
+    barriers: (spec.barriers || []).map(([ax, az, bx, bz]) => [ax - cx, az - cz, bx - cx, bz - cz]),
+  };
+}
+
+// Free roam in an authored district: exactly what the layout holds (buildings,
+// fences, loading docks and their ramps, the goods platform), the arenas'
+// structures (they're there all the time), the dry dock basin and the bay.
+function authoredRoam(map) {
+  const { bounds, heightAt, style } = map;
+  const pad = SETBACK + 3;
+  const edge = bounds.maxZ + SETBACK + 30;
+  const b = map.basin;
+  const end = Math.max(edge + 40, ...map.piers.map((p) => p.z1 + 40), b ? b.z1 + 20 : 0);
+  const minX = bounds.minX - pad;
+  const maxX = bounds.maxX + pad;
+  const minZ = bounds.minZ - pad;
+  const cx = (minX + maxX) / 2;
+  const cz = (minZ + end) / 2;
+  const local = (r) => [r[0] - cx, r[1] - cx, r[2] - cz, r[3] - cz];
+  const obstacles = [];
+  const platforms = [];
+  const ramps = [];
+  for (const it of districtLayout(map).items) {
+    if (it.deck) {
+      if (it.obb) platforms.push({ x: it.obb.x - cx, z: it.obb.z - cz, hw: it.obb.hw, hd: it.obb.hd, yaw: it.obb.yaw, h: it.h });
+      else platforms.push({ x: (it.r[0] + it.r[1]) / 2 - cx, z: (it.r[2] + it.r[3]) / 2 - cz, hw: (it.r[1] - it.r[0]) / 2, hd: (it.r[3] - it.r[2]) / 2, h: it.h });
+    } else if (it.ramp) {
+      ramps.push({ ...it.ramp, x: it.ramp.x - cx, z: it.ramp.z - cz });
+    } else if (it.solid && it.r) {
+      obstacles.push(layoutObstacle(it, cx, cz));
+    }
+  }
+  // The arenas' structures stand in free roam too.
+  const lifts = [];
+  const movers = [];
+  for (const spec of Object.values(style.arenas || {})) {
+    const L = ({ x, z, ...rest }) => ({ ...rest, x: x - cx, z: z - cz });
+    const decks = (spec.platforms || []).map((p) => ({ ...L(p), render: true }));
+    platforms.push(...decks);
+    obstacles.push(...(spec.obstacles || []).map((o) => ({ ...L(o), render: true })), ...decks.filter((p) => p.under).flatMap(deckLegs));
+    ramps.push(...(spec.ramps || []).map((r) => ({ ...L(r), render: true })));
+    lifts.push(...(spec.lifts || []).map(L));
+    movers.push(...(spec.movers || []).map(L));
+  }
+  // The basin (fall in and you respawn), then the bay round the piers and the dock.
+  const holes = [];
+  if (b) holes.push({ r: local([b.x0, b.x1, b.z0, b.z1]), drop: b.depth, respawn: true });
+  const water = (x0, x1, z0) => x1 > x0 && holes.push({ r: local([x0, x1, z0, end + 10]), drop: 60 });
+  const cuts = [...map.piers.map((p) => [p.x - SETBACK - 1, p.x + SETBACK + 1, p.z1 + 12]), ...(b ? [[b.x0 - b.wall, b.x1 + b.wall, b.z1 + b.wall]] : [])].sort((p, q) => p[0] - q[0]);
+  let x = minX - 20;
+  for (const [c0, c1, reach] of cuts) {
+    water(x, c0, edge);
+    holes.push({ r: local([c0, c1, reach, end + 10]), drop: 60 });
+    x = c1;
+  }
+  water(x, maxX + 20, edge);
+  const start = map.nodes[map.nid(Math.floor(style.cols / 2) - 1, map.avenue)];
+  return {
+    name: style.name + ' Free Roam', roam: true, authored: true, cx, cz, y: 0,
+    sizeX: maxX - minX, sizeZ: end - minZ, heightAt, minY: -20,
+    roadPoints: map.nodes.filter((n) => map.adj[n.id].length && !n.stub).map((n) => [n.x, n.z]),
+    spawns: 1, spawnRadius: 0, spawnAt: { x: start.x, z: start.z, yaw: yawFromDirection(1, 0) },
+    obstacles, holes, ramps, hazards: [], platforms, lifts, movers, sweepers: [],
+    train: map.freight ? freightLine(map) : undefined,
+  };
+}
+
 // An authored event route: named junctions ('TR.quay' = Tar St at Quay Road,
 // 'TR.pier' = the pier off Tar St) or a site kind ('terminal' = the way through
 // the container terminal), filled in along the streets between them.
 function pathNodes(map, names) {
   const g = map.style.grid;
   const resolve = (name, prev) => {
-    if (!name.includes('.')) {
-      const pts = map.corridors.find((c) => c.cell.kind === name).points.map(([x, z]) => ({ x, z }));
+    const named = map.corridors.find((c) => c.id === name);
+    if (named || !name.includes('.')) {
+      const pts = (named || map.corridors.find((c) => c.cell.kind === name)).points.map(([x, z]) => ({ x, z, corridor: name }));
       const [a, b] = [pts[0], pts[pts.length - 1]];
       // Enter from the end on the same street as the previous junction.
       const onLine = (q) => prev && (Math.abs(q.x - prev.x) < 1 || Math.abs(q.z - prev.z) < 1);
@@ -1025,7 +1152,107 @@ function pathNodes(map, names) {
     const seq = resolve(name, out[out.length - 1]);
     const p = out[out.length - 1];
     if (p) out.push(...along(p, seq[0]));
+    // One way through straight into the next (alley to alley across a street) shares a point.
+    if (p && Math.hypot(seq[0].x - p.x, seq[0].z - p.z) < 0.5) seq.shift();
     out.push(...seq);
+  }
+  return out;
+}
+
+// Authored shortcuts: named ways through (district file) that leave the route
+// and rejoin it further on. Their ends sit on the route's centreline.
+function authoredShortcuts(map, track, ids) {
+  const out = [];
+  for (const id of ids) {
+    const c = map.corridors.find((q) => q.id === id);
+    if (!c) throw new Error(`${map.style.id}: no way through called ${id}`);
+    let pts = c.points.map(([x, z], k) => [x, c.heights ? c.heights[k] : 0, z]);
+    const qa = track.queryMain(pts[0][0], pts[0][2]);
+    const qb = track.queryMain(pts[pts.length - 1][0], pts[pts.length - 1][2]);
+    let [s0, s1] = [qa.s, qb.s];
+    if (s1 < s0) {
+      pts = pts.reverse();
+      [s0, s1] = [s1, s0];
+    }
+    const halfWidth = c.halfWidth ?? 6;
+    const curbWidth = 0.8;
+    const wall = c.wallDist ?? halfWidth + 2.8;
+    const flat = !c.heights;
+    out.push({
+      s0, s1, kind: c.kind, halfWidth, curbWidth, shoulderWidth: Math.max(0.1, wall - halfWidth - curbWidth),
+      points: flat ? roundedPoints(pts.map(([x, , z]) => ({ x, z })), false, BRANCH_R, () => 0) : pts,
+      jumps: [],
+    });
+  }
+  return out;
+}
+
+// A bump where the route crosses the freight line's rails.
+function crossingBumps(map, track) {
+  const f = map.freight;
+  if (!f) return [];
+  const out = [];
+  const n = track.count;
+  for (let i = 0; i < (track.closed ? n : n - 1); i++) {
+    const j = (i + 1) % n;
+    const a = track.x[i] - f.x;
+    const b = track.x[j] - f.x;
+    if (a * b > 0 || a === b || track.z[i] < f.z0 || track.z[i] > f.z1) continue;
+    const s = track.s[i] + (track.step * a) / (a - b);
+    out.push({ s: s - 0.6, len: 1.2, height: 0.15, bump: true });
+  }
+  return out;
+}
+
+// Where a route enters or leaves a way through at a street, the street's other
+// directions are side streets: closed off like any other.
+function corridorClosures(map, list) {
+  const out = [];
+  list.forEach((p, k) => {
+    if (!p.corridor) return;
+    const nb = [list[k - 1], list[k + 1]].filter(Boolean);
+    const onStreet = [...map.edges.values()].find((e) => {
+      const A = map.nodes[e.a];
+      const B = map.nodes[e.b];
+      const L = Math.hypot(B.x - A.x, B.z - A.z);
+      const t = ((p.x - A.x) * (B.x - A.x) + (p.z - A.z) * (B.z - A.z)) / (L * L);
+      const cx = A.x + (B.x - A.x) * t;
+      const cz = A.z + (B.z - A.z) * t;
+      return t > 0.02 && t < 0.98 && Math.hypot(p.x - cx, p.z - cz) < 1;
+    });
+    if (!onStreet) return;
+    const A = map.nodes[onStreet.a];
+    const B = map.nodes[onStreet.b];
+    const L = Math.hypot(B.x - A.x, B.z - A.z);
+    for (const s of [1, -1]) {
+      const dx = (s * (B.x - A.x)) / L;
+      const dz = (s * (B.z - A.z)) / L;
+      const used = nb.some((q) => {
+        const ex = q.x - p.x;
+        const ez = q.z - p.z;
+        return ex * dx + ez * dz > 1 && Math.abs(ex * dz - ez * dx) < 1;
+      });
+      if (used) continue;
+      const x = p.x + dx * (SETBACK + 2.5);
+      const z = p.z + dz * (SETBACK + 2.5);
+      out.push({ x, z, y: 0, yaw: Math.atan2(dx, dz) });
+    }
+  });
+  return out;
+}
+
+// The service alleys a route runs down: the walls close in to the warehouses.
+function alleyNarrows(map, track, list) {
+  const out = [];
+  const seen = new Set();
+  for (const p of list) {
+    if (!p.corridor?.startsWith('alley.') || seen.has(p.corridor)) continue;
+    seen.add(p.corridor);
+    const c = map.corridors.find((q) => q.id === p.corridor);
+    const [[ax, az], [bx]] = c.points;
+    const qa = track.queryMain(Math.min(ax, bx) + SETBACK, az);
+    const qb = track.queryMain(Math.max(ax, bx) - SETBACK, az);
+    out.push({ s0: Math.min(qa.s, qb.s), s1: Math.max(qa.s, qb.s), wall: map.alleyHalf, ramp: 5 });
   }
   return out;
 }
@@ -1088,14 +1315,25 @@ function authoredRoute(map, style, route) {
     const [a, b] = list;
     list = [{ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }, ...list.slice(1), a];
   }
-  const rng = makeRng(style.seed * 131 + route.path.length * 7919);
-  const def = { name: `${style.name} ${route.kind}`, closed: circuit, ...STREET, points: roundedPoints(list, circuit, CORNER_R, map.heightAt) };
+  const ground = map.authored ? () => 0 : map.heightAt;
+  const def = { name: `${style.name} ${route.kind}`, closed: circuit, ...STREET, points: roundedPoints(list, circuit, CORNER_R, ground) };
   const track = buildTrack(def);
   def.gaps = map.gaps.length ? routeGaps(map, track) || [] : [];
-  def.branches = cityShortcuts(map, track, list, circuit, rng, circuit ? 2 : 3);
-  def.jumps = placeJumps(track, rng, route.jumps ?? 0, def.branches.map((b) => [b.s0, b.s1]));
-  def.closures = sideClosures(map, list, circuit, def.branches);
-  def.narrows = routeNarrows(map, track);
+  if (map.authored) {
+    // Everything on an authored route comes from the district file: its
+    // shortcuts, any jumps, and the bumps where it crosses the freight line.
+    def.authored = true;
+    def.branches = authoredShortcuts(map, track, route.shortcuts || []);
+    def.jumps = [...(route.jumps || []), ...crossingBumps(map, track)];
+    def.closures = [...sideClosures(map, list, circuit, def.branches), ...corridorClosures(map, list)];
+    def.narrows = [...routeNarrows(map, track), ...alleyNarrows(map, track, list)];
+  } else {
+    const rng = makeRng(style.seed * 131 + route.path.length * 7919);
+    def.branches = cityShortcuts(map, track, list, circuit, rng, circuit ? 2 : 3);
+    def.jumps = placeJumps(track, rng, route.jumps ?? 0, def.branches.map((b) => [b.s0, b.s1]));
+    def.closures = sideClosures(map, list, circuit, def.branches);
+    def.narrows = routeNarrows(map, track);
+  }
   if (map.freight) def.train = freightLine(map);
   return def;
 }
@@ -1105,9 +1343,11 @@ function authoredRoute(map, style, route) {
 //   around? (circuit: site kind), from?/to? (sprint: site kind or 'pier'), site? (arena: event ground index) }
 export function cityVenue(style, route) {
   const map = districtMap(style);
-  if (route.kind === 'roam') return { kind: 'arena', def: cityRoam(map) };
+  if (route.kind === 'roam') return { kind: 'arena', def: map.authored ? authoredRoam(map) : cityRoam(map) };
   if (route.kind === 'arena') {
     const site = route.site || 0;
+    const spec = style.arenas?.[map.arenas[site]?.name];
+    if (spec) return { kind: 'arena', def: authoredArena(map, map.arenas[site], spec) };
     return { kind: 'arena', def: cityArena(map, makeRng(style.seed * 17 + 3 + site * 101), map.arenas[site] || map.arena) };
   }
   const name = `${style.name} ${route.kind}`;

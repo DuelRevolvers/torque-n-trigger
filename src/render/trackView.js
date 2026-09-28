@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
-import { PALETTE, makeRng } from './textures.js';
+import { PALETTE, makeRng, textTexture } from './textures.js';
 
 const BARRIER_HEIGHT = 1.1;
 const LAMP_SPACING = 36;
@@ -57,15 +57,19 @@ export function buildTrackView(track, tex, opts = {}) {
     const colors = ['#b83a2a', '#2a6ab8', '#d8a020', '#3a8a4a', '#8a3ab0', '#c8c8c8', '#d86a1a'];
     const rng = makeRng(track.count * 7 + 3);
     const stacks = [];
-    for (const c of track.closures || []) {
-      const layers = 1 + (rng() < 0.5 ? 1 : 0);
+    const tops = []; // closure stack tops, for the start crowd
+    // (Authored districts: a fixed pattern of heights and colours, nothing random.)
+    let n = 0;
+    for (const [k, c] of (track.closures || []).entries()) {
+      const layers = track.authored ? 1 + (k % 3 === 1 ? 1 : 0) : 1 + (rng() < 0.5 ? 1 : 0);
+      tops.push({ c, y: c.y - 0.05 + layers * 2.6 });
       for (let l = 0; l < layers; l++) {
         for (const side of [-1, 1]) {
           const g = new THREE.BoxGeometry(12.2, 2.6, 2.44);
           g.translate(side * 6.3, 1.3 + l * 2.6, 0);
           g.rotateY(c.yaw);
           g.translate(c.x, c.y - 0.05, c.z);
-          const col = new THREE.Color(colors[Math.floor(rng() * colors.length)]);
+          const col = new THREE.Color(colors[track.authored ? n++ % colors.length : Math.floor(rng() * colors.length)]);
           const cols = new Float32Array(g.attributes.position.count * 3);
           for (let k = 0; k < cols.length; k += 3) cols.set([col.r, col.g, col.b], k);
           g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
@@ -78,11 +82,14 @@ export function buildTrackView(track, tex, opts = {}) {
     const masts = [];
     const heads = [];
     for (const side of [-1, 1]) {
-      const [x, y, z] = at(track.wrap(i0 + 6), side * (track.wallDist + 3));
+      // Just behind the barrier where there's no open ground further back (a pier, a building).
+      const far = at(track.wrap(i0 + 6), side * (track.wallDist + 3));
+      const [x, y, z] = !opts.clear || opts.clear(far[0], far[2]) ? far : at(track.wrap(i0 + 6), side * (track.wallDist + 0.6));
       masts.push(new THREE.BoxGeometry(0.6, 16, 0.6).translate(x, y + 8, z));
       heads.push(new THREE.BoxGeometry(3.4, 1.4, 1.4).translate(x, y + 16.4, z));
     }
     group.add(new THREE.Mesh(mergeGeometries(masts), litMaterial({ color: '#4a4858' })), new THREE.Mesh(mergeGeometries(heads), glowMaterial({ color: '#fff4d0', intensity: 3 })));
+    if (opts.look?.startDressing === 'docks') group.add(docksDressing(track, tex, at, opts.clear || (() => true), tops));
   }
   group.add(buildStartLine(track, tex, at, track.closed ? 0 : track.indexAtDistance(track.finishS ?? track.length - 25)));
   if (!opts.city) group.add(buildLamps(track, tex, at));
@@ -90,6 +97,86 @@ export function buildTrackView(track, tex, opts = {}) {
     group.add(buildPuddles(track, tex, 0));
     for (const br of branches) if (br.kind === 'street' || br.kind === 'alley' || br.kind === 'parking') group.add(buildPuddles(br.track, tex, 0.03));
   }
+  return group;
+}
+
+// Rustline's start: a banner slung from a portal crane over the road just past
+// the line, and Dock Rats standing on container tops: on the closed side
+// streets' stacks nearest the start, and on containers behind the barriers
+// where there's open ground for them (clear(x, z)). None of it is in a car's way.
+function docksDressing(track, tex, at, clear, tops) {
+  const group = new THREE.Group();
+  const W = track.wallDist;
+  const yellow = [];
+  const painted = [];
+  const tinted = (g, color) => {
+    const c = new THREE.Color(color);
+    const cols = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < cols.length; k += 3) cols.set([c.r, c.g, c.b], k);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return g;
+  };
+  const i = track.indexAtDistance(24);
+  const pl = at(i, -(W + 0.6));
+  const pr = at(i, W + 0.6);
+  const ux = (pr[0] - pl[0]) / Math.hypot(pr[0] - pl[0], pr[2] - pl[2]);
+  const uz = (pr[2] - pl[2]) / Math.hypot(pr[0] - pl[0], pr[2] - pl[2]);
+  const span = Math.hypot(pr[0] - pl[0], pr[2] - pl[2]);
+  const y = Math.max(pl[1], pr[1]);
+  for (const [x, , z] of [pl, pr]) yellow.push(new THREE.BoxGeometry(0.8, 14, 0.8).rotateY(Math.atan2(ux, uz)).translate(x, y + 7, z));
+  yellow.push(new THREE.BoxGeometry(1.2, 1.4, span + 1).rotateY(Math.atan2(ux, uz)).translate((pl[0] + pr[0]) / 2, y + 14.3, (pl[2] + pr[2]) / 2));
+  for (const s of [-1, 1]) painted.push(tinted(new THREE.BoxGeometry(0.08, 2.4, 0.08).translate((pl[0] + pr[0]) / 2 + ux * s * (span / 2 - 4), y + 12.4, (pl[2] + pr[2]) / 2 + uz * s * (span / 2 - 4)), '#2a2a30'));
+  const banner = textTexture('RUSTLINE DOCKS', '#ffb000', '#3a1a10');
+  const bw = span - 6;
+  const bh = Math.min(3, (bw * banner.image.height) / banner.image.width);
+  const bannerMesh = new THREE.Mesh(new THREE.PlaneGeometry(bw, bh).rotateY(Math.atan2(-uz, ux)).translate((pl[0] + pr[0]) / 2, y + 11.2 - bh / 2 + 1.5, (pl[2] + pr[2]) / 2), glowMaterial({ map: banner, intensity: 1.6, side: THREE.DoubleSide }));
+  group.add(bannerMesh);
+
+  // Dock Rats on container tops: the first two clear spots near the start.
+  const CREW = ['#ff7a1a', '#e0b020', '#d8d0c0', '#c83a2a'];
+  const CONTAINERS = ['#b83a2a', '#2a6ab8', '#3a8a4a'];
+  const spots = [];
+  for (let s = 0; s <= 80 && spots.length < 2; s += 6) {
+    for (const side of [-1, 1]) {
+      if (spots.length >= 2 || spots.some((q) => q.side === side && Math.abs(q.s - s) < 16)) continue;
+      const pts = [];
+      for (const ds of [-6.3, 0, 6.3]) for (const lat of [W + 0.3, W + 2.8]) pts.push(at(track.indexAtDistance(Math.max(0, s + ds)), side * lat));
+      if (pts.every(([x, , z]) => clear(x, z))) spots.push({ s, side });
+    }
+  }
+  // A figure standing at (px, top, pz), facing yaw.
+  const figure = (px, top, pz, yaw, color) => {
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    painted.push(
+      tinted(new THREE.BoxGeometry(0.42, 0.85, 0.25).rotateY(yaw).translate(px, top + 0.43, pz), '#2a2a34'),
+      tinted(new THREE.BoxGeometry(0.5, 0.7, 0.3).rotateY(yaw).translate(px, top + 1.2, pz), color),
+      tinted(new THREE.BoxGeometry(0.28, 0.3, 0.28).rotateY(yaw).translate(px, top + 1.72, pz), '#c89a78'),
+      tinted(new THREE.BoxGeometry(0.14, 0.62, 0.14).translate(px + fz * 0.3, top + 1.85, pz - fx * 0.3), color),
+    );
+  };
+  // On the nearest closures (within 250 m of the start line).
+  const [sx, , sz] = at(0, 0);
+  const near = (tops || []).map((t) => ({ ...t, d: Math.hypot(t.c.x - sx, t.c.z - sz) })).filter((t) => t.d < 250).sort((p, q) => p.d - q.d).slice(0, 2);
+  near.forEach(({ c, y: top }, k) => {
+    [-9, -4, 3.5, 8].forEach((lx, q) => {
+      const px = c.x + lx * Math.cos(c.yaw);
+      const pz = c.z - lx * Math.sin(c.yaw);
+      figure(px, top, pz, c.yaw + Math.PI / 2, CREW[(k * 4 + q) % CREW.length]);
+    });
+  });
+  spots.forEach(({ s, side }, k) => {
+    const a = at(track.indexAtDistance(Math.max(0, s - 1)), side * (W + 1.55));
+    const b = at(track.indexAtDistance(s + 1), side * (W + 1.55));
+    const yaw = Math.atan2(b[0] - a[0], b[2] - a[2]);
+    const [x, cy, z] = at(track.indexAtDistance(s), side * (W + 1.55));
+    painted.push(tinted(new THREE.BoxGeometry(2.44, 2.6, 12.2).rotateY(yaw).translate(x, cy + 1.3, z), CONTAINERS[k % CONTAINERS.length]));
+    [-3.5, -0.5, 2.5].forEach((along, q) => {
+      figure(x + Math.sin(yaw) * along, cy + 2.6, z + Math.cos(yaw) * along, yaw + (side * Math.PI) / 2, CREW[(k * 3 + q + 2) % CREW.length]);
+    });
+  });
+  group.add(new THREE.Mesh(mergeGeometries(yellow), litMaterial({ color: '#e0b020' })));
+  group.add(new THREE.Mesh(mergeGeometries(painted), litMaterial({ map: tex.container, vertexColors: true })));
   return group;
 }
 
@@ -136,7 +223,7 @@ function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roa
   }
 
   // Yellow chevrons on each kicker so jumps read from a distance.
-  for (const j of [...(track.jumps || []), ...gaps.flatMap((g) => [{ s: g.s0 - g.len, len: g.len }, { s: g.s1, len: g.len }])]) {
+  for (const j of [...(track.jumps || []).filter((jj) => !jj.bump), ...gaps.flatMap((g) => [{ s: g.s0 - g.len, len: g.len }, { s: g.s1, len: g.len }])]) {
     const i0 = track.indexAtDistance(j.s);
     const i1 = track.indexAtDistance(j.s + j.len);
     const skip = (i) => (i0 <= i1 ? i < i0 || i > i1 : i < i0 && i > i1);

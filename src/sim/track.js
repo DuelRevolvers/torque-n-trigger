@@ -19,7 +19,7 @@ export function buildTrack(def) {
   const dense = densify(points, closed, 24);
   const pts = resample(dense, closed, spacing);
   // Jump kickers: the road rises over len metres, then drops away.
-  const jumps = (def.jumps || []).map((j) => ({ s: j.frac !== undefined ? j.frac * pts.length : j.s, len: j.len, height: j.height }));
+  const jumps = (def.jumps || []).map((j) => ({ s: j.frac !== undefined ? j.frac * pts.length : j.s, len: j.len, height: j.height, bump: !!j.bump }));
   for (const j of jumps) {
     pts.points.forEach((pt, i) => {
       const s = i * pts.step;
@@ -41,11 +41,12 @@ export function buildTrack(def) {
   track.gaps = gaps.length ? gaps : null;
   track.train = def.train || null; // the freight line, if the district has one
   track.closures = def.closures || [];
-  track.narrows = def.narrows?.length ? def.narrows : null; // container tunnels
+  track.narrows = def.narrows?.length ? def.narrows : null; // container tunnels, alleys
+  track.authored = !!def.authored;
   // Shortcut branches: narrow roads that leave the main line at s0 and rejoin at s1.
   if (def.branches?.length) {
     track.branches = def.branches.map((b) => ({
-      track: buildTrack({ ...b, closed: false, halfWidth: b.halfWidth ?? 6, curbWidth: 0.8, shoulderWidth: 2, spacing }),
+      track: buildTrack({ ...b, closed: false, halfWidth: b.halfWidth ?? 6, curbWidth: b.curbWidth ?? 0.8, shoulderWidth: b.shoulderWidth ?? 2, spacing }),
       s0: b.s0,
       s1: b.s1,
       kind: b.kind || 'street',

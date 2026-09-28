@@ -1,7 +1,8 @@
 # Map Editor: design doc
 
-**Status:** draft for owner review. Nothing is built yet. The open questions
-(§15) need answers before milestone E0 starts.
+**Status:** agreed design; the owner answered the open questions (§15).
+Nothing is built yet. E0 waits until the districts are built to their docs
+(§15 decision 2).
 
 **If you're picking this up in a new session**, read §1–§4 first. They cover the goals, the two
 editions, the principles and the architecture. §13 is the build order.
@@ -35,7 +36,9 @@ play-test in one button).
 
 | | **Studio** (owner / dev) | **Creator** (in-game, for players) |
 |---|---|---|
-| Opened from | `editor.html` (like `texture-lab.html`) and the dev build | Main menu → Creator |
+| Opened from | `editor.html` (like `texture-lab.html`) and the dev build | Main menu → Creator, available from the start |
+| Assets | All | A kit or asset becomes available when the player unlocks it in the career (§6.4) |
+| Makes | Venues, events and whole districts (new districts can join the city map and career) | Venues, events and whole custom districts (never in the career) |
 | Saves to | Project files (`src/content/maps/*.json`) via a dev-server endpoint | Browser storage (IndexedDB), plus export/import of `.ttmap` files |
 | Built-in maps/events | Edits become the shipped content | Edits become a personal override (see §9) |
 | Inspector | Raw numbers plus sliders | Sliders, presets and colour swatches only |
@@ -44,7 +47,7 @@ play-test in one button).
 | Events | All fields, including career (purse, tier, boss, rival, unlocks, AI drivers) | Guided wizard: type, route, laps, cars, AI difficulty |
 | Layers/outliner, hidden objects, lock | Yes | No (groups only) |
 | City-map editing (district outlines, labels) | Yes | No |
-| Gadgets/logic (§7.8) | Yes | Presets only, no wiring |
+| Gadgets/logic (§7.9) | Yes | Presets only, no wiring |
 | Performance budget | Warn only | Hard cap |
 | Validation | Warnings can be overridden | Errors block saving an event as playable |
 
@@ -161,7 +164,7 @@ into the single-file build.
   "groups":  [{ "id": 7, "name": "Terminal stacks" }],
   "spawn":   { "x": 40, "z": -80, "yaw": 0 },                  // free roam start
   "events":  [ /* §8 */ ],
-  "logic":   [ /* §7.8, Studio */ ],
+  "logic":   [ /* §7.9, Studio */ ],
   "cityMap": { "outline": [[x, y], ...], "frame": [...], "label": [x, y] }, // Studio: placement on the city map screen
   "meta":    { "author": "", "created": "", "modified": "", "editor": "1.0", "thumb": "<png b64>" }
 }
@@ -211,8 +214,11 @@ automatically.
 | **Arena props** | Server rack row, core block, arena walls, cover blocks (from `DATA_CENTRE`) |
 | **Terrain features** | Water area, rooftop gap (hole with drop), cliff edge, ditch |
 
-Each district has a **kit** (docks, strip, maple, chrome, undercity, and the
-sixth district) that filters the browser. Any asset can still be used anywhere.
+Each district has a **kit**: docks (Rustline Docks), strip (Neon Strip),
+maple (Maple Hollow), chrome (Chrome Heights), undercity (The Undercity) and
+spire (Corporate Spire). A kit is the set of assets in that district's style,
+and the browser shows the current map's kit first. In Studio, any asset can be
+used anywhere.
 
 ### 6.3 Asset rules
 
@@ -224,6 +230,20 @@ sixth district) that filters the browser. Any asset can still be used anywhere.
   placement warns: "looks solid, isn't".
 - Behaviour assets carry their full logic in the sim (lifts use `setTime`,
   sweepers damage, hazards deal DPS), so they work without any setup.
+
+### 6.4 Unlocks (Creator)
+
+- **Always available:** the basics (roads, terrain tools, street furniture,
+  barriers, ramps, checkpoints, start grid) and the Rustline Docks kit.
+- **A district's kit unlocks when that district opens** in the career.
+- **Special assets unlock from specific wins:** landmarks and gadgets from
+  beating a district's events or boss (e.g. the Spire after the Corporate
+  Spire boss). Each asset lists its unlock in the registry
+  (`unlock: 'district:strip'` or `'event:strip.boss'`).
+- **Built-in districts** can be opened in Creator once they are unlocked.
+- **Maps from other players** that use assets you haven't unlocked always
+  play. In the editor, those assets can be moved or deleted but not newly
+  placed, and the browser shows them locked with their unlock condition.
 
 ## 7. Editor UX and tools
 
@@ -334,20 +354,39 @@ turns it back on.
   **Reroll** picks a new seed; **Break apart** turns the fill into editable
   objects.
 
-### 7.7 Atmosphere
+### 7.7 New districts
+
+Both editions can make whole new districts. **File → New district** offers:
+
+- **Blank:** flat terrain and an empty road network, with a chosen size and
+  kit.
+- **Generate:** the existing district generator as a wizard. Choose a grid
+  size, block sizes, hills, a building style, features (waterfront, piers,
+  arches, skybridges, overpass, tunnels, rooftops), and how many streets to
+  close. Every result is editable, and **Regenerate** stays available until
+  the first manual edit.
+- **Copy a built-in district** as a starting point (Creator: unlocked ones
+  only).
+
+**Studio only:** place the new district on the city map (outline, frame,
+label), give it a tier, faction, colour and boss, and add it to the career.
+**Creator:** custom districts appear under **Custom**, with free roam and their
+custom events.
+
+### 7.8 Atmosphere
 
 District colours (`look`), haze/fog, rain, neon palette and lamp colour are
 edited with a live preview. Creator gets these as presets (e.g. "Docks at
 night", "Strip in rain").
 
-### 7.8 Gadgets and logic (later, Studio first)
+### 7.9 Gadgets and logic (later, Studio first)
 
 Preset gadgets with settings, and no wiring for a first version: timed gate,
 drawbridge, moving platform, lift, sweeper, trap zone. A later version adds
 simple wiring (trigger zone → gate). All gadget state lives in `world.state`,
 so it survives snapshot/restore and stays in sync online.
 
-### 7.9 Test drive
+### 7.10 Test drive
 
 - **P:** drive from the cursor position, in your current garage car or a
   chosen car.
@@ -357,7 +396,7 @@ so it survives snapshot/restore and stays in sync online.
 - **Studio playtest markers:** wrecks, AI stuck points and respawns are
   recorded as pins in the editor.
 
-### 7.10 Other features
+### 7.11 Other features
 
 - **Shortcut sheet** (?), a hint bar that changes with the tool, and a
   first-run tutorial in Creator (place, move, road, test).
@@ -459,19 +498,19 @@ The game loads content in this order, and the first match wins:
 In Studio, **Save as built-in** writes the map file into `src/content/maps/`,
 and it ships with the next build. Once a district has been saved this way,
 **the map file is its source of truth**, and `districts.js` points to it
-instead of generating it (see §15 Q2).
+instead of generating it (see §15 decision 2).
 
 ### 9.4 Creator, the career, and multiplayer
 
-- **Recommendation:** player overrides apply to free roam, single events,
-  Custom Events and multiplayer lobbies. The **career always uses official
+- **Decided:** player overrides apply to free roam, single events, Custom
+  Events and multiplayer lobbies. The **career always uses official
   content**, so progression and balance can't be broken.
 - **Multiplayer:** the host's map and event travel to the peers over the
   existing peerjs session (JSON plus a hash). Peers cache it. A lobby shows
   "Custom map" or "Modified map" so nobody is surprised.
 - **Sharing:** export/import `.ttmap` files (the map plus its custom events
-  and prefabs). An online map browser would need a server and is out of scope
-  (§15 Q4).
+  and prefabs), and multiplayer. There is no online map browser (§15
+  decision 4).
 
 ## 10. Importing the existing districts
 
@@ -546,24 +585,22 @@ Each milestone ends in something the owner can try.
 | Baked districts are large in the single-file build | Compact encoding, fills for new content, size check in tests |
 | Rendering speed drops as users add objects | Performance meter, Creator hard cap, chunk merging, instancing for repeated props |
 | Import doesn't match the generated district exactly | Regression test (§10) before any district switches to its map file |
-| The district rebuild (docs process) is still in progress | Keep import re-runnable; switch a district to its map file only when the owner says so (§15 Q2) |
+| The district rebuild (docs process) is still in progress | Keep import re-runnable; switch a district to its map file only when the owner says so (§15 decision 2) |
 | Custom maps desync online | Loading is deterministic from JSON; hash check in the lobby |
 | Players make impossible events | Validation errors block play; AI test run |
 
-## 15. Open questions for the owner
+## 15. Owner decisions
 
-1. **Creator and the career.** Should players' overrides of built-in events
-   affect the career? *Recommendation: no.* Overrides apply everywhere except
-   the career (§9.4).
-2. **When do official districts switch to map files?** *Recommendation:*
-   finish each district to its doc with the current code first, then import
-   and switch. Alternatively, switch now and build the districts in Studio.
-3. **What can players make in Creator?** Full districts with free roam, or
-   single event venues (a circuit area or arena) with a size limit?
-   *Recommendation: both, with a smaller size cap than Studio.*
-4. **Sharing:** file export/import plus multiplayer only (recommended), or an
-   online map browser later? A browser needs a server.
-5. **Creator unlocks:** is Creator available from the start, and do players
-   only get the asset kits of districts they've unlocked in the career
-   (LittleBigPlanet-style item unlocks)?
-6. **The sixth district:** its kit and name, for the asset browser.
+1. **Creator and the career:** players' overrides never affect the career
+   (§9.4).
+2. **Switching districts to map files:** the owner builds each district to its
+   design doc with the current code first. Then it is imported and switched to
+   its map file (§9.3, §10). E0 starts after that.
+3. **What both editions can make:** venues, events and whole custom districts
+   (§2, §7.7). Creator has a smaller size cap.
+4. **Sharing:** `.ttmap` export/import and multiplayer only. No online map
+   browser.
+5. **Creator unlocks:** Creator is available from the start. Kits and assets
+   unlock as the player unlocks them in the career (§6.4).
+6. **Kits:** one per district: Rustline Docks, Neon Strip, Maple Hollow,
+   Chrome Heights, The Undercity and Corporate Spire (§6.2).

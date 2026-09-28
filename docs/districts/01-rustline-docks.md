@@ -1,8 +1,8 @@
 # 1. Rustline Docks
 
-**Status:** agreed. The layout and routes are built, but some parts don't match
-this doc yet (see "Built vs this doc" at the end). Everything is open to change
-after playtesting. **Tier:** 1 (the starter district). **Faction:** Dock Rats.
+**Status:** agreed and built. Everything in the game is authored to this doc,
+with nothing generated (the numbers are in "Build spec" near the end). Everything
+is open to change after playtesting. **Tier:** 1 (the starter district). **Faction:** Dock Rats.
 **On the city map:** bottom left. Home is up the highway to the north-west, and Dock Road leaves east for the Neon Strip.
 
 ## Identity
@@ -50,7 +50,7 @@ Cross streets, west to east (x):
 | East Gate | +740 | Gate Rd → Quay Rd | East edge. |
 
 Two more things are part of the street plan:
-- **Alleys:** 5 m service lanes run east–west behind the Cannery Row warehouses (z ≈ +15).
+- **Alleys:** service lanes, 7 m between the walls, run east–west behind the Cannery Row warehouses (z = +15).
   They're drivable and used as shortcuts.
 - **Piers:** off the ends of West Gate (P1), Crane St (P2), Tar St (P3) and East Gate (P4), each about 160 m long.
 - **The freight line:** its own right of way at x −425, between Kiln and Crane. It runs from the rail yard, south between the warehouses, to a buffer stop on the quay. There are level crossings, with signal posts and red lights, where it crosses Rail Lane, Dock Road, Cannery Row and Quay Road.
@@ -97,7 +97,8 @@ Two more things are part of the street plan:
   and Cannery Row (380 × 190 m). A half-demolished warehouse:
   - roof trusses as raised catwalk decks;
   - loading bays with dock lifts;
-  - a rolling overhead crane as the sweeper.
+  - a rolling overhead crane as the sweeper. Its load hangs at catwalk level, so
+    it sweeps cars off the catwalks and cars on the floor pass under it.
 - **Dry Dock Yard** (arena, event 3): the block between Rope and Anchor, Cannery Row
   and Quay Road. Next to it, cut into the quay, is the **dry dock basin**: a sunken
   concrete dock holding a rusting freighter hull. In free roam you can fall in.
@@ -114,7 +115,7 @@ Two more things are part of the street plan:
 
 Numbers match the pins on the city map.
 
-**1. Dockside Dash** (sprint, 5 cars, about 3.7 km). From the end of a pier, through the container terminal, to East Gate.
+**1. Dockside Dash** (sprint, 5 cars, about 3.4 km). From the end of a pier, through the container terminal, to East Gate.
 - **Route:** grid on Pier 3 facing north → Tar St north → west on Cannery Row →
   north up Crane St across Dock Road →
   west on Rail Lane along the yard fence, over the level crossing → north on West Gate → east on Gate Road →
@@ -137,7 +138,8 @@ Numbers match the pins on the city map.
   - a gantry deck across the middle (ramps up, drive under);
   - container stacks for cover;
   - a cargo lift;
-  - a swinging crane hook as the sweeper.
+  - a swinging crane hook as the sweeper, running along the girders of a portal
+    crane over the yard.
 - **The south side is open to the dry dock basin.** Knock a car in and it counts as
   a takedown (a "ring-out").
 
@@ -192,51 +194,143 @@ Everything above is drivable. Also:
 
 All of these can change after playtesting.
 
+## Build spec
+
+What the game builds, with the numbers it uses. The data is in
+`src/districts/rustline.js`; the rules that fill the lots are in
+`src/sim/authoredLayout.js`. Metres: x east, z south, origin mid-district.
+Nothing is random: the same data always builds the same district.
+
+**Ground and streets**
+- **Terrain:** flat, at 0. The bay is at −0.5.
+- **Streets:** as in the tables above. The roadway is 16 m wide, and the lots
+  start 13.2 m from the centreline.
+- **Roads out:** Gate Road leaves west at West Gate (the home highway). Dock Road
+  leaves east at East Gate (the Neon Strip). Each has a barrier gate 12 m out.
+- **Level crossings:** rails across the road and a 0.15 m bump. Signal posts on
+  both sides, with lamps that flash from 6 seconds before a train until it's gone.
+
+**Blocks** (named by the streets round them)
+- **Warehouses:** every block not listed below.
+  - Two rows, one facing each long street. Buildings are about 64 m long with
+    6 m gaps between them.
+  - Heights run in a fixed cycle: 12, 16, 10, 20, 14, 8, 18, 11, 15, 9, 13, 17 m.
+  - Each has a loading dock 8 m deep and 1.2 m high along its street face, with
+    an 8 m ramp up at its east end.
+  - Where the freight line passes through a block, it splits the rows (6 m clear
+    each side).
+- **Alleys:** at z = +15, 7 m between the walls. They run in the blocks West Gate
+  to Kiln, Crane to Hook, Rope to Salt, Salt to Anchor, and Anchor to East Gate.
+  There's none between Kiln and Crane, where the freight line runs. Brick walls
+  fill the gaps between warehouses, so the alley walls are unbroken.
+- **Fish and ice sheds:** Cannery Row to Quay Road, in the blocks Crane to Hook,
+  Hook to Tar, Tar to Rope, and Anchor to East Gate. Each block has:
+  - two rows of sheds, 36 m deep and about 40 m long, 6–8 m high;
+  - an ice plant in the middle;
+  - crate stacks one to three high.
+- **Tank Farm** (West Gate to Kiln, Cannery Row to Quay Road):
+  - 12 tanks on a 4 × 3 grid, 11–18 m high, white and rusted in turn;
+  - two overhead pipe runs on posts;
+  - a fence all round, with a gate on Cannery Row.
+- **Wrench & Rust** (Hook to Tar, Rail Lane to Dock Road):
+  - the workshop, set back behind a 57 m forecourt on Dock Road, with the
+    WRENCH & RUST sign;
+  - four project cars and two tyre stacks on the forecourt;
+  - a store at the back.
+
+**Sites**
+- **Rail yard** (West Gate to Tar, Gate Road to Rail Lane):
+  - 18 tracks, 6 m apart, and 12 strings of wagons;
+  - signal gantries near the west end and at x −120;
+  - the goods shed, 96 × 22 m and 9 m high, set diagonally across the north-east
+    corner. Its loading platform is 99 × 12 m and 1.2 m high, with a 12 m ramp up
+    at the Tar St end;
+  - a fence all round, open for the fence-gap crossing (x −660), the freight
+    line, and both ends of the platform.
+- **Truck park** (Tar to Rope, Gate Road to Dock Road): trailer rows every 25 m,
+  bays every 19 m, a cross aisle, and a fence with gates.
+- **Container terminal** (Rope to East Gate, Gate Road to Dock Road):
+  - stack blocks one to four high, 14.5 m clear of the haul road, with cross
+    lanes every 160 m;
+  - the haul road: in from Gate Road at x +330, south to z −250, east to
+    x +560, then out to Dock Road;
+  - container tunnels at (+330, −333) and (+560, −166);
+  - gantry cranes at 30% and 70% of the way across.
+- **The dry dock basin:**
+  - x +250 to +580, z +318 to +430, and 12 m deep;
+  - 3 m walls you can drive along, and the caisson gate on the bay side;
+  - the freighter: 250 × 26 m on keel blocks, its deck 3.5 m above the quay.
+- **Dry Dock Yard arena** (Rope to Anchor, Cannery Row to Quay Road):
+  - **Bounds:** x +243 to +587, z +123 to +430. That takes in Quay Road and
+    the basin.
+  - **Edges:** fenced on the north, east and west. Barriers stand where the
+    edge crosses Quay Road and the apron.
+  - **Cover:** eight container stacks.
+  - **Gantry deck:** 200 × 12 m, 6 m up at z +205, with a 22 m ramp at each end.
+  - **Cargo lift:** at (+415, +216), 10 × 10 m, rising 6 m every 10 s.
+  - **Portal crane:** legs at x +290 and +540 (z +234 and +246), girders at 24 m.
+  - **The hook:** runs along z +240 from x +305 to +525 every 9 s, at car
+    height. It does 40 damage a second.
+  - **Ring-outs:** a car that falls into the basin within 8 s of being hit is a
+    takedown for whoever hit it last.
+- **Warehouse Row arena** (Hook to Rope, Dock Road to Cannery Row):
+  - **Walls:** the shell is 14 m high. There are doorways onto Dock Road at
+    x −100 to −80 and +80 to +100, and onto Cannery Row at +30 to +50. The
+    doorways are shuttered for the boss fight.
+  - **Roof:** panels over both ends, and the middle open to the sky.
+  - **Catwalks:** 5 m up. Two run 250 m along z −25 and +55, a cross catwalk runs
+    at x +40, and there's an 18 m ramp at each end.
+  - **Dock lifts:** four on the Dock Road side, rising 3.5 m every 8 s.
+  - **Cover:** six rubble piles.
+  - **Overhead crane:**
+    - runways along the long walls at 9.5 m;
+    - the bridge rolls x ±150 m every 16 s;
+    - the trolley runs z ±55 m every 11 s;
+    - the load hangs 5.4–8.2 m up and does 45 damage a second.
+
+**The quay**
+- **Apron:** 30 m deep, open where the dry dock cuts in.
+- **Quay cranes:** six, at x −600, −460, −180, −40, +100 and +660. Their legs
+  stand on the apron, either side of the crane rails.
+- **Piers:** 160 m long and 28 m wide, with bollards.
+
+**Events as built**
+- **Dockside Dash:** 3.4 km. The fence-gap shortcut saves 141 m.
+- **Rail Yard Loop:** 1.8 km a lap. The platform shortcut saves 52 m.
+- **Pier Run:** 2.7 km. The alley shortcut saves 171 m.
+- **Back-alley Sprint:** 2.0 km through all five alleys.
+- **Race dressing:**
+  - container closures, one or two high in a fixed pattern;
+  - floodlight masts;
+  - a RUSTLINE DOCKS banner on a portal over the road, 24 m past the start;
+  - Dock Rats on the closure stacks nearest the start.
+
 ## Built vs this doc
 
-This was checked against the game by building Rustline's events from the code.
-The owner's rule is that nothing on a district map is generated: everything is
-hand-authored to this doc.
+Rustline was rebuilt from the ground up on 2026-09-28. Every item on the old
+"still to do" list is done:
+- **Arenas:** both are built to this doc.
+- **The basin:** the dry dock and the freighter hull are in.
+- **Shortcuts:** each one is authored.
+- **Back-alley Sprint:** it runs through the alleys.
+- **Start dressing:** the banner and the Dock Rats are in.
+- **Fish and ice sheds:** built.
+- **Level crossings:** they have the bump and the flashing lights.
 
-**Built as specified:**
-- **Layout:** the street grid and names, every site and lot, the four piers, and
-  Wrench & Rust.
-- **Details:** the cranes along the quay, the terminal's stack maze with its two
-  gantry cranes and two container tunnels, and the freight line with rails and
-  signal posts.
-- **The freight train:** rare, random and fast.
-- **Routes and lengths:** every event route follows this doc's streets. Dockside
-  Dash is 3.7 km, Rail Yard Loop 1.8 km a lap, and Pier Run 2.7 km.
-- **Race dressing:** container-stack closures and floodlights at the start.
+`tests/rustline.test.js` checks four things:
+- the build uses no randomness;
+- the street grid matches this doc;
+- the route lengths match, and every shortcut saves distance;
+- ring-outs are credited to the last car that hit.
 
-**Still to do, replacing generated or missing parts:**
-1. **Dry Dock Brawl arena:** the game uses the random arena generator. Build it
-   to this doc instead:
-   - the gantry deck across the middle, with ramps up and room to drive under;
-   - container stacks;
-   - the cargo lift;
-   - the swinging crane hook as the sweeper;
-   - the south side open to the dry dock basin, with ring-outs counted as
-     takedowns.
-2. **Boss arena, Warehouse Row:** also generated. Build it to this doc:
-   - the half-demolished warehouse;
-   - roof-truss catwalk decks;
-   - loading bays with dock lifts;
-   - the rolling overhead crane as the sweeper.
-3. **The dry dock basin and freighter hull** (free roam, fall in and respawn):
-   missing.
-4. **Shortcuts:** the game picks them automatically. Author them to this doc:
-   - Dockside Dash: the rail yard fence gap only (it's there now by chance);
-   - Rail Yard Loop: the goods-shed loading platform jump. The goods shed isn't
-     built, and the game picks a rail yard crossing instead;
-   - Pier Run: the Kiln–West Gate service alley (it's there now by chance).
-5. **The Back-alley Sprint:** it runs along Cannery Row. This doc says it runs
-   through the service alleys, west to east.
-6. **Start dressing:** Dock Rats standing on container tops, and a banner slung
-   from a crane. Both missing.
-7. **The fish and ice sheds by the quay:** they're ordinary warehouses now.
-8. **Level crossings:** the rails and signal posts are there. Check that there's
-   a bump in the road and flashing warning lights.
+Decisions made while building, all open to change after playtesting:
+- **Alleys:** 7 m between the walls. The earlier "5 m" was too tight to race.
+- **Dockside Dash:** 3.4 km, not 3.7, on these streets.
+- **The overhead crane's load:** it hangs at catwalk level. At car height it
+  would pass through the rubble and catwalk legs.
+- **The swinging hook:** it runs on a portal crane, with solid legs.
+- **Dock Rats:** they stand on the closure stacks, where there's room. There's no
+  open ground by the starts.
 
 ## Earlier open questions (answered above)
 

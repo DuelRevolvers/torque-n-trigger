@@ -85,7 +85,7 @@ test('arenas: big, with decks you can drive up onto and moving parts', () => {
   const e = districtEvents(d).find((x) => x.type === 'arena');
   const def = getVenue(e.venue, e).def;
   assert.ok(def.sizeX >= 150 && def.sizeZ >= 150, `${def.sizeX} x ${def.sizeZ}`);
-  assert.ok(def.platforms.length >= 2 && def.lifts.length >= 1 && def.sweepers.length >= 1);
+  assert.ok(def.platforms.length >= 1 && def.lifts.length >= 1 && def.sweepers.length + (def.movers || []).length >= 1);
   const arena = buildArena(def);
   // Drive at a deck ramp and end up on top.
   const ramp = def.ramps.find((r) => !r.base && r.height >= 3);
@@ -98,7 +98,7 @@ test('arenas: big, with decks you can drive up onto and moving parts', () => {
   car.quat = { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) };
   car.vel = { x: ramp.dirX * 14, y: 0, z: ramp.dirZ * 14 };
   let top = 0;
-  for (let t = 0; t < 150; t++) {
+  for (let t = 0; t < 300; t++) {
     stepWorld(world, [{ ...neutralInput(), throttle: 0.5 }]);
     top = Math.max(top, car.pos.y - arena.y0);
   }

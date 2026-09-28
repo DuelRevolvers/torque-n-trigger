@@ -8,7 +8,10 @@
 // beneath), lifts (pads that rise and fall) and sweepers (rotating electrified
 // bars). Queries take the height being tested (y): on top of a deck it's ground,
 // beside it it's a wall, underneath a bridge it's open, above a bar it's clear.
-// Lifts and sweepers move with setTime(), driven from the world tick.
+// Lifts, sweepers and movers (a swinging crane hook, a rolling overhead crane)
+// move with setTime(), driven from the world tick. Obstacles and decks may be
+// rotated (yaw). Holes can be pits you fall into: a ring-out in an arena, or a
+// respawn in free roam.
 
 import { yawFromDirection } from './math.js';
 
@@ -19,6 +22,21 @@ export function buildArena(def) {
   return new Arena(def);
 }
 
+// A box's half extents along x and z, allowing for its yaw.
+const extents = (o) => {
+  if (!o.yaw) return [o.hw, o.hd];
+  const c = Math.abs(Math.cos(o.yaw));
+  const s = Math.abs(Math.sin(o.yaw));
+  return [o.hw * c + o.hd * s, o.hw * s + o.hd * c];
+};
+
+// (x, z) in a rotated box's frame: across (along hw) and along (along hd).
+const toLocal = (o, x, z) => {
+  const dx = Math.sin(o.yaw);
+  const dz = Math.cos(o.yaw);
+  return [(x - o.x) * dz - (z - o.z) * dx, (x - o.x) * dx + (z - o.z) * dz];
+};
+
 class Arena {
   constructor(def) {
     this.name = def.name;
@@ -28,6 +46,7 @@ class Arena {
     def.platforms ||= [];
     def.lifts ||= [];
     def.sweepers ||= [];
+    def.movers ||= [];
     this.time = 0;
     this.cx = def.cx || 0;
     this.cz = def.cz || 0;
@@ -44,8 +63,9 @@ class Arena {
     if (def.obstacles.length > 64) {
       this.grid = new Map();
       for (const o of def.obstacles) {
-        for (let a = Math.floor((o.x - o.hw) / GRID); a <= Math.floor((o.x + o.hw) / GRID); a++) {
-          for (let b = Math.floor((o.z - o.hd) / GRID); b <= Math.floor((o.z + o.hd) / GRID); b++) {
+        const [ex, ez] = extents(o);
+        for (let a = Math.floor((o.x - ex) / GRID); a <= Math.floor((o.x + ex) / GRID); a++) {
+          for (let b = Math.floor((o.z - ez) / GRID); b <= Math.floor((o.z + ez) / GRID); b++) {
             const k = a * 100003 + b;
             if (!this.grid.has(k)) this.grid.set(k, []);
             this.grid.get(k).push(o);
@@ -73,6 +93,30 @@ class Arena {
 
   sweeperAngle(s) {
     return s.phase + s.speed * this.time;
+  }
+
+  // Where a mover (crane hook) is now, arena-local.
+  moverAt(m) {
+    const t = this.time;
+    return [m.x + m.ax * Math.sin((2 * Math.PI * t) / m.px + m.phase), m.z + m.az * Math.sin((2 * Math.PI * t) / m.pz + m.phase)];
+  }
+
+  // The hole at world (wx, wz), if any.
+  holeAt(wx, wz) {
+    const x = wx - this.cx;
+    const z = wz - this.cz;
+    return this.holes.find((hl) => x > hl.r[0] && x < hl.r[1] && z > hl.r[2] && z < hl.r[3]) || null;
+  }
+
+  isHole(wx, wz) {
+    return !!this.holeAt(wx, wz);
+  }
+
+  // A car that has dropped into a pit: 'ringOut' (arena) or 'respawn' (free roam).
+  fellIn(pos) {
+    const hl = this.holeAt(pos.x, pos.z);
+    if (!hl || pos.y > this.y0 - 3) return null;
+    return hl.ringOut ? 'ringOut' : hl.respawn ? 'respawn' : null;
   }
 
   indexAtDistance() {
@@ -161,22 +205,55 @@ class Arena {
         }
       }
     };
+    // A rotated box: the same test in its own frame, the push turned back.
+    const obbWall = (o) => {
+      const [u, v] = toLocal(o, x, z);
+      const du = Math.abs(u) - o.hw;
+      const dv = Math.abs(v) - o.hd;
+      const p = -Math.max(du, dv);
+      if (p > pen) {
+        pen = p;
+        const dx = Math.sin(o.yaw);
+        const dz = Math.cos(o.yaw);
+        if (du > dv) {
+          const sg = -Math.sign(u) || 1;
+          rx = dz * sg;
+          rz = -dx * sg;
+        } else {
+          const sg = -Math.sign(v) || 1;
+          rx = dx * sg;
+          rz = dz * sg;
+        }
+      }
+    };
     for (const o of this.nearObstacles(x, z)) {
       if (ly !== undefined && o.h && ly > (o.y || 0) + o.h + 0.3) continue; // flying over it
-      boxWall(o.x, o.z, o.hw, o.hd);
+      if (o.yaw) obbWall(o);
+      else boxWall(o.x, o.z, o.hw, o.hd);
     }
     // Decks and lifts: ground when you're on top, a wall when you're beside.
     const deck = (p, top) => {
-      if (Math.abs(x - p.x) > p.hw || Math.abs(z - p.z) > p.hd) return;
+      if (p.yaw) {
+        const [u, v] = toLocal(p, x, z);
+        if (Math.abs(u) > p.hw || Math.abs(v) > p.hd) return;
+      } else if (Math.abs(x - p.x) > p.hw || Math.abs(z - p.z) > p.hd) return;
       if (ly !== undefined && ly > top - 1) {
         if (top > g.h) Object.assign(g, { h: top, nx: 0, ny: 1, nz: 0 });
         return;
       }
       if (p.under && (ly === undefined || ly < top - (p.thick || 0.8) - 1.2)) return; // under the bridge
-      boxWall(p.x, p.z, p.hw, p.hd);
+      if (p.yaw) obbWall(p);
+      else boxWall(p.x, p.z, p.hw, p.hd);
     };
     for (const p of this.def.platforms) deck(p, p.h);
     for (const l of this.def.lifts) deck(l, this.liftTop(l));
+    // Movers: a heavy block at car height (clear it by jumping).
+    for (const m of this.def.movers) {
+      if (ly !== undefined && (ly > m.y0 + m.h + 0.3 || ly < m.y0 - 1.5)) continue;
+      const [mx, mz] = this.moverAt(m);
+      if (Math.abs(x - mx) > m.hw + 40 || Math.abs(z - mz) > m.hd + 40) continue;
+      boxWall(mx, mz, m.hw, m.hd);
+    }
     // Sweepers: rotating bars at car height (clear them by jumping).
     for (const s of this.def.sweepers) {
       if (ly !== undefined && ly > s.height + 0.3) continue;
@@ -200,6 +277,10 @@ class Arena {
 
   // Spawn points on a ring, facing the centre.
   spawnPose(slot) {
+    if (this.def.spawnPoints) {
+      const p = this.def.spawnPoints[slot % this.def.spawnPoints.length];
+      return { pos: { x: this.cx + p.x, y: this.y0 + this.ground(p.x, p.z).h + 0.9, z: this.cz + p.z }, yaw: p.yaw };
+    }
     if (this.def.spawnAt) {
       const p = this.def.spawnAt;
       return { pos: { x: p.x + slot * 6, y: this.y0 + this.ground(p.x + slot * 6 - this.cx, p.z - this.cz).h + 0.9, z: p.z }, yaw: p.yaw };
@@ -234,6 +315,11 @@ class Arena {
       const lx = Math.cos(a) * (x - s.x) + Math.sin(a) * (z - s.z);
       const lz = -Math.sin(a) * (x - s.x) + Math.cos(a) * (z - s.z);
       if (Math.abs(lx) < s.len + 1.2 && Math.abs(lz) < s.width / 2 + 1.6) return { dps: 45 };
+    }
+    for (const m of this.def.movers) {
+      if (ly > m.y0 + m.h + 0.5 || ly < m.y0 - 1.5) continue;
+      const [mx, mz] = this.moverAt(m);
+      if (Math.abs(x - mx) < m.hw + 1.4 && Math.abs(z - mz) < m.hd + 1.4) return { dps: m.dps || 40 };
     }
     return null;
   }

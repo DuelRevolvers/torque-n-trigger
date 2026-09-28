@@ -200,6 +200,18 @@ export function pickupSpots(track, seed) {
   const rng = makeRng(seed * 977 + 13);
   const types = ['health', 'nitro', 'health', 'ammo']; // every other pickup heals
   const spots = [];
+  // Authored arenas say where their pickups are.
+  if (track.isArena && track.def.pickups) return track.def.pickups.map((p) => ({ type: p.type, x: track.cx + p.x, y: track.y0 + p.y, z: track.cz + p.z }));
+  // Authored routes: every 150 m, alternating sides.
+  if (track.authored) {
+    const L = track.closed ? track.length : track.length - 40;
+    for (let s = 120, k = 0; s < L; s += 150, k++) {
+      const i = track.indexAtDistance(s);
+      const lat = (k % 2 ? 1 : -1) * Math.min(4, Math.max(0, track.localWall(track.s[i]) - 2.5)); // tucked in down an alley
+      spots.push({ type: types[k % types.length], x: track.x[i] + track.rx[i] * lat, y: track.y[i] + 0.8, z: track.z[i] + track.rz[i] * lat });
+    }
+    return spots;
+  }
   if (track.isArena) {
     for (let tries = 0; spots.length < 8 && tries < 200; tries++) {
       const x = track.cx + (rng() - 0.5) * (track.halfX * 2 - 20);

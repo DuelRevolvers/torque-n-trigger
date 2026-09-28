@@ -119,7 +119,10 @@ export function applyDamage(world, j, amount, point, source, silent = false) {
   if (car.shield > 0) amount *= 0.2;
   amount *= 1 - c.armor * cfOf(car, 'armor');
   car.hp -= amount;
-  if (source >= 0 && source !== j) car.lastHitBy = source;
+  if (source >= 0 && source !== j) {
+    car.lastHitBy = source;
+    car.lastHitTick = world.state.tick;
+  }
   const local = quatRotateInv(car.quat, sub(point, car.pos));
   wearParts(world, j, local, amount);
   if (!silent) world.events.push({ type: 'hit', car: j, point, local, amount });
@@ -144,6 +147,17 @@ function wearParts(world, j, local, amount) {
     }
     if (before > 0 && car.condition[s] <= 0) world.events.push({ type: 'broken', car: j, slot: s });
   }
+}
+
+// Knocked into a pit (the dry dock): a wreck, and a takedown for whoever hit
+// the car last, if they did in the last eight seconds.
+const RING_OUT_CREDIT = 8; // seconds
+export function ringOut(world, j, hz) {
+  const car = world.state.cars[j];
+  if (car.wrecked) return;
+  const recent = car.lastHitBy >= 0 && world.state.tick - (car.lastHitTick ?? -Infinity) < RING_OUT_CREDIT * hz ? car.lastHitBy : -1;
+  wreck(world, j, recent);
+  world.events.push({ type: 'ringout', car: j, by: recent });
 }
 
 function wreck(world, j, source) {

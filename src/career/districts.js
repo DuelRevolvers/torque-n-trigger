@@ -19,6 +19,8 @@
 // into (default: the outline's bounding box; clipped to the outline), label
 // where its name plate goes (default: top middle).
 
+import { RUSTLINE_CITY } from '../districts/rustline.js';
+
 const GROUND = [[2, 2], [3, 2], [2, 3], [3, 3]]; // event ground sizes, smallest first
 
 export const DISTRICTS = [
@@ -30,47 +32,13 @@ export const DISTRICTS = [
     map: [[4.5, 57.3], [15.5, 57.3], [15.5, 58.7], [25, 58.7], [25, 55.3], [32.5, 55.3], [32.5, 57.3], [35, 57.3], [36.5, 68.7], [35.8, 78.7], [36.5, 85.3], [28, 85.7], [21, 85], [11.5, 86], [3, 85.3], [2.8, 76.7], [3.3, 66.7], [4.5, 63.3]],
     frame: [[6.1, 59.6], [33.9, 59.6], [35.2, 90.5], [3.9, 90.5]],
     label: [20, 61],
-    city: {
-      id: 'rustline', name: 'Rustline', seed: 1101, cols: 9, rows: 5,
-      spacingX: [140, 210], spacingZ: [115, 165], removeEdges: 0, elevation: 0.3, hillScale: 400,
-      // Authored to docs/districts/01-rustline-docks.md.
-      grid: {
-        xs: [-740, -520, -330, -150, 40, 230, 420, 600, 740],
-        zs: [-420, -280, -80, 110, 300],
-        avenue: 2, // Dock Road
-        cols: { WG: 0, KI: 1, CR: 2, HK: 3, TR: 4, RP: 5, SL: 6, AN: 7, EG: 8 }, // West Gate, Kiln, Crane, Hook, Tar, Rope, Salt, Anchor, East Gate
-        rows: { gate: 0, rail: 1, dock: 2, cannery: 3, quay: 4 }, // Gate Road, Rail Lane, Dock Road, Cannery Row, Quay Road
-        closed: [[5, 0, 'v'], [5, 1, 'v']], // no street between the truck park and the terminal
-        piers: [0, 2, 4, 8],
-        freight: { x: -425, from: -400 },
-        shop: [3, 1], // Wrench & Rust
-        lots: [
-          { at: [0, 3], kind: 'tanks' },
-          { at: [0, 2], kind: 'alley', axis: 'x' },
-          { at: [2, 2], kind: 'alley', axis: 'x' },
-          { at: [5, 2], kind: 'alley', axis: 'x' },
-          { at: [6, 2], kind: 'alley', axis: 'x' },
-          { at: [7, 2], kind: 'alley', axis: 'x' },
-          { at: [2, 1], kind: 'yard' },
-          { at: [7, 3], kind: 'yard' },
-        ],
-      },
-      sites: [
-        { kind: 'arena', name: 'Dry Dock Yard', at: [5, 3, 2, 1] },
-        { kind: 'arena', name: 'Warehouse Row', at: [3, 2, 2, 1] },
-        { kind: 'railyard', name: 'Rail Yard', at: [0, 0, 4, 1], path: { at: 0.06 } },
-        { kind: 'terminal', name: 'Container Terminal', at: [5, 0, 3, 2], path: { axis: 'z' } },
-        { kind: 'parking', name: 'Truck Park', at: [4, 0, 1, 2], path: { axis: 'z' } },
-      ],
-      lots: {},
-      buildings: 'warehouse', heights: [8, 20], features: ['waterfront', 'piers'],
-      look: { building: '#b09a88', buildingTex: 'corrugated', lamp: '#ffae50', barrier: '#ffd0a0', signs: 0.12, lot: '#8a8078', neon: ['#ff7a1a', '#ffb000'], road: '#c8b8a8', walk: '#c8bcb0' },
-    },
+    // Authored to docs/districts/01-rustline-docks.md (src/districts/rustline.js).
+    city: RUSTLINE_CITY,
     events: [
-      { key: 'sprint', type: 'sprint', name: 'Dockside Dash', desc: 'From the end of Pier 3, over the freight crossing, then through the container terminal (and two tunnels of opened containers) to East Gate.', route: { kind: 'sprint', path: ['TR.pier', 'TR.quay', 'TR.cannery', 'CR.cannery', 'CR.rail', 'WG.rail', 'WG.gate', 'terminal', 'EG.dock'] }, cars: 5, purse: 900 },
-      { key: 'circuit', type: 'circuit', name: 'Rail Yard Loop', desc: 'Round the rail yard: Rail Lane, Tar St, Gate Road, West Gate.', route: { kind: 'circuit', path: ['TR.rail', 'WG.rail', 'WG.gate', 'TR.gate'] }, cars: 5, laps: 3, purse: 1100 },
-      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Dry Dock Brawl', desc: 'The Dry Dock Yard on the waterfront, fenced off for the night.', route: { kind: 'arena', site: 0 }, cars: 5, timeLimit: 120, purse: 1000 },
-      { key: 'rival', type: 'sprint', name: 'Rival: Pier Run', desc: 'Dock Road, the waterfront under the cranes, then out to the end of Pier 1.', route: { kind: 'sprint', path: ['EG.dock', 'RP.dock', 'RP.quay', 'KI.quay', 'KI.dock', 'WG.dock', 'WG.quay', 'WG.pier'] }, cars: 4, purse: 1300, rival: true },
+      { key: 'sprint', type: 'sprint', name: 'Dockside Dash', desc: 'From the end of Pier 3, over the freight crossing, then through the container terminal (and two tunnels of opened containers) to East Gate.', route: { kind: 'sprint', path: ['TR.pier', 'TR.quay', 'TR.cannery', 'CR.cannery', 'CR.rail', 'WG.rail', 'WG.gate', 'terminal', 'EG.dock'], shortcuts: ['fence-gap'] }, cars: 5, purse: 900 },
+      { key: 'circuit', type: 'circuit', name: 'Rail Yard Loop', desc: 'Round the rail yard: Rail Lane, Tar St, Gate Road, West Gate. Shortcut over the goods shed\'s loading platform.', route: { kind: 'circuit', path: ['WG.rail', 'TR.rail', 'TR.gate', 'WG.gate'], shortcuts: ['goods-platform'] }, cars: 5, laps: 3, purse: 1100 },
+      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Dry Dock Brawl', desc: 'The Dry Dock Yard, fenced off for the night. Knock a car into the dry dock for a ring-out.', route: { kind: 'arena', site: 0 }, cars: 5, timeLimit: 120, purse: 1000 },
+      { key: 'rival', type: 'sprint', name: 'Rival: Pier Run', desc: 'Dock Road, the waterfront under the cranes, then out to the end of Pier 1.', route: { kind: 'sprint', path: ['EG.dock', 'RP.dock', 'RP.quay', 'KI.quay', 'KI.dock', 'WG.dock', 'WG.quay', 'WG.pier'], shortcuts: ['alley.WG-KI'] }, cars: 4, purse: 1300, rival: true },
     ],
     boss: { key: 'boss', type: 'arena', mode: 'lastStanding', name: 'Boss: Brick', desc: 'Brick holds court in the half-demolished Warehouse Row.', route: { kind: 'arena', site: 1 }, cars: 4, timeLimit: 240, purse: 2000, driver: 'brick' },
   },
@@ -218,11 +186,16 @@ export function districtEvents(district) {
 
 // Free events from home, on the Rustline streets: never stuck broke.
 const RUST = DISTRICTS[0];
+// The service alleys behind the Cannery Row warehouses, west to east (round Warehouse Row).
+const BACK_ALLEY = {
+  kind: 'sprint',
+  path: ['WG.dock', 'alley.WG-KI', 'KI.cannery', 'CR.cannery', 'alley.CR-HK', 'HK.cannery', 'RP.cannery', 'alley.RP-SL', 'alley.SL-AN', 'alley.AN-EG', 'EG.cannery'],
+};
 export const HOME_EVENTS = [
   {
     id: 'back-alley', type: 'sprint', name: 'Back-alley Sprint', cars: 4, purse: 350, entryFee: 0, tier: 0, district: 'rustline',
-    route: { kind: 'sprint', path: ['WG.dock', 'WG.cannery', 'EG.cannery', 'EG.quay'] }, venue: venueFor(RUST, { kind: 'sprint', path: ['WG.dock', 'WG.cannery', 'EG.cannery', 'EG.quay'] }), city: RUST.city,
-    desc: 'The length of Cannery Row, past the back alleys. Free entry, small purse. Always open.',
+    route: BACK_ALLEY, venue: venueFor(RUST, BACK_ALLEY), city: RUST.city,
+    desc: 'The Cannery Row service alleys, west to east, round Warehouse Row. Free entry, small purse. Always open.',
   },
 ];
 
