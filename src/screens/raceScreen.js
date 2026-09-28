@@ -5,14 +5,14 @@ import { getVenue } from '../sim/tracks/venues.js';
 import { createWorld, stepWorld } from '../sim/world.js';
 import { createEventState, gridPoses, standings, resolvePit } from '../sim/event.js';
 import { districtMap } from '../sim/city.js';
-import { InputQueue, neutralInput } from '../sim/input.js';
+import { InputQueue, neutralInput, sanitizeInput } from '../sim/input.js';
 import { initAi, aiInput } from '../sim/ai.js';
 import { WEAPON_BEHAVIOR } from '../sim/combat.js';
 import { SIM_DT } from '../config.js';
 import { computeBuild } from '../parts/build.js';
 import { DRIVERS, buildDriver, tierForPr } from '../parts/drivers.js';
 import { partType, partName } from '../parts/catalog.js';
-import { saveCareer } from '../career/career.js';
+import { saveCareer, recordResult, recordText } from '../career/career.js';
 import { DISTRICTS } from '../career/districts.js';
 import { EVENTS, computeRewards, rollSalvage, ordinal } from '../career/events.js';
 import { PALETTE } from '../render/textures.js';
@@ -20,6 +20,7 @@ import { buildTrackView } from '../render/trackView.js';
 import { buildCityView } from '../render/cityView.js';
 import { buildArenaView } from '../render/arenaView.js';
 import { buildDistrictView } from '../render/districtView.js';
+import { buildTrainView, updateTrainView } from '../render/trainView.js';
 import { additiveMaterial } from '../render/retroMaterial.js';
 import { CarView } from '../render/carView.js';
 import { CameraRig } from '../render/cameraRig.js';
@@ -28,6 +29,7 @@ import { Fx } from '../render/fx.js';
 import { SpeedLines } from '../render/speedLines.js';
 import { formatTime } from '../ui/hud.js';
 
+const SNAP_EVERY = 3; // online: host snapshots at 20 Hz
 const hashId = (s) => [...s].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0, 2166136261);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
@@ -64,7 +66,6 @@ export class RaceScreen {
     this._qa = new THREE.Quaternion();
     this._qb = new THREE.Quaternion();
     this.time = 0;
-    this.shake = 0;
   }
 
   // Venue geometry is built once and cached (the last few only; they're big).
@@ -100,9 +101,11 @@ export class RaceScreen {
       }
       if (def.pit) group.add(pitZoneMesh(track, resolvePit(def.pit, track), tex));
     }
+    const train = track.train ? buildTrainView() : null;
+    if (train) group.add(train);
     group.visible = false;
     this.scene.add(group);
-    const entry = { track, group, outdoor: v.kind !== 'arena' || !!def.city, animate };
+    const entry = { track, group, outdoor: v.kind !== 'arena' || !!def.city, animate, train };
     this.venues.set(key, entry);
     return entry;
   }
@@ -122,8 +125,12 @@ export class RaceScreen {
     return group;
   }
 
-  enter({ build, car, event }) {
-    this.args = { build, car, event };
+  // multiplayer: { players: [{ name, carName, build, pr, device }], bots } from the
+  // lobby. Players take the first car slots; each gets a split-screen pane.
+  enter({ build, car, event, multiplayer }) {
+    this.args = { build, car, event, multiplayer };
+    this.mp = multiplayer || null;
+    this.net = multiplayer?.online || null;
     this.def = event || EVENTS.find((e) => e.type === 'circuit');
     this.careerCar = car || null;
     if (this.careerCar && this.def.entryFee && this.app.career) {
@@ -151,33 +158,58 @@ export class RaceScreen {
     this.scene.background = venue.outdoor ? this.app.tex.sky : new THREE.Color('#07050d');
 
     // AI field: random named drivers at a tier matching the player's car.
-    const seed = Math.floor(Math.random() * 1e9);
+    const seed = multiplayer?.seed ?? Math.floor(Math.random() * 1e9); // online: shared so AI matches
     this.seed = seed;
     // Career events run at their district's tier; a rival or boss (one tier up)
     // always takes the first AI slot.
-    this.tier = this.def.tier ?? tierForPr(computeBuild(build).pr);
-    const special = this.def.driver || this.def.rivalDriver || null;
-    const pool = [...DRIVERS].sort((a, b) => ((hashId(a.id) ^ seed) >>> 0) - ((hashId(b.id) ^ seed) >>> 0)).filter((d) => d.id !== special);
-    const drivers = [...(special ? [DRIVERS.find((d) => d.id === special)] : []), ...pool].slice(0, this.def.cars - 1);
-    const fieldTier = special ? Math.max(0, this.tier - 1) : this.tier;
-    const entries = drivers.map((d, k) => buildDriver(d, special && k === 0 ? this.tier : fieldTier, seed + k));
-    this.specialIndex = special ? 1 : -1;
-    this.names = ['YOU', ...entries.map((e, k) => (special && k === 0 ? `${e.name} ${this.def.boss ? 'BOSS' : 'RIVAL'}` : e.name))];
-    this.builds = [build, ...entries.map((e) => e.build)];
+    const humans = this.mp ? this.mp.players : [{ name: 'YOU', build, device: null }];
+    const H = (this.humans = humans.length);
+    this.devices = humans.map((h) => h.device);
+    // Cars with a camera on this machine: every split-screen player, or online just ours.
+    this.viewers = this.net ? this.net.viewers || [this.net.slot] : humans.map((_, p) => p);
+    let entries;
+    if (this.mp) {
+      // Lobby bots were already built to the players' PR.
+      this.tier = tierForPr(humans.reduce((s, h) => s + h.pr, 0) / H);
+      this.specialIndex = -1;
+      entries = this.mp.bots;
+      this.names = [...humans.map((h) => h.name), ...entries.map((e) => e.name)];
+    } else {
+      this.tier = this.def.tier ?? tierForPr(computeBuild(build).pr);
+      const special = this.def.driver || this.def.rivalDriver || null;
+      const pool = [...DRIVERS].sort((a, b) => ((hashId(a.id) ^ seed) >>> 0) - ((hashId(b.id) ^ seed) >>> 0)).filter((d) => d.id !== special);
+      const drivers = [...(special ? [DRIVERS.find((d) => d.id === special)] : []), ...pool].slice(0, this.def.cars - 1);
+      const fieldTier = special ? Math.max(0, this.tier - 1) : this.tier;
+      entries = drivers.map((d, k) => buildDriver(d, special && k === 0 ? this.tier : fieldTier, seed + k));
+      this.specialIndex = special ? 1 : -1;
+      this.names = ['YOU', ...entries.map((e, k) => (special && k === 0 ? `${e.name} ${this.def.boss ? 'BOSS' : 'RIVAL'}` : e.name))];
+    }
+    this.builds = [...humans.map((h) => h.build), ...entries.map((e) => e.build)];
     this.computed = this.builds.map((b) => computeBuild(pristine(b)));
     const n = this.builds.length;
     this.world = createWorld({
       track: this.track,
-      cars: this.builds.map((b, i) => ({ params: this.computed[i].params, conditions: conditionsOf(b) })),
+      // Multiplayer runs every car fresh; wear isn't written back either.
+      cars: this.builds.map((b, i) => ({ params: this.computed[i].params, conditions: conditionsOf(this.mp ? pristine(b) : b) })),
       poses: gridPoses(this.track, this.def, n),
       event: createEventState(this.def, this.track),
       respawnOnWreck: !(this.def.type === 'arena' && this.def.mode === 'lastStanding'),
     });
-    entries.forEach((e, k) => initAi(this.world.state.cars[k + 1], e.personality, seed + 31 * k));
-    this.queue = new InputQueue();
-    this.lastFrame = neutralInput();
+    entries.forEach((e, k) => initAi(this.world.state.cars[k + H], e.personality, seed + 31 * k));
+    this.queues = humans.map(() => new InputQueue());
+    this.lastFrames = humans.map(() => neutralInput());
     this.views = this.builds.map((b, i) => this.makeView(i));
-    this.cameraRig = new CameraRig(this.camera, this.track);
+    // One camera per player; the first is the screen's own camera.
+    this.extraCams ||= [];
+    const V = this.viewers.length;
+    while (this.extraCams.length < V - 1) this.extraCams.push(new THREE.PerspectiveCamera(68, 16 / 9, 0.3, 1500));
+    this.cameras = [this.camera, ...this.extraCams.slice(0, V - 1)]; // per viewer
+    this.rigs = this.cameras.map((cam) => new CameraRig(cam, this.track));
+    this.panes = splitLayout(V);
+    this.shakes = humans.map(() => 0); // per human car
+    this.wrongWays = humans.map(() => 0);
+    this.popupsBy = humans.map(() => []);
+    this.setupNet();
     this.prevPoses = this.capturePoses();
     this.victims = new Set();
     this.pickupMeshes = this.world.state.event.pickups.map((pk) => {
@@ -186,12 +218,14 @@ export class RaceScreen {
       this.scene.add(m);
       return m;
     });
-    this.popups = [];
     this.resultsAt = null;
     this.resultsShown = false;
     this.app.ui.innerHTML = '';
-    const b = build;
-    this.label = `PR ${computeBuild(b).pr}  ${partType(b.parts.chassis).name} / ${partType(b.parts.engine).name}`;
+    this.labels = humans.map((h) => {
+      const b = h.build;
+      const text = `PR ${computeBuild(b).pr}  ${partType(b.parts.chassis).name} / ${partType(b.parts.engine).name}`;
+      return this.mp && (H > 1 || this.net) ? `${h.name}  ${text}` : text;
+    });
   }
 
   makeView(i) {
@@ -201,6 +235,12 @@ export class RaceScreen {
   }
 
   exit() {
+    // Online: the host leaving the race sends everyone back to the room.
+    if (this.net) {
+      if (this.net.role === 'host') this.net.session.broadcast({ t: 'room' });
+      this.net.session.on({});
+      this.net = null;
+    }
     // Wear from this outing stays on the car until it's repaired in the garage.
     if (this.careerCar) {
       const cond = this.world.state.cars[0].condition;
@@ -216,26 +256,129 @@ export class RaceScreen {
     this.app.hud.clear();
   }
 
+  // Online races keep running while the pause menu is open.
+  get online() {
+    return !!this.net;
+  }
+
+  // Host-authoritative sync. The host simulates everything, takes each client's
+  // latest input and broadcasts the whole world state every SNAP_EVERY ticks.
+  // Clients predict locally, then on each snapshot restore the host's state and
+  // replay their own inputs since that tick.
+  setupNet() {
+    const net = this.net;
+    this.remoteIn = [];
+    this.history = new Map();
+    this.pendingSnap = null;
+    this.outEvents = [];
+    if (!net) return;
+    const { session } = net;
+    if (net.role === 'host') {
+      session.on({
+        message: (msg, from) => {
+          const slot = net.slots[from];
+          if (msg.t === 'in' && slot > 0) this.remoteIn[slot] = sanitizeInput(msg.f || {});
+        },
+        leave: (id) => {
+          const slot = net.slots[id];
+          if (slot > 0) {
+            this.remoteIn[slot] = neutralInput();
+            this.popup(`${this.names[slot]} LEFT`, PALETTE.pink, 0);
+          }
+        },
+      });
+    } else {
+      session.on({
+        message: (msg) => {
+          if (msg.t === 'snap' && (!this.pendingSnap || msg.tick > this.pendingSnap.tick)) {
+            // Events between two snapshots must not be lost when one is skipped.
+            if (this.pendingSnap) msg.events = [...this.pendingSnap.events, ...msg.events];
+            this.pendingSnap = msg;
+          } else if (msg.t === 'room') {
+            this.app.go('lobby');
+          }
+        },
+        leave: () => {
+          session.close();
+          this.app.net = null;
+          this.net = null;
+          this.app.go('lobby', { error: 'Lost the connection to the host.' });
+        },
+      });
+    }
+  }
+
+  reconcile() {
+    const snap = this.pendingSnap;
+    this.pendingSnap = null;
+    const world = this.world;
+    const localTick = world.state.tick;
+    const me = this.net.slot;
+    snap.inputs.forEach((f, p) => {
+      if (p !== me) this.remoteIn[p] = f;
+    });
+    world.state = snap.state;
+    world.events.push(...snap.events);
+    const kept = world.events.length;
+    for (let t = snap.tick; t < localTick; t++) {
+      const inputs = [];
+      for (let p = 0; p < this.humans; p++) inputs.push(p === me ? this.history.get(t) || neutralInput() : this.remoteIn[p] || neutralInput());
+      for (let i = this.humans; i < world.state.cars.length; i++) inputs.push(aiInput(world, i, SIM_DT));
+      stepWorld(world, inputs);
+    }
+    world.events.length = kept; // replayed ticks don't repeat effects
+    for (const t of this.history.keys()) if (t < snap.tick) this.history.delete(t);
+    // Keep interpolation sane after a correction.
+    this.prevPoses = this.capturePoses();
+  }
+
   capturePoses() {
     return this.world.state.cars.map((c) => ({ pos: { ...c.pos }, quat: { ...c.quat } }));
   }
 
   step() {
+    const net = this.net;
+    if (net?.role === 'client' && this.pendingSnap) this.reconcile();
     const { state } = this.world;
     const tick = state.tick;
-    this.lastFrame = this.app.localInput.sample();
-    this.queue.push(tick, this.lastFrame);
-    state.cars[0].invulnerable = !!this.app.settings.godMode;
-    const inputs = [this.queue.take(tick)];
-    for (let i = 1; i < state.cars.length; i++) inputs.push(aiInput(this.world, i, SIM_DT));
+    const inputs = [];
+    for (let p = 0; p < this.humans; p++) {
+      if (!this.viewers.includes(p)) {
+        // Someone else's car: the host uses their latest input, a client the host's.
+        inputs.push(this.remoteIn[p] || neutralInput());
+        continue;
+      }
+      this.lastFrames[p] = this.app.localInput.sample(this.devices[p]);
+      this.queues[p].push(tick, this.lastFrames[p]);
+      const frame = this.queues[p].take(tick);
+      inputs.push(frame);
+      if (net?.role === 'client') {
+        this.history.set(tick, frame);
+        net.session.send({ t: 'in', f: frame });
+      }
+    }
+    state.cars[0].invulnerable = !this.mp && !!this.app.settings.godMode;
+    for (let i = this.humans; i < state.cars.length; i++) inputs.push(aiInput(this.world, i, SIM_DT));
     this.prevPoses = this.capturePoses();
     stepWorld(this.world, inputs);
+    if (net?.role === 'client') {
+      this.world.events.length = 0; // effects come from the host's snapshots
+    } else if (net) {
+      this.outEvents.push(...this.world.events);
+      if (state.tick % SNAP_EVERY === 0) {
+        net.session.broadcast({ t: 'snap', tick: state.tick, state, inputs: inputs.slice(0, this.humans), events: this.outEvents });
+        this.outEvents = [];
+      }
+    }
     // Wrong way: moving against the track direction for over a second.
-    const car = state.cars[0];
-    const i = car.trackIndex;
-    const racing = !this.track.isArena && state.event.phase === 'racing' && !car.wrecked && i >= 0;
-    const along = racing ? car.vel.x * this.track.tx[i] + car.vel.z * this.track.tz[i] : 0;
-    this.wrongWay = along < -4 ? (this.wrongWay || 0) + SIM_DT : along > 1 || !racing ? 0 : this.wrongWay || 0;
+    for (let p = 0; p < this.humans; p++) {
+      const car = state.cars[p];
+      const i = car.trackIndex;
+      const racing = !this.track.isArena && state.event.phase === 'racing' && !car.wrecked && i >= 0;
+      const along = racing ? car.vel.x * this.track.tx[i] + car.vel.z * this.track.tz[i] : 0;
+      const w = this.wrongWays[p];
+      this.wrongWays[p] = along < -4 ? w + SIM_DT : along > 1 || !racing ? 0 : w;
+    }
   }
 
   pose(i, alpha) {
@@ -250,16 +393,17 @@ export class RaceScreen {
   }
 
   // Health bars and names over other cars, and the lock-on reticle.
-  markers(player) {
+  markers(p, camera) {
     const out = [];
     const { state, params } = this.world;
-    const w = params[0].weapons?.primary;
+    const player = state.cars[p];
+    const w = params[p].weapons?.primary;
     const beh = w && WEAPON_BEHAVIOR[w.type];
-    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.views[0].group.quaternion);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.views[p].group.quaternion);
     let lock = -1;
     let best = Infinity;
     state.cars.forEach((c, j) => {
-      if (j === 0 || c.wrecked) return;
+      if (j === p || c.wrecked) return;
       const to = new THREE.Vector3(c.pos.x - player.pos.x, c.pos.y - player.pos.y, c.pos.z - player.pos.z);
       const d = to.length();
       if (beh && d < w.range && beh.cone < 1 && state.event?.weapons !== 'rear') {
@@ -270,23 +414,24 @@ export class RaceScreen {
         }
       }
       if (d > 90) return;
-      const p = new THREE.Vector3(c.pos.x, c.pos.y + 1.6, c.pos.z).project(this.camera);
-      if (p.z > 1) return;
-      out.push({ x: p.x, y: p.y, hp: c.hp / c.maxHp, id: j, name: this.names[j] });
+      const s = new THREE.Vector3(c.pos.x, c.pos.y + 1.6, c.pos.z).project(camera);
+      if (s.z > 1) return;
+      out.push({ x: s.x, y: s.y, hp: c.hp / c.maxHp, id: j, name: this.names[j] });
     });
     for (const m of out) m.lock = m.id === lock;
     return out;
   }
 
-  popup(text, color) {
-    this.popups.unshift({ text, color, age: 0 });
-    this.popups.length = Math.min(this.popups.length, 4);
+  popup(text, color, p = 0) {
+    const list = this.popupsBy[p];
+    list.unshift({ text, color, age: 0 });
+    list.length = Math.min(list.length, 4);
   }
 
-  eventInfo() {
+  eventInfo(p) {
     const { state } = this.world;
     const ev = state.event;
-    const car = state.cars[0];
+    const car = state.cars[p];
     const alive = state.cars.filter((c) => !c.wrecked).length;
     const title = {
       free: `LAP ${Math.max(1, car.race.lap)}`,
@@ -303,7 +448,7 @@ export class RaceScreen {
     } else if (ev.type !== 'circuit' && ev.type !== 'free') {
       sub = `${Math.min(100, Math.round((car.trackS / ev.finishS) * 100))}% DONE`;
     }
-    const place = ev.finished.indexOf(0) + 1;
+    const place = ev.finished.indexOf(p) + 1;
     return {
       title,
       sub: sub || undefined,
@@ -315,8 +460,8 @@ export class RaceScreen {
       manual: car.manual,
       finishedText: place ? `FINISHED ${ordinal(place)}` : car.wrecked && ev.mode === 'lastStanding' ? 'ELIMINATED' : null,
       inPit: car.inPit,
-      wrongWay: this.wrongWay > 1,
-      popups: this.popups,
+      wrongWay: this.wrongWays[p] > 1,
+      popups: this.popupsBy[p],
     };
   }
 
@@ -324,6 +469,7 @@ export class RaceScreen {
     const { settings, hud, touch } = this.app;
     this.time += dt;
     const { state } = this.world;
+    if (this.venueEntry?.train) updateTrainView(this.venueEntry.train, this.track.train, state.tick - 1 + alpha);
     const ev = state.event;
 
     // Events: effects, dents, respawns (a fresh car model), popups and shake.
@@ -333,75 +479,102 @@ export class RaceScreen {
         this.views[e.car].removeFrom(this.scene);
         this.views[e.car] = this.makeView(e.car);
       }
-      if ((e.type === 'hit' && e.car === 0) || (e.type === 'crash' && (e.a === 0 || e.b === 0))) this.shake = Math.min(0.5, this.shake + 0.15);
-      if (e.type === 'wreck' || e.type === 'explosion') this.shake = Math.min(0.6, this.shake + 0.25);
-      if (e.type === 'wreck' && e.by === 0 && e.car !== 0) {
-        this.victims.add(e.car);
-        this.popup(`TAKEDOWN! ${this.names[e.car]}`, PALETTE.pink);
-      }
-      if (e.car === 0) {
-        if (e.type === 'style') this.popup(`${e.kind} +$${e.amount}`, PALETTE.amber);
-        if (e.type === 'launch') this.popup('PERFECT LAUNCH!', PALETTE.green);
-        if (e.type === 'pickup') this.popup(`+${e.kind.toUpperCase()}`, PALETTE.cyan);
-        if (e.type === 'falseStart') this.popup('FALSE START!', PALETTE.pink);
+      for (let p = 0; p < this.humans; p++) {
+        if ((e.type === 'hit' && e.car === p) || (e.type === 'crash' && (e.a === p || e.b === p))) this.shakes[p] = Math.min(0.5, this.shakes[p] + 0.15);
+        if (e.type === 'wreck' || e.type === 'explosion') this.shakes[p] = Math.min(0.6, this.shakes[p] + 0.25);
+        if (e.type === 'wreck' && e.by === p && e.car !== p) {
+          if (!this.mp) this.victims.add(e.car);
+          this.popup(`TAKEDOWN! ${this.names[e.car]}`, PALETTE.pink, p);
+        }
+        if (e.car === p) {
+          if (e.type === 'style') this.popup(`${e.kind} +$${e.amount}`, PALETTE.amber, p);
+          if (e.type === 'launch') this.popup('PERFECT LAUNCH!', PALETTE.green, p);
+          if (e.type === 'pickup') this.popup(`+${e.kind.toUpperCase()}`, PALETTE.cyan, p);
+          if (e.type === 'falseStart') this.popup('FALSE START!', PALETTE.pink, p);
+        }
       }
     }
-    for (const p of this.popups) p.age += dt;
+    for (const list of this.popupsBy) for (const p of list) p.age += dt;
     state.event.pickups.forEach((pk, k) => {
       const m = this.pickupMeshes[k];
       m.visible = pk.active;
       m.rotation.y += dt * 2;
       m.position.y = pk.y + Math.sin(this.time * 3 + k) * 0.2;
     });
-    this.popups = this.popups.filter((p) => p.age < 1.8);
+    this.popupsBy = this.popupsBy.map((list) => list.filter((p) => p.age < 1.8));
 
     state.cars.forEach((car, i) => this.views[i].update(this.pose(i, paused ? 1 : alpha), car, this.track, this.time));
     this.venueEntry.animate?.((state.tick + (paused ? 0 : alpha)) * SIM_DT);
     this.fx.handleEvents(events, this.world, this.views);
     this.fx.update(paused ? 0 : dt, this.world, this.views);
 
-    const player = state.cars[0];
-    this.cameraRig.update(this.poses[0], player, dt, this.lastFrame.lookBack);
-    if (this.shake > 0) {
-      this.camera.position.x += (Math.random() - 0.5) * this.shake;
-      this.camera.position.y += (Math.random() - 0.5) * this.shake;
-      this.shake = Math.max(0, this.shake - dt * 1.5);
+    const split = this.viewers.length > 1;
+    const player = state.cars[this.viewers[0]];
+    for (let v = 0; v < this.viewers.length; v++) {
+      const p = this.viewers[v];
+      const cam = this.cameras[v];
+      this.rigs[v].update(this.poses[p], state.cars[p], dt, this.lastFrames[p].lookBack);
+      if (this.shakes[p] > 0) {
+        cam.position.x += (Math.random() - 0.5) * this.shakes[p];
+        cam.position.y += (Math.random() - 0.5) * this.shakes[p];
+        this.shakes[p] = Math.max(0, this.shakes[p] - dt * 1.5);
+      }
+      if (split) {
+        const aspect = (this.app.renderer.aspect * this.panes[v].w) / this.panes[v].h;
+        if (Math.abs(cam.aspect - aspect) > 1e-4) {
+          cam.aspect = aspect;
+          cam.updateProjectionMatrix();
+        }
+      }
     }
-    const fxOn = settings.speedFx !== false && !this.resultsShown;
-    this.speedFx = fxOn ? this.cameraRig.intensity || 0 : 0;
+    // Speed blur, speed lines and rain follow one camera: single screen only.
+    const fxOn = settings.speedFx !== false && !this.resultsShown && !split;
+    this.speedFx = fxOn ? this.rigs[0].intensity || 0 : 0;
     this.speedLines.update(paused ? 0 : dt, Math.hypot(player.vel.x, player.vel.z), this.speedFx);
-    this.rain.mesh.visible = (settings.rain || this.forceRain) && this.outdoor;
+    this.rain.mesh.visible = (settings.rain || this.forceRain) && this.outdoor && !split;
     if (this.rain.mesh.visible) this.rain.update(this.camera.position, dt);
 
     // Results a moment after the player finishes, is eliminated, or the event ends.
-    const playerDone = ev.finishTime[0] !== undefined || (ev.mode === 'lastStanding' && player.wrecked) || ev.done;
+    const done = (p) => ev.finishTime[p] !== undefined || (ev.mode === 'lastStanding' && state.cars[p].wrecked);
+    const playerDone = ev.done || this.viewers.every(done);
     if (playerDone && this.resultsAt === null) this.resultsAt = this.time + 2.5;
     if (this.resultsAt !== null && this.time >= this.resultsAt && !this.resultsShown) this.showResults();
 
+    const views = split ? this.cameras.map((camera, p) => ({ camera, rect: this.panes[p] })) : this.camera;
     if (this.resultsShown) {
       hud.clear();
-      return { scene: this.scene, camera: this.camera };
+      return { scene: this.scene, camera: views };
     }
     const order = standings(this.world);
-    hud.draw({
-      car: player,
-      params: this.computed[0].params,
-      tick: state.tick,
-      fps: this.app.fps,
-      showFps: settings.showFps,
-      touchLayout: touch.visible,
-      label: settings.godMode ? `${this.label}  GOD MODE` : this.label,
-      units: settings.units,
-      hudScale: settings.hudSize,
-      markers: this.markers(player),
-      position: state.cars.length > 1 ? { pos: order.findIndex((r) => r.id === 0) + 1, total: state.cars.length } : null,
-      eventInfo: this.eventInfo(),
-      minimap: { track: this.track, cars: state.cars, player: 0 },
-    });
-    return { scene: this.scene, camera: this.camera };
+    const cw = hud.canvas.width;
+    const ch = hud.canvas.height;
+    for (let v = 0; v < this.viewers.length; v++) {
+      const p = this.viewers[v];
+      const r = this.panes[v];
+      const label = this.labels[p];
+      hud.draw({
+        viewport: split ? { x: Math.round(r.x * cw), y: Math.round(r.y * ch), w: Math.round(r.w * cw), h: Math.round(r.h * ch) } : null,
+        keep: v > 0,
+        car: state.cars[p],
+        params: this.computed[p].params,
+        tick: state.tick,
+        fps: this.app.fps,
+        showFps: settings.showFps && v === 0,
+        touchLayout: touch.visible && !split,
+        label: settings.godMode && !this.mp ? `${label}  GOD MODE` : label,
+        units: settings.units,
+        hudScale: settings.hudSize,
+        markers: this.markers(p, this.cameras[v]),
+        position: state.cars.length > 1 ? { pos: order.findIndex((o) => o.id === p) + 1, total: state.cars.length } : null,
+        eventInfo: this.eventInfo(p),
+        minimap: { track: this.track, cars: state.cars, player: p },
+      });
+    }
+    return { scene: this.scene, camera: views };
   }
 
   showResults() {
+    if (this.mp) return this.showMpResults();
     this.resultsShown = true;
     const { state } = this.world;
     const ev = state.event;
@@ -435,7 +608,14 @@ export class RaceScreen {
       career.cash = (career.cash || 0) + rewards.total;
       career.inventory.push(...salvage);
       career.eventsRun = (career.eventsRun || 0) + 1;
+      if (this.def.type !== 'free') recordResult(this.careerCar, { place, of: order.length, takedowns: player.takedowns || 0, cash: rewards.total });
       career.completed ??= [];
+      // Best result per event, shown on its card afterwards.
+      if (this.def.career && place > 0) {
+        career.results ??= {};
+        const prev = career.results[this.def.id];
+        career.results[this.def.id] = { best: prev ? Math.min(prev.best, place) : place, of: order.length, runs: (prev?.runs || 0) + 1 };
+      }
       if (this.def.career && place > 0 && place <= 3 && !career.completed.includes(this.def.id)) career.completed.push(this.def.id);
       saveCareer(career);
     }
@@ -467,6 +647,58 @@ export class RaceScreen {
     this.app.ui.querySelector('.garage').addEventListener('click', () => this.app.go('garage'));
     this.app.ui.querySelector('.city').addEventListener('click', () => this.app.go('city'));
   }
+
+  // Multiplayer results: standings only. No cash, salvage or career record changes.
+  showMpResults() {
+    this.resultsShown = true;
+    const ev = this.world.state.event;
+    const order = standings(this.world);
+    const players = this.mp.players;
+    const rows = order.map((r, k) => {
+      const result = ev.type === 'arena'
+        ? `KO ${r.takedowns}${ev.mode === 'lastStanding' ? (r.eliminated === -1 ? ' &middot; SURVIVED' : ' &middot; OUT') : ''}`
+        : r.finished ? formatTime(Math.round(r.time * 60)) : 'DNF';
+      const human = r.id < this.humans;
+      const name = human ? `${players[r.id].name} &middot; ${esc(players[r.id].carName)}` : `${esc(this.names[r.id])} <span class="hint">BOT</span>`;
+      return `<tr class="${human ? 'me' : ''}"><td>${k + 1}</td><td>${name}</td><td>${result}</td></tr>`;
+    }).join('');
+    const career = this.app.career?.cars || [];
+    const records = players.map((p) => {
+      const car = career.find((c) => c.build === p.build);
+      const text = p.record ? esc(p.record) : car ? recordText(car) : 'loaner, no career record';
+      return `<div class="record"><b>${p.name}</b> ${esc(p.carName)}: ${text}</div>`;
+    }).join('');
+    const winner = order[0] && order[0].id < this.humans ? `${players[order[0].id].name} WINS` : `${esc(this.names[order[0]?.id] ?? '')} WINS`;
+    this.app.ui.innerHTML = `<div class="screen results"><div class="results-panel">
+      <h1>${esc(this.def.name)}</h1>
+      <h2>${winner}</h2>
+      <table class="standings">${rows}</table>
+      <h3>Career records</h3>${records}
+      <div class="hint">Multiplayer races don't pay out or count toward career records.</div>
+      ${this.net
+        ? this.net.role === 'host' ? '<div class="row"><button class="btn primary room">BACK TO ROOM</button></div>' : '<div class="hint">Waiting for the host to go back to the room...</div>'
+        : '<div class="row"><button class="btn primary again">REMATCH</button><button class="btn lobby">LOBBY</button><button class="btn menu">MAIN MENU</button></div>'}
+    </div></div>`;
+    const on = (sel, fn) => this.app.ui.querySelector(sel)?.addEventListener('click', fn);
+    on('.room', () => this.app.go('lobby'));
+    on('.again', () => this.app.go('race', this.args));
+    on('.lobby', () => this.app.go('lobby'));
+    on('.menu', () => this.app.go('menu'));
+  }
+}
+
+// Split-screen panes (0..1, top-left origin) with a thin gap between them: two
+// players stacked, three with P1 on top, four in quarters.
+const GAP = 0.003;
+function splitLayout(n) {
+  const full = { x: 0, y: 0, w: 1, h: 1 };
+  const top = { x: 0, y: 0, w: 1, h: 0.5 - GAP };
+  const bottom = { x: 0, y: 0.5 + GAP, w: 1, h: 0.5 - GAP };
+  const q = (col, row) => ({ x: col ? 0.5 + GAP : 0, y: row ? 0.5 + GAP : 0, w: 0.5 - GAP, h: 0.5 - GAP });
+  if (n <= 1) return [full];
+  if (n === 2) return [top, bottom];
+  if (n === 3) return [top, q(0, 1), q(1, 1)];
+  return [q(0, 0), q(1, 0), q(0, 1), q(1, 1)];
 }
 
 // Floating pickup: red cross (health), cyan canister (nitro), amber crate (ammo).

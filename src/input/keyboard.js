@@ -1,16 +1,16 @@
-// Keyboard and mouse. Tracks held keys; `apply` writes them into an InputFrame.
+import { KEY_LAYOUTS, keyBinds } from './bindings.js';
 
-const GAME_KEYS = new Set([
-  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
-  'Space', 'ShiftLeft', 'ShiftRight', 'KeyE', 'KeyQ', 'KeyR', 'KeyF',
-]);
+// Keyboard and mouse. Tracks held keys and buttons; `apply` writes them into an
+// InputFrame using a layout's bindings ('all' for solo, 'left'/'right' for two
+// split-screen players sharing a keyboard).
 
 export class Keyboard {
-  constructor(mouseTarget) {
+  constructor(mouseTarget, settings) {
+    this.settings = settings;
     this.down = new Set();
     this.mouse = new Set();
     window.addEventListener('keydown', (e) => {
-      if (GAME_KEYS.has(e.code)) e.preventDefault();
+      if (this.isGameKey(e.code) && !/INPUT|SELECT|TEXTAREA/.test(e.target?.tagName || '')) e.preventDefault();
       this.down.add(e.code);
     });
     window.addEventListener('keyup', (e) => this.down.delete(e.code));
@@ -23,22 +23,20 @@ export class Keyboard {
     mouseTarget.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
-  held(...codes) {
-    return codes.some((c) => this.down.has(c));
+  isGameKey(code) {
+    return Object.keys(KEY_LAYOUTS).some((l) => Object.values(keyBinds(this.settings, l)).some((codes) => codes.includes(code)));
   }
 
-  apply(frame) {
-    const steer = (this.held('KeyD', 'ArrowRight') ? 1 : 0) - (this.held('KeyA', 'ArrowLeft') ? 1 : 0);
+  held(codes) {
+    return codes.some((c) => (c.startsWith('Mouse') ? this.mouse.has(Number(c.slice(5))) : this.down.has(c)));
+  }
+
+  apply(frame, layout = 'all') {
+    const k = keyBinds(this.settings, layout);
+    const steer = (this.held(k.right) ? 1 : 0) - (this.held(k.left) ? 1 : 0);
     if (Math.abs(steer) > Math.abs(frame.steer)) frame.steer = steer;
-    if (this.held('KeyW', 'ArrowUp')) frame.throttle = 1;
-    if (this.held('KeyS', 'ArrowDown')) frame.brake = 1;
-    frame.handbrake ||= this.held('Space');
-    frame.nitro ||= this.held('ShiftLeft', 'ShiftRight');
-    frame.utility ||= this.held('KeyE');
-    frame.lookBack ||= this.held('KeyQ');
-    frame.reset ||= this.held('KeyR');
-    frame.fire1 ||= this.mouse.has(0);
-    frame.fire2 ||= this.mouse.has(2);
-    frame.shiftUp ||= this.held('KeyF');
+    if (this.held(k.throttle)) frame.throttle = 1;
+    if (this.held(k.brake)) frame.brake = 1;
+    for (const a of ['handbrake', 'nitro', 'utility', 'lookBack', 'reset', 'fire1', 'fire2', 'shiftUp']) frame[a] ||= this.held(k[a]);
   }
 }

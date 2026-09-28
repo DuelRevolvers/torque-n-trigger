@@ -40,6 +40,7 @@ class Arena {
     this.minY = def.minY ?? this.y0;
     this.heightAt = def.heightAt || null; // free roam: follows the district's hills (world y)
     this.holes = def.holes || [];
+    this.train = def.train || null;
     if (def.obstacles.length > 64) {
       this.grid = new Map();
       for (const o of def.obstacles) {

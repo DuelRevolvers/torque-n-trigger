@@ -21,32 +21,56 @@ export const DISTRICTS = [
     id: 'rustline', name: 'Rustline Docks', tier: 0, faction: 'Dock Rats', color: '#ff7a1a',
     blurb: 'A working port: piers over the water, a rail yard, tank farms, container stacks and cranes. Everyone starts here.',
     theme: { haze: '#20140f', fog: 0.0042 },
-    map: [[6, 58], [36, 58], [40, 94], [4, 94]],
+    map: [[6.1, 59.6], [33.9, 59.6], [35.2, 90.5], [3.9, 90.5]],
     city: {
-      id: 'rustline', name: 'Rustline', seed: 1101, cols: 9, rows: 7,
-      spacingX: [140, 210], spacingZ: [115, 165], removeEdges: 0.12, elevation: 0.3, hillScale: 400,
+      id: 'rustline', name: 'Rustline', seed: 1101, cols: 9, rows: 5,
+      spacingX: [140, 210], spacingZ: [115, 165], removeEdges: 0, elevation: 0.3, hillScale: 400,
+      // Authored to docs/districts/01-rustline-docks.md.
+      grid: {
+        xs: [-740, -520, -330, -150, 40, 230, 420, 600, 740],
+        zs: [-420, -280, -80, 110, 300],
+        avenue: 2, // Dock Road
+        cols: { WG: 0, KI: 1, CR: 2, HK: 3, TR: 4, RP: 5, SL: 6, AN: 7, EG: 8 }, // West Gate, Kiln, Crane, Hook, Tar, Rope, Salt, Anchor, East Gate
+        rows: { gate: 0, rail: 1, dock: 2, cannery: 3, quay: 4 }, // Gate Road, Rail Lane, Dock Road, Cannery Row, Quay Road
+        closed: [[5, 0, 'v'], [5, 1, 'v']], // no street between the truck park and the terminal
+        piers: [0, 2, 4, 8],
+        freight: { x: -425, from: -400 },
+        shop: [3, 1], // Wrench & Rust
+        lots: [
+          { at: [0, 3], kind: 'tanks' },
+          { at: [0, 2], kind: 'alley', axis: 'x' },
+          { at: [2, 2], kind: 'alley', axis: 'x' },
+          { at: [5, 2], kind: 'alley', axis: 'x' },
+          { at: [6, 2], kind: 'alley', axis: 'x' },
+          { at: [7, 2], kind: 'alley', axis: 'x' },
+          { at: [2, 1], kind: 'yard' },
+          { at: [7, 3], kind: 'yard' },
+        ],
+      },
       sites: [
-        { kind: 'arena', name: 'Dry Dock Yard', sizes: GROUND, min: 150, where: 'south' },
-        { kind: 'arena', name: 'Warehouse Row', sizes: GROUND, min: 150 },
-        { kind: 'railyard', name: 'Rail Yard', sizes: [[3, 1], [2, 1]], where: 'north' },
+        { kind: 'arena', name: 'Dry Dock Yard', at: [5, 3, 2, 1] },
+        { kind: 'arena', name: 'Warehouse Row', at: [3, 2, 2, 1] },
+        { kind: 'railyard', name: 'Rail Yard', at: [0, 0, 4, 1], path: { at: 0.06 } },
+        { kind: 'terminal', name: 'Container Terminal', at: [5, 0, 3, 2], path: { axis: 'z' } },
+        { kind: 'parking', name: 'Truck Park', at: [4, 0, 1, 2], path: { axis: 'z' } },
       ],
-      lots: { construction: 1, parking: 2, alley: 2, yard: 6, tanks: 3 },
-      buildings: 'warehouse', heights: [8, 20], features: ['waterfront', 'piers'], piers: 3,
+      lots: {},
+      buildings: 'warehouse', heights: [8, 20], features: ['waterfront', 'piers'],
       look: { building: '#b09a88', buildingTex: 'corrugated', lamp: '#ffae50', barrier: '#ffd0a0', signs: 0.12, lot: '#8a8078', neon: ['#ff7a1a', '#ffb000'], road: '#c8b8a8', walk: '#c8bcb0' },
     },
     events: [
-      { key: 'sprint', type: 'sprint', name: 'Dockside Dash', desc: 'From the end of a pier, through the docks, to the rail yard gates.', route: { kind: 'sprint', seed: 1, length: 2800, from: 'pier', to: 'railyard' }, cars: 5, purse: 900 },
-      { key: 'circuit', type: 'circuit', name: 'Rail Yard Loop', desc: 'The streets round the rail yard and the warehouses, closed off with barriers.', route: { kind: 'circuit', seed: 2, cells: 5, around: 'railyard' }, cars: 5, laps: 3, purse: 1100 },
-      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Dry Dock Brawl', desc: 'The dry dock yard on the waterfront, fenced off for the night.', route: { kind: 'arena', site: 0 }, cars: 5, timeLimit: 120, purse: 1000 },
-      { key: 'rival', type: 'sprint', name: 'Rival: Pier Run', desc: 'Across the docks and out to the end of a pier.', route: { kind: 'sprint', seed: 4, length: 3200, to: 'pier' }, cars: 4, purse: 1300, rival: true },
+      { key: 'sprint', type: 'sprint', name: 'Dockside Dash', desc: 'From the end of Pier 3, over the freight crossing, then through the container terminal (and two tunnels of opened containers) to East Gate.', route: { kind: 'sprint', path: ['TR.pier', 'TR.quay', 'TR.cannery', 'CR.cannery', 'CR.rail', 'WG.rail', 'WG.gate', 'terminal', 'EG.dock'] }, cars: 5, purse: 900 },
+      { key: 'circuit', type: 'circuit', name: 'Rail Yard Loop', desc: 'Round the rail yard: Rail Lane, Tar St, Gate Road, West Gate.', route: { kind: 'circuit', path: ['TR.rail', 'WG.rail', 'WG.gate', 'TR.gate'] }, cars: 5, laps: 3, purse: 1100 },
+      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Dry Dock Brawl', desc: 'The Dry Dock Yard on the waterfront, fenced off for the night.', route: { kind: 'arena', site: 0 }, cars: 5, timeLimit: 120, purse: 1000 },
+      { key: 'rival', type: 'sprint', name: 'Rival: Pier Run', desc: 'Dock Road, the waterfront under the cranes, then out to the end of Pier 1.', route: { kind: 'sprint', path: ['EG.dock', 'RP.dock', 'RP.quay', 'KI.quay', 'KI.dock', 'WG.dock', 'WG.quay', 'WG.pier'] }, cars: 4, purse: 1300, rival: true },
     ],
-    boss: { key: 'boss', type: 'arena', mode: 'lastStanding', name: 'Boss: Brick', desc: 'Brick holds court in the yard behind Warehouse Row.', route: { kind: 'arena', site: 1 }, cars: 4, timeLimit: 240, purse: 2000, driver: 'brick' },
+    boss: { key: 'boss', type: 'arena', mode: 'lastStanding', name: 'Boss: Brick', desc: 'Brick holds court in the half-demolished Warehouse Row.', route: { kind: 'arena', site: 1 }, cars: 4, timeLimit: 240, purse: 2000, driver: 'brick' },
   },
   {
     id: 'strip', name: 'Neon Strip', tier: 1, faction: 'Glow Syndicate', color: '#ff2a6d',
     blurb: 'The Glow Palace casino, a night market and clubs packed into tight blocks under neon arches. Acid rain most nights.',
     theme: { haze: '#1e0d30', fog: 0.0045 },
-    map: [[38, 40], [64, 40], [66, 76], [40, 76]],
+    map: [[39.6, 55.3], [65.1, 55.3], [65.1, 90], [39.6, 90]],
     city: {
       id: 'strip', name: 'Neon Strip', seed: 2202, cols: 12, rows: 9,
       spacingX: [80, 122], spacingZ: [72, 108], removeEdges: 0.07, elevation: 0.5, hillScale: 350,
@@ -71,7 +95,7 @@ export const DISTRICTS = [
     id: 'chrome', name: 'Chrome Heights', tier: 2, faction: 'Kessler Motors', color: '#05d9e8',
     blurb: 'Uptown, up top: every race runs across the skyscraper rooftops. Jump the gaps between buildings, cut across roof gardens and drive straight through a tower. Sponsors pay well, rivals hit hard.',
     theme: { haze: '#0d1530', fog: 0.0038 },
-    map: [[62, 8], [94, 8], [96, 44], [66, 44]],
+    map: [[68.8, 9.5], [96.8, 9.5], [96.8, 44], [68.8, 44]],
     city: {
       id: 'chrome', name: 'Chrome Heights', seed: 3303, cols: 9, rows: 8,
       spacingX: [115, 170], spacingZ: [115, 165], removeEdges: 0.08, elevation: 2, hillScale: 240, rooftop: 60, gapShare: 0.4,
@@ -96,7 +120,7 @@ export const DISTRICTS = [
     id: 'undercity', name: 'The Undercity', tier: 3, faction: 'Low Road Crew', color: '#39ff14',
     blurb: 'Streets under the elevated city deck: ramshackle towers of shacks and tin, tunnels, pillars, tank farms, a black market and flooded asphalt. The lights go out down here.',
     theme: { haze: '#081a12', fog: 0.0058 },
-    map: [[69, 50], [96, 50], [96, 94], [69, 94]],
+    map: [[70.3, 55.3], [96.4, 55.3], [96.4, 90], [70.3, 90]],
     city: {
       id: 'undercity', name: 'Undercity', seed: 4404, cols: 12, rows: 9,
       spacingX: [85, 128], spacingZ: [80, 118], removeEdges: 0.15, elevation: 1.5, hillScale: 260,
@@ -121,7 +145,7 @@ export const DISTRICTS = [
     id: 'spire', name: 'Corporate Spire', tier: 4, faction: 'Syncorp', color: '#b04dff',
     blurb: 'Downtown: pale stone monoliths trimmed in gold, grand plazas, boulevards, Central Park and the Spire itself. Win here and the championship is yours.',
     theme: { haze: '#1c160c', fog: 0.0033 },
-    map: [[26, 6], [58, 6], [60, 36], [30, 36]],
+    map: [[9.7, 9.9], [37.2, 9.9], [37.2, 43.6], [9.7, 43.6]],
     city: {
       id: 'spire', name: 'Corporate Spire', seed: 5505, cols: 9, rows: 7,
       spacingX: [150, 210], spacingZ: [140, 190], removeEdges: 0.04, elevation: 3, hillScale: 320,
@@ -155,7 +179,7 @@ export const MODIFIER_LABELS = {
   blackout: 'Blackout: lights matter',
 };
 
-const routeKey = (r) => (r.kind === 'arena' ? `arena-${r.site || 0}` : r.kind === 'drag' || r.kind === 'roam' ? r.kind : `${r.kind}-${r.seed}`);
+const routeKey = (r) => (r.path ? `${r.kind}-${r.path.join('_')}` : r.kind === 'arena' ? `arena-${r.site || 0}` : r.kind === 'drag' || r.kind === 'roam' ? r.kind : `${r.kind}-${r.seed}`);
 const venueFor = (district, route) => `city:${district.id}:${routeKey(route)}`;
 
 // Full event definitions for a district (what RaceScreen runs).
@@ -182,8 +206,8 @@ const RUST = DISTRICTS[0];
 export const HOME_EVENTS = [
   {
     id: 'back-alley', type: 'sprint', name: 'Back-alley Sprint', cars: 4, purse: 350, entryFee: 0, tier: 0, district: 'rustline',
-    route: { kind: 'sprint', seed: 7, length: 2400 }, venue: venueFor(RUST, { kind: 'sprint', seed: 7 }), city: RUST.city,
-    desc: 'Free entry, small purse. Always open.',
+    route: { kind: 'sprint', path: ['WG.dock', 'WG.cannery', 'EG.cannery', 'EG.quay'] }, venue: venueFor(RUST, { kind: 'sprint', path: ['WG.dock', 'WG.cannery', 'EG.cannery', 'EG.quay'] }), city: RUST.city,
+    desc: 'The length of Cannery Row, past the back alleys. Free entry, small purse. Always open.',
   },
 ];
 

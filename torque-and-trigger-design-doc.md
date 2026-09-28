@@ -384,8 +384,8 @@ This costs very little early on and is expensive to add later, so it's part of t
 | M4 | AI opponents | AI cars race and fight using the same part system and input interface |
 | M5 | All four event types | Sprint, circuit, arena and drag playable with rewards, 4 to 8 cars |
 | M6 | Career and city map | Districts, locations, shops, salvage, repairs, rivals and saving |
-| M7 | Local multiplayer | Split-screen for 2 to 4 players with AI fill |
-| M8 | Online multiplayer | Room-code lobbies, host-authoritative sync, PR classes |
+| M7 | Local multiplayer | Split-screen for 2 to 4 players with PR-matched bot fill, rank-gap warning and car career records in the lobby; no split-screen on phones |
+| M8 | Online multiplayer | Room-code lobbies (PeerJS/WebRTC), host-authoritative 20 Hz snapshots with client prediction and replay, PR classes D/C/B/A/Open, PR-capped bot fill |
 | M9 | Polish and balance | Tuning, effects, sound, performance pass on phones |
 
 ---

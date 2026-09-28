@@ -345,6 +345,8 @@ function arcadeAssist(car, p, ctl, h) {
   const vLong = dot(car.vel, fwd);
   const vLat = dot(car.vel, right);
   const speed = Math.abs(vLong);
+  // Drifts get harder to start and hold the slower you go: 0 at 36 km/h, 1 from 126 km/h.
+  const pace = clamp((speed - 10) / 25, 0, 1);
   let force = v3();
   let torque = v3();
 
@@ -362,7 +364,7 @@ function arcadeAssist(car, p, ctl, h) {
     car.driftDir = Math.sign(steerIn);
     car.driftKick = 0.35;
     car.driftExit = 0;
-    car.angVel = add(car.angVel, scale(up, -car.driftDir * a.driftKick));
+    car.angVel = add(car.angVel, scale(up, -car.driftDir * a.driftKick * (0.4 + 0.6 * pace)));
   }
   if (car.drifting) {
     car.driftKick = Math.max(0, car.driftKick - h);
@@ -381,7 +383,7 @@ function arcadeAssist(car, p, ctl, h) {
     let want;
     if (drifting) {
       // Hold a drift angle set by how hard you steer into the turn.
-      const target = a.driftAngleMin + (a.driftAngleMax - a.driftAngleMin) * Math.min(1, Math.abs(steerIn));
+      const target = (a.driftAngleMin + (a.driftAngleMax - a.driftAngleMin) * Math.min(1, Math.abs(steerIn))) * (0.45 + 0.55 * pace);
       const angle = Math.atan2(-vLat * car.driftDir, speed); // > 0: nose inside the turn
       want = -car.driftDir * (limit * 0.9 + (target - angle) * 3);
     } else {
@@ -394,7 +396,7 @@ function arcadeAssist(car, p, ctl, h) {
 
   car.regrip = Math.max(0, (car.regrip || 0) - h);
   if (!ctl.handbrake && (drifting || car.regrip > 0 || slide < a.alignMaxSlip)) {
-    const k = Math.min(1, (drifting ? a.driftAlign : car.regrip > 0 ? a.align * a.regrip : a.align) * h);
+    const k = Math.min(1, (drifting ? a.driftAlign * (1 + 3 * (1 - pace)) : car.regrip > 0 ? a.align * a.regrip : a.align) * h);
     car.vel = sub(car.vel, scale(right, vLat * k));
     // Keep the speed: redirect the removed sideways motion forward.
     car.vel = add(car.vel, scale(fwd, Math.sign(vLong || 1) * (Math.hypot(vLong, vLat) - Math.hypot(vLong, vLat * (1 - k)))));

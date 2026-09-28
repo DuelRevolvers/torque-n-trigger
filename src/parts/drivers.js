@@ -77,3 +77,7 @@ export function buildDriver(driver, tier, seed) {
 
 // Picks a tier whose cars roughly match a Performance Rating.
 export const tierForPr = (pr) => (pr < 360 ? 0 : pr < 470 ? 1 : pr < 580 ? 2 : pr < 700 ? 3 : 4);
+
+// Rank letters shown for a tier (multiplayer lobby).
+export const RANKS = ['D', 'C', 'B', 'A', 'S'];
+export const rankForPr = (pr) => RANKS[tierForPr(pr)];

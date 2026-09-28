@@ -14,7 +14,9 @@ const MAP_W = 400;
 const MAP_H = 300;
 const TYPE_COLOR = { free: '#ffffff', circuit: '#05d9e8', sprint: '#ff2a6d', arena: '#ffb000', drag: '#39ff14' };
 const TYPE_LABEL = { free: 'FREE DRIVE', sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG' };
-const HOME = { x: 24, y: 46 }; // map coords (0-100)
+const HOME = { x: 19.5, y: 50 }; // map coords (0-100)
+// On the map but not raced yet (designs in docs/districts).
+const UPCOMING = [{ name: 'Maple Hollow', map: [[40.8, 9.9], [64.7, 9.9], [64.7, 43.6], [40.8, 43.6]] }];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 // The career hub: a pixel map of Neon Sprawl. Pick a district to see its
@@ -131,12 +133,15 @@ export class CityScreen {
       `Entry ${e.entryFee ? `$${e.entryFee}` : 'free'}`,
     ].filter(Boolean).join(' &middot; ');
     const disabled = !drivable || !canPay || !gate.open;
-    return `<button class="event-card" data-event="${e.id}" ${disabled ? 'disabled' : ''}>
+    const done = career.results?.[e.id];
+    const ord = (n) => n + (n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th');
+    return `<button class="event-card${done ? ' done' : ''}" data-event="${e.id}" ${disabled ? 'disabled' : ''}>
       <span>${n ? `<span class="num" style="background:${TYPE_COLOR[e.type]}">${n}</span>` : ''}<span class="tag">${TYPE_LABEL[e.type]}</span> ${badges}</span>
       <b>${esc(e.name)}</b>
       ${e.desc ? `<span class="event-desc">${esc(e.desc)}</span>` : ''}
       ${mods ? `<span class="mods">${mods}</span>` : ''}
       <span class="event-meta">${meta}</span>
+      ${done ? `<span class="event-result"><span>Best: <b>${ord(done.best)}</b> of ${done.of}${done.runs > 1 ? ` &middot; ${done.runs} runs` : ''}</span><span class="retry">RETRY</span></span>` : ''}
       ${!gate.open ? `<span class="err">Locked: podium ${gate.need - gate.done} more event${gate.need - gate.done > 1 ? 's' : ''} here to face the boss (${gate.done}/${gate.need}).</span>` : !drivable ? '<span class="err">Your car is missing parts.</span>' : !canPay ? '<span class="err">Not enough cash for the entry fee.</span>' : ''}
     </button>`;
   }
@@ -228,38 +233,44 @@ export class CityScreen {
     ctx.fillStyle = water;
     ctx.beginPath();
     ctx.moveTo(0, H);
-    for (let x = 0; x <= W; x += 3) ctx.lineTo(x, H * 0.955 + Math.sin(x / 19) * 2.5 + Math.sin(x / 6) * 0.8);
+    for (let x = 0; x <= W; x += 3) ctx.lineTo(x, H * 0.94 + Math.sin(x / 19) * 2.5 + Math.sin(x / 6) * 0.8);
     ctx.lineTo(W, H);
     ctx.fill();
     ctx.strokeStyle = water;
     ctx.lineWidth = 7;
     ctx.beginPath();
-    ctx.moveTo(...P(61, -2));
-    ctx.bezierCurveTo(...P(59, 18), ...P(64, 34), ...P(64, 46.5));
-    ctx.bezierCurveTo(...P(64, 48), ...P(80, 46), ...P(102, 47));
+    ctx.moveTo(...P(66.2, -2));
+    ctx.bezierCurveTo(...P(65.2, 20), ...P(66.4, 38), ...P(66.8, 45));
+    ctx.bezierCurveTo(...P(67.2, 49.5), ...P(80, 48.5), ...P(102, 51));
     ctx.stroke();
     ctx.fillStyle = '#1c3050';
     for (let k = 0; k < 40; k++) ctx.fillRect(Math.floor(rng() * W), Math.floor(H * 0.965 + rng() * H * 0.03), 2, 1);
 
-    // Highways between districts.
-    const centre = (d) => P(d.map.reduce((a, q) => a + q[0] / 4, 0), d.map.reduce((a, q) => a + q[1] / 4, 0));
-    const [rust, strip, chrome, under, spire] = DISTRICTS.map(centre);
-    const home = P(HOME.x, HOME.y);
-    const roads = [[home, rust], [home, spire], [rust, strip], [strip, chrome], [strip, under], [spire, strip], [spire, chrome], [chrome, under]];
-    for (const [w, col, dash] of [[5, '#261e38', []], [1, '#54447a', [3, 3]]]) {
+    // Highways between the districts (bridges over the river).
+    const roads = [
+      [[37.2, 27], [40.8, 27]], // Corporate Spire - Maple Hollow
+      [[64.7, 27], [68.8, 27]], // Maple Hollow - Chrome Heights
+      [[19.5, 43.6], [19.5, 59.6]], // Corporate Spire - home - Rustline Docks
+      [[52.7, 43.6], [52.7, 55.3]], // Maple Hollow - Neon Strip
+      [[82.8, 44], [82.8, 55.3]], // Chrome Heights - The Undercity
+      [[34.6, 71.5], [39.6, 71.5]], // Rustline Docks - Neon Strip
+      [[65.1, 71.5], [70.3, 71.5]], // Neon Strip - The Undercity
+    ];
+    for (const [w, col, dash] of [[5, '#261e38', []], [1.4, '#6a4aa8', [3, 3]]]) {
       ctx.strokeStyle = col;
       ctx.lineWidth = w;
       ctx.setLineDash(dash);
       for (const [a, b] of roads) {
         ctx.beginPath();
-        ctx.moveTo(...a);
-        ctx.lineTo(...b);
+        ctx.moveTo(...P(...a));
+        ctx.lineTo(...P(...b));
         ctx.stroke();
       }
     }
     ctx.setLineDash([]);
 
     DISTRICTS.forEach((d, i) => this.drawDistrict(ctx, d, i, P));
+    for (const u of UPCOMING) this.drawUpcoming(ctx, u, P);
 
     // Home garage.
     const [hx, hy] = home;
@@ -292,6 +303,38 @@ export class CityScreen {
     ctx.fill();
   }
 
+  // A district that's on the map but not open yet.
+  drawUpcoming(ctx, u, P) {
+    const poly = u.map.map(([x, y]) => P(x, y));
+    const outline = () => {
+      ctx.beginPath();
+      poly.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.closePath();
+    };
+    ctx.save();
+    outline();
+    ctx.fillStyle = '#0f0c16';
+    ctx.fill();
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 2;
+    for (let k = -MAP_H; k < MAP_W; k += 6) {
+      ctx.beginPath();
+      ctx.moveTo(k, 0);
+      ctx.lineTo(k + MAP_H, MAP_H);
+      ctx.stroke();
+    }
+    ctx.restore();
+    outline();
+    ctx.strokeStyle = '#3a3448';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    const x = (poly[0][0] + poly[1][0]) / 2;
+    const y = Math.min(poly[0][1], poly[1][1]) + 4;
+    this.plate(ctx, u.name.toUpperCase(), x, y, '#6a6478');
+    this.plate(ctx, 'COMING SOON', x, y + 11, '#6a6478');
+  }
+
   drawDistrict(ctx, d, i, P) {
     const { career } = this.app;
     const open = districtUnlocked(career, i);
@@ -321,7 +364,7 @@ export class CityScreen {
       buildings: mix(d.color, '#1c1828', 0.78), alley: mix(d.color, '#1c1828', 0.72), yard: '#4a3028',
       construction: '#5c3e1e', plaza: '#4a4660', parking: '#2a2832', arena: mix(d.color, '#0b0814', 0.45),
       park: '#1f5a2a', housing: '#2e4030', quad: mix(d.color, '#1c1828', 0.68), market: '#6a2a58', casino: mix(d.color, '#1c1828', 0.35),
-      railyard: '#3e3630', tanks: '#44444c',
+      railyard: '#3e3630', tanks: '#44444c', terminal: '#3a3440',
     };
     for (const c of map.cells) {
       const [x0, x1, z0, z1] = c.lot;
@@ -376,7 +419,8 @@ export class CityScreen {
         }
         pins.push([at(pts[0][0], pts[0][1]), TYPE_COLOR[e.type], k + 1]);
       });
-      const shop = map.cells.filter((c) => c.kind === 'buildings').sort((p, q) => Math.hypot(...lotCentre(p.lot)) - Math.hypot(...lotCentre(q.lot)))[0];
+      const grid = d.city.grid;
+      const shop = grid?.shop ? map.cells[grid.shop[1] * (d.city.cols - 1) + grid.shop[0]] : map.cells.filter((c) => c.kind === 'buildings').sort((p, q) => Math.hypot(...lotCentre(p.lot)) - Math.hypot(...lotCentre(q.lot)))[0];
       if (shop) pins.push([at(...lotCentre(shop.lot)), '#e8e8ff', '$']);
       if (!events.length && map.arena) pins.push([at(map.arena.x, map.arena.z), TYPE_COLOR.arena, '']);
       for (const [[x, y], color, text] of pins) this.pin(ctx, x, y, color, String(text));

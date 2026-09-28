@@ -269,6 +269,10 @@
       }
       .city-panel { position: absolute; top: 84px; right: 12px; bottom: 12px; width: min(420px, 38vw); overflow-y: auto; background: var(--panel); border: 2px solid #33245a; padding: 12px; pointer-events: auto; display: flex; flex-direction: column; gap: 6px; }
       .event-card:disabled { opacity: 0.55; cursor: default; }
+      .event-card.done { opacity: 0.62; filter: saturate(0.5); }
+      .event-card.done:hover { opacity: 0.9; }
+      .event-result { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #c8c0e8; }
+      .event-result .retry { border: 1px solid var(--amber); color: var(--amber); padding: 1px 8px; font-size: 11px; letter-spacing: 1px; }
       .badge { font-size: 10px; padding: 1px 5px; margin-left: 4px; }
       .num { display: inline-block; min-width: 16px; text-align: center; color: #000; font-weight: bold; margin-right: 6px; padding: 0 3px; }
       .badge.boss { background: var(--pink); color: #000; } .badge.rival { background: var(--amber); color: #000; } .badge.clear { background: var(--green, #39ff14); color: #000; }
@@ -277,6 +281,34 @@
       .shop-row small { display: block; color: #8a82b0; }
       .wide { width: 100%; }
       .boss-banner { background: var(--amber); color: #000; font-weight: bold; padding: 6px 8px; margin: 6px 0; }
+      #ui .lobby { display: flex; align-items: flex-start; justify-content: center; background: rgba(8, 2, 20, 0.7); padding: 16px; overflow-y: auto; }
+      .lobby-panel { background: var(--panel); border: 3px solid var(--pink); box-shadow: 6px 6px 0 var(--cyan); padding: 16px; width: min(640px, 100%); box-sizing: border-box; }
+      .lobby select { font: bold 13px var(--font); background: #1a1030; color: var(--ink); border: 2px solid #33245a; padding: 4px; max-width: 100%; }
+      .ev-row { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--amber); }
+      .seat { border: 2px solid #33245a; padding: 6px 8px; margin: 6px 0; }
+      .seat-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      .seat .pn { color: var(--cyan); font-size: 16px; }
+      .seat-pr { font-size: 13px; }
+      .seat .drop { margin-left: auto; }
+      .record { font-size: 12px; color: #a89fd0; margin-top: 4px; }
+      .rank { display: inline-block; min-width: 18px; text-align: center; font-weight: bold; color: #000; padding: 0 4px; }
+      .rank-D { background: #c08050; } .rank-C { background: #b8b8c8; } .rank-B { background: #39ff14; } .rank-A { background: var(--cyan); } .rank-S { background: var(--amber); }
+      .rank-warn { background: var(--pink); color: #000; padding: 6px 8px; margin: 8px 0; font-size: 13px; }
+      .bot { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; border-bottom: 1px solid #241d3a; }
+      #ui .title-menu { display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at center, #2a0f4a 0%, #0a0418 70%); padding: 16px; }
+      .title-panel { display: flex; flex-direction: column; gap: 10px; width: min(420px, 100%); text-align: center; }
+      .title-panel h1 { font-size: 34px !important; margin-bottom: 12px !important; }
+      .title-btn { font-size: 18px; padding: 12px; text-align: left; }
+      .menu-tabs, .menu-devices { display: flex; flex-wrap: wrap; gap: 4px; margin: 12px 0 6px; }
+      .menu-tab { flex: 1; font: bold 12px var(--font); padding: 6px 4px; background: #1a1030; color: var(--ink); border: 2px solid #33245a; cursor: pointer; }
+      .menu-tab.on { border-color: var(--cyan); color: var(--cyan); }
+      .menu-sub { margin: 10px 0 0; font-size: 13px; color: var(--amber); }
+      #menu .menu-panel { max-height: 90vh; overflow-y: auto; }
+      .menu-wait { color: var(--pink) !important; }
+      .menu-row input[type=range] { width: 110px; vertical-align: middle; accent-color: var(--cyan); }
+      .menu-row:disabled { opacity: 0.4; }
+      .room-code { color: var(--amber); font-size: 20px; letter-spacing: 4px; margin-left: 8px; }
+      .code-in { width: 90px; font: bold 16px var(--font); text-transform: uppercase; letter-spacing: 3px; background: #1a1030; color: var(--ink); border: 2px solid #33245a; padding: 4px 6px; }
       .car-switch { display: flex; gap: 6px; align-items: center; margin-top: 6px; pointer-events: auto; font-size: 13px; }
 
       /* CRT curve on: heavier, slightly larger text survives the warp better. */

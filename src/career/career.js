@@ -8,17 +8,24 @@ const KEY = 'tt.career.v1';
 
 export function loadCareer() {
   try {
-    const data = JSON.parse(localStorage.getItem(KEY) || 'null');
+    return migrateCareer(JSON.parse(localStorage.getItem(KEY) || 'null'));
+  } catch {
+    return null;
+  }
+}
+
+// Fills in fields added since a save was written (also used by save slots).
+export function migrateCareer(data) {
+  {
     if (!data || data.version !== 1) return null;
     data.cash ??= 1000; // saves from before M5
     data.district ??= 0; // saves from before M6
     data.bosses ??= [];
     data.eventsRun ??= 0;
     data.completed ??= [];
+    data.results ??= {};
     data.bought ??= {};
     return data;
-  } catch {
-    return null;
   }
 }
 
@@ -47,6 +54,7 @@ export function newCareer(starter, seed) {
     bosses: [], // district ids whose boss is beaten
     eventsRun: 0, // refreshes shop stock
     completed: [], // event ids finished on the podium (opens bosses)
+    results: {}, // event id -> { best place, of, runs }
     bought: {},
     cars: [{ id: 'car-1', name: starter.name, archetype: starter.archetype, build: starter.build }],
     activeCar: 'car-1',
@@ -55,6 +63,23 @@ export function newCareer(starter, seed) {
 }
 
 export const activeCar = (career) => career.cars.find((c) => c.id === career.activeCar) || career.cars[0];
+
+// Each car's career record: every career outing it has run (not multiplayer).
+export function recordResult(car, { place, of, takedowns = 0, cash = 0 }) {
+  const r = (car.record ??= { races: 0, wins: 0, podiums: 0, takedowns: 0, earnings: 0 });
+  r.races++;
+  if (place === 1) r.wins++;
+  if (place > 0 && place <= 3 && of > 1) r.podiums++;
+  r.takedowns += takedowns;
+  r.earnings += cash;
+}
+
+export function recordText(car) {
+  const r = car?.record;
+  if (!r || !r.races) return 'No career record yet';
+  const s = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  return `${s(r.races, 'run')} · ${s(r.wins, 'win')} · ${s(r.podiums, 'podium')} · ${r.takedowns} KO · $${r.earnings.toLocaleString()}`;
+}
 
 // Starts a new car around a spare chassis from the inventory.
 export function addCar(career, chassisUid) {

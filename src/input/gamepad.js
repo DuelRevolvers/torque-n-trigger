@@ -1,4 +1,7 @@
-// Standard-mapping gamepads (Xbox / PlayStation layout).
+import { padBinds } from './bindings.js';
+
+// Standard-mapping gamepads (Xbox / PlayStation layout). Action buttons follow
+// the player's bindings; steering is the left stick or D-pad.
 
 const DEADZONE = 0.15;
 
@@ -8,7 +11,8 @@ const BTN = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, BACK: 8, START
 const dead = (v) => (Math.abs(v) < DEADZONE ? 0 : Math.sign(v) * ((Math.abs(v) - DEADZONE) / (1 - DEADZONE)));
 
 export class Gamepads {
-  constructor() {
+  constructor(settings) {
+    this.settings = settings;
     this.prevStart = false;
     this.active = false;
   }
@@ -22,27 +26,28 @@ export class Gamepads {
     return pressed;
   }
 
-  apply(frame) {
+  // Connected pads in order; split-screen seats use their position in this list.
+  connected() {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-    this.active = false;
-    for (const pad of pads) {
-      if (!pad || !pad.connected) continue;
+    return [...pads].filter((pad) => pad && pad.connected);
+  }
+
+  // only: a connected-pad number for one split-screen seat; null merges every pad.
+  apply(frame, only = null) {
+    const pads = this.connected();
+    if (only === null) this.active = false;
+    for (const [n, pad] of pads.entries()) {
+      if (only !== null && n !== only) continue;
       const b = (i) => pad.buttons[i] || { pressed: false, value: 0 };
       let steer = dead(pad.axes[0] || 0);
       if (b(BTN.LEFT).pressed) steer = -1;
       if (b(BTN.RIGHT).pressed) steer = 1;
       if (Math.abs(steer) > Math.abs(frame.steer)) frame.steer = steer;
-      frame.throttle = Math.max(frame.throttle, b(BTN.RT).value);
-      frame.brake = Math.max(frame.brake, b(BTN.LT).value);
-      frame.handbrake ||= b(BTN.A).pressed;
-      frame.nitro ||= b(BTN.B).pressed;
-      frame.fire1 ||= b(BTN.X).pressed;
-      frame.fire2 ||= b(BTN.Y).pressed;
-      frame.utility ||= b(BTN.LB).pressed;
-      frame.lookBack ||= b(BTN.R3).pressed;
-      frame.reset ||= b(BTN.BACK).pressed;
-      frame.shiftUp ||= b(BTN.RB).pressed;
-      if (pad.buttons.some((x) => x.pressed) || pad.axes.some((a) => Math.abs(a) > 0.3)) this.active = true;
+      const P = padBinds(this.settings);
+      frame.throttle = Math.max(frame.throttle, b(P.throttle).value);
+      frame.brake = Math.max(frame.brake, b(P.brake).value);
+      for (const a of ['handbrake', 'nitro', 'fire1', 'fire2', 'utility', 'lookBack', 'reset', 'shiftUp']) frame[a] ||= b(P[a]).pressed;
+      if (only === null && (pad.buttons.some((x) => x.pressed) || pad.axes.some((a) => Math.abs(a) > 0.3))) this.active = true;
     }
   }
 }

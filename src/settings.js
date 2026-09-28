@@ -19,6 +19,10 @@ export const DEFAULT_SETTINGS = {
   godMode: false, // the player's car takes no damage
   unlockAll: false, // every part at every quality in the spares (undone when turned off)
   roamAll: false, // free roam in every district, not just the unlocked ones
+  masterVolume: 80, // 0..100 (audio arrives with M9's sound pass)
+  musicVolume: 70,
+  sfxVolume: 80,
+  bindings: {}, // control overrides: { all|left|right: { action: [codes] }, pad: { action: button } }
 };
 
 export function loadSettings() {

@@ -39,17 +39,30 @@ export class Hud {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  draw({ car, params, tick, fps, showFps, touchLayout, label, units = 'kmh', markers = [], position = null, eventInfo = null, minimap = null, hudScale = 1 }) {
+  // viewport: a split-screen pane in canvas pixels ({ x, y, w, h }); keep: don't
+  // clear the canvas first (the other panes are already drawn).
+  draw(opts) {
     const { ctx, canvas } = this;
-    // Layout is in 270-line units, scaled to the screen and the HUD size setting;
-    // a scale near a whole number snaps to it so the pixel font stays crisp.
-    const raw = (canvas.height / 270) * hudScale;
-    const S = Math.abs(raw - Math.round(raw)) < 0.15 ? Math.max(1, Math.round(raw)) : Math.max(0.5, raw);
+    const vp = opts.viewport || { x: 0, y: 0, w: canvas.width, h: canvas.height };
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.setTransform(S, 0, 0, S, 0, 0);
-    const W = Math.floor(canvas.width / S);
-    const H = Math.floor(canvas.height / S);
+    if (!opts.keep) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(vp.x, vp.y, vp.w, vp.h);
+    ctx.clip();
+    this.drawPane(opts, vp);
+    ctx.restore();
+  }
+
+  drawPane({ car, params, tick, fps, showFps, touchLayout, label, units = 'kmh', markers = [], position = null, eventInfo = null, minimap = null, hudScale = 1 }, vp) {
+    const { ctx } = this;
+    // Layout is in 270-line units, scaled to the pane and the HUD size setting;
+    // a scale near a whole number snaps to it so the pixel font stays crisp.
+    const raw = (vp.h / 270) * hudScale;
+    const S = Math.abs(raw - Math.round(raw)) < 0.15 ? Math.max(1, Math.round(raw)) : Math.max(0.5, raw);
+    ctx.setTransform(S, 0, 0, S, vp.x, vp.y);
+    const W = Math.floor(vp.w / S);
+    const H = Math.floor(vp.h / S);
     const text = (t, x, y, opts = {}) => drawText(ctx, t, x, y, { shadow: SHADOW, ...opts });
     const px = (x, y, c) => {
       ctx.fillStyle = c;

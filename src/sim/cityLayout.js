@@ -8,7 +8,7 @@
 // solid, hidden (collision only: the renderer draws it its own way), ...data }.
 
 import { makeRng } from '../parts/generate.js';
-import { SETBACK, quadRing, splitLot, nearPath, edgeSpans } from './city.js';
+import { SETBACK, quadRing, splitLot, nearPath, edgeSpans, TUNNEL_HALF } from './city.js';
 
 const cache = new WeakMap();
 
@@ -111,6 +111,7 @@ function buildLayout(map) {
   };
 
   const pathOf = new Map(map.corridors.map((c) => [c.cell, c.points]));
+  const freight = map.freight ? [[map.freight.x, map.freight.z0], [map.freight.x, map.freight.z1]] : null;
   const units = [...map.cells.filter((c) => !c.site), ...map.sites];
   const spireCell = style.features.includes('spire')
     ? map.cells.filter((c) => c.kind === 'buildings').sort((a, b) => Math.hypot((a.lot[0] + a.lot[1]) / 2, (a.lot[2] + a.lot[3]) / 2) - Math.hypot((b.lot[0] + b.lot[1]) / 2, (b.lot[2] + b.lot[3]) / 2))[0]
@@ -125,7 +126,7 @@ function buildLayout(map) {
     const fill = (margin) => {
       for (const f of footprints([lx0 + 3, lx1 - 3, lz0 + 3, lz1 - 3])) {
         const r = f.slice(0, 4);
-        if (raw && nearPath(raw, r, margin)) continue;
+        if ((raw && nearPath(raw, r, margin)) || (freight && nearPath(freight, r, 6))) continue;
         add('bldg', r, f[4], { lift: f[5] || 0, solid: !f[5], unit: c });
       }
     };
@@ -323,6 +324,38 @@ function buildLayout(map) {
       if (inner[1] > inner[0] && inner[3] > inner[2]) {
         for (let k = 0; k < ((inner[1] - inner[0]) * (inner[3] - inner[2])) / 220; k++) tree(inner[0] + rng() * (inner[1] - inner[0]), inner[2] + rng() * (inner[3] - inner[2]), 0.7 + rng() * 0.5);
       }
+    } else if (c.kind === 'terminal') {
+      // Container terminal: blocks of stacks with lanes between, the haul road
+      // winding through, and two gantry cranes straddling the stacks.
+      const alongX = lx1 - lx0 >= lz1 - lz0;
+      const U = alongX ? lx1 - lx0 : lz1 - lz0;
+      const V = alongX ? lz1 - lz0 : lx1 - lx0;
+      for (let row = 8; row < V - 8; row += 16) {
+        for (let t = 8; t < U - 8; t += 2.9) {
+          if (Math.floor(t / 40) % 4 === 3) continue; // cross lanes
+          const x = alongX ? lx0 + t : lx0 + row;
+          const z = alongX ? lz0 + row : lz0 + t;
+          if (!clear(x, z, 14.5)) continue; // races run the haul road: stacks stay behind the barriers
+          const n = 1 + Math.floor(rng() * 4);
+          add('stack', alongX ? around(x, z, 1.22, 6.1) : around(x, z, 6.1, 1.22), n * 2.6, { x, z, alongX, n });
+        }
+      }
+      for (const t of c.tunnels || []) {
+        // Opened containers: two side walls and a roof, more boxes stacked on top.
+        const h = t.len / 2;
+        const layers = 2;
+        for (const s of [-1, 1]) {
+          const r = t.alongX ? [t.x - h, t.x + h, t.z + s * (TUNNEL_HALF + 0.08) - 0.12, t.z + s * (TUNNEL_HALF + 0.08) + 0.12] : [t.x + s * (TUNNEL_HALF + 0.08) - 0.12, t.x + s * (TUNNEL_HALF + 0.08) + 0.12, t.z - h, t.z + h];
+          add('solid', r, 2.6 * layers, { hidden: true });
+        }
+        deco('ctunnel', { ...t, layers });
+      }
+      for (const f of [0.3, 0.7]) {
+        const u = (alongX ? lx0 : lz0) + U * f;
+        const ends = alongX ? [[u, lz0 + 3], [u, lz1 - 3]] : [[lx0 + 3, u], [lx1 - 3, u]];
+        for (const [x, z] of ends) hide(around(x, z, 0.8), 24);
+        deco('gantry', { a: ends[0], b: ends[1] });
+      }
     } else if (c.kind === 'arena') {
       // Event ground fence, with a gate in the middle of each side.
       for (const [ax, az, bx, bz] of edges4) {
@@ -430,6 +463,14 @@ function buildLayout(map) {
       }
     }
   }
+  // Signal posts at the freight line's level crossings.
+  if (map.freight) {
+    const { x, z0, z1 } = map.freight;
+    for (const z of map.zs) {
+      if (z <= z0 || z >= z1) continue;
+      for (const s of [-1, 1]) add('signal', around(x + s * 4.5, z - s * (SETBACK - 1), 0.25), 4, { x: x + s * 4.5, z: z - s * (SETBACK - 1) });
+    }
+  }
   // Waterfront cranes' legs and pier bollards.
   if (style.features.includes('waterfront')) {
     const edge = map.bounds.maxZ + SETBACK + 30;
@@ -438,7 +479,7 @@ function buildLayout(map) {
       for (const dz of [4, 20]) for (const dx of [-9, 9]) hide(around(x + dx, edge + dz, 0.8), 32);
     }
     for (const p of map.piers) {
-      for (let z = p.z0 + 4; z < p.z1 + 10; z += 9) for (const s of [-1, 1]) hide(around(p.x + s * (SETBACK - 0.3), z, 0.3), 0.8);
+      for (let z = p.z0 + 4; z < p.z1 + 10; z += 9) for (const s of [-1, 1]) hide(around(p.x + s * (SETBACK + 0.5), z, 0.3), 0.8);
     }
   }
   return { items };

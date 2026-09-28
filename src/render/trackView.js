@@ -52,6 +52,38 @@ export function buildTrackView(track, tex, opts = {}) {
   if (!opts.city) group.add(new THREE.Mesh(ground, new THREE.MeshLambertMaterial({ map: tex.ground }))); // no vertex snap: see retroMaterial.js
 
   const at = pointAt(track);
+  if (opts.city && !opts.look?.roof) {
+    // Closed side streets: containers stacked across them. Floodlights at the start.
+    const colors = ['#b83a2a', '#2a6ab8', '#d8a020', '#3a8a4a', '#8a3ab0', '#c8c8c8', '#d86a1a'];
+    const rng = makeRng(track.count * 7 + 3);
+    const stacks = [];
+    for (const c of track.closures || []) {
+      const layers = 1 + (rng() < 0.5 ? 1 : 0);
+      for (let l = 0; l < layers; l++) {
+        for (const side of [-1, 1]) {
+          const g = new THREE.BoxGeometry(12.2, 2.6, 2.44);
+          g.translate(side * 6.3, 1.3 + l * 2.6, 0);
+          g.rotateY(c.yaw);
+          g.translate(c.x, c.y - 0.05, c.z);
+          const col = new THREE.Color(colors[Math.floor(rng() * colors.length)]);
+          const cols = new Float32Array(g.attributes.position.count * 3);
+          for (let k = 0; k < cols.length; k += 3) cols.set([col.r, col.g, col.b], k);
+          g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+          stacks.push(g);
+        }
+      }
+    }
+    if (stacks.length) group.add(new THREE.Mesh(mergeGeometries(stacks), litMaterial({ map: tex.container, vertexColors: true })));
+    const i0 = track.closed ? 0 : 0;
+    const masts = [];
+    const heads = [];
+    for (const side of [-1, 1]) {
+      const [x, y, z] = at(track.wrap(i0 + 6), side * (track.wallDist + 3));
+      masts.push(new THREE.BoxGeometry(0.6, 16, 0.6).translate(x, y + 8, z));
+      heads.push(new THREE.BoxGeometry(3.4, 1.4, 1.4).translate(x, y + 16.4, z));
+    }
+    group.add(new THREE.Mesh(mergeGeometries(masts), litMaterial({ color: '#4a4858' })), new THREE.Mesh(mergeGeometries(heads), glowMaterial({ color: '#fff4d0', intensity: 3 })));
+  }
   group.add(buildStartLine(track, tex, at, track.closed ? 0 : track.indexAtDistance(track.finishS ?? track.length - 25)));
   if (!opts.city) group.add(buildLamps(track, tex, at));
   if (tex.puddles) {
@@ -61,11 +93,13 @@ export function buildTrackView(track, tex, opts = {}) {
   return group;
 }
 
-const pointAt = (track) => (i, lateral, dy = 0) => [
-  track.x[i] + track.rx[i] * lateral,
-  track.y[i] + dy,
-  track.z[i] + track.rz[i] * lateral,
-];
+// A point on the road at sample i, lateral metres off the centreline (pulled in
+// to the walls of a narrow section).
+const pointAt = (track) => (i, lateral, dy = 0) => {
+  const lw = track.narrows ? track.localWall(track.s[i]) : track.wallDist;
+  const l = lw < track.wallDist ? Math.sign(lateral) * Math.min(Math.abs(lateral), lw) : lateral;
+  return [track.x[i] + track.rx[i] * l, track.y[i] + dy, track.z[i] + track.rz[i] * l];
+};
 
 // One road: surface, curbs, shoulders, barriers (with optional gaps), skirts
 // down to the ground, and chevrons on its jump kickers.
@@ -88,7 +122,9 @@ function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roa
 
   for (const side of [-1, 1]) {
     const skipWall = wallSkip ? (i) => { const p = at(i, side * wall); return wallSkip(p[0], p[2]); } : null;
-    const skip = inGap || skipWall ? (i) => (inGap && inGap(i)) || (skipWall && skipWall(i)) : null;
+    // No barriers inside a container tunnel: its walls are the barriers.
+    const inTunnel = track.narrows ? (i) => track.narrows.some((n) => track.s[i] > n.s0 && track.s[i] < n.s1) : null;
+    const skip = inGap || skipWall || inTunnel ? (i) => (inGap && inGap(i)) || (skipWall && skipWall(i)) || (inTunnel && inTunnel(i)) : null;
     add(ribbon(track, (i) => at(i, side * wall, BARRIER_HEIGHT), (i) => at(i, side * wall), { vLength: 3.4, swapUV: true, skip }), mats.barrier);
     add(
       ribbon(track, (i) => at(i, side * wall), (i) => {

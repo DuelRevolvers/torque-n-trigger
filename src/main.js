@@ -19,14 +19,17 @@ import { StarterScreen } from './screens/starterScreen.js';
 import { GarageScreen } from './screens/garageScreen.js';
 import { RaceScreen } from './screens/raceScreen.js';
 import { CityScreen } from './screens/cityScreen.js';
+import { LobbyScreen } from './screens/lobbyScreen.js';
+import { MenuScreen } from './screens/menuScreen.js';
+import { listSaves, saveToSlot, loadSlot, saveLabel } from './career/saves.js';
 
 // App shell: shared renderer, input and settings, plus a current screen
 // (starter selection, garage or race). Screens return the scene to render.
 
 const settings = loadSettings();
 const canvas = document.getElementById('game');
-const keyboard = new Keyboard(canvas);
-const gamepads = new Gamepads();
+const keyboard = new Keyboard(canvas, settings);
+const gamepads = new Gamepads(settings);
 const touch = new TouchControls(document.getElementById('touch'));
 const localInput = new LocalInput({ keyboard, gamepads, touch, settings });
 
@@ -60,7 +63,7 @@ const app = {
     app.current?.exit();
     const screens = app.screens;
     // Screens are built on first use; the race city is the expensive one.
-    if (!screens[name]) screens[name] = new { starter: StarterScreen, garage: GarageScreen, city: CityScreen, race: RaceScreen }[name](app);
+    if (!screens[name]) screens[name] = new { starter: StarterScreen, garage: GarageScreen, city: CityScreen, race: RaceScreen, lobby: LobbyScreen, menu: MenuScreen }[name](app);
     app.current = screens[name];
     hud.clear();
     app.current.enter(data);
@@ -107,26 +110,49 @@ const menu = new SettingsMenu(
   },
   [
     {
-      label: 'Back to garage',
+      label: 'LEAVE RACE',
       visible: () => app.current instanceof RaceScreen,
       onClick: () => {
         menu.setOpen(false);
-        app.go('garage');
+        app.go(app.current.mp ? 'lobby' : 'garage');
       },
     },
     {
-      label: 'New career',
+      label: 'NEW CAMPAIGN',
       visible: () => app.current instanceof GarageScreen,
       onClick: () => {
-        if (!window.confirm('Start a new career? Your garage will be lost.')) return;
+        if (!window.confirm('Start a new campaign? Your garage will be lost unless it is in a save slot.')) return;
         clearCareer();
         app.career = null;
         menu.setOpen(false);
         app.go('starter');
       },
     },
+    {
+      label: 'MAIN MENU',
+      visible: () => !(app.current instanceof MenuScreen),
+      onClick: () => {
+        menu.setOpen(false);
+        app.go('menu');
+      },
+    },
   ],
+  {
+    list: () => listSaves().map((s) => ({ slot: s.slot, label: saveLabel(s.meta), empty: !s.meta })),
+    canSave: () => !!app.career,
+    save: (n) => saveToSlot(n, app.career),
+    load: (n) => app.loadSlot(n),
+  },
 );
+app.openSettings = () => menu.setOpen(true, 'settings');
+// Loads a save slot as the current campaign (and autosave) and opens the garage.
+app.loadSlot = (n) => {
+  const career = loadSlot(n);
+  if (!career) return window.alert('That save could not be read.');
+  app.career = career;
+  saveCareer(career);
+  app.go('garage');
+};
 menu.setOpen(false);
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' || e.code === 'KeyP') menu.toggle();
@@ -141,7 +167,7 @@ const padNav = new PadNav();
 startFixedLoop({
   dt: SIM_DT,
   step() {
-    if (!menu.open) app.current.step();
+    if (!menu.open || app.current.online) app.current.step(); // online races never pause
   },
   render(alpha, frameDt) {
     if (gamepads.pollStart()) menu.toggle();
@@ -167,10 +193,15 @@ function syncUnlockAll() {
 const goTo = app.go.bind(app);
 app.go = (...args) => {
   syncUnlockAll();
+  // Leaving multiplayer altogether closes any online room.
+  if (app.net && !['race', 'lobby'].includes(args[0])) {
+    app.net.session.close();
+    app.net = null;
+  }
   return goTo(...args);
 };
 syncUnlockAll();
-app.go(app.career ? 'garage' : 'starter');
+app.go('menu');
 
 // Handy for poking at the game from the browser console.
 window.tt = app;

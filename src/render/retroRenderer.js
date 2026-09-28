@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { Pass } from 'three/addons/postprocessing/Pass.js';
 import { retroUniforms } from './retroMaterial.js';
 
 // Renders the scene at an internal resolution (default ~960x540) with neon bloom,
@@ -94,6 +95,43 @@ const POST_FRAGMENT = /* glsl */ `
   }
 `;
 
+// Split-screen: renders one scene once per viewport into the same buffer, so bloom
+// and the post pass run once over the whole screen. Rects are 0..1, top-left origin.
+class MultiViewPass extends Pass {
+  constructor() {
+    super();
+    this.scene = null;
+    this.views = [];
+    this.needsSwap = false;
+  }
+
+  render(renderer, writeBuffer, readBuffer) {
+    const t = readBuffer;
+    const { width: w, height: h } = t;
+    renderer.getClearColor(this._clear ||= new THREE.Color());
+    const alpha = renderer.getClearAlpha();
+    renderer.setRenderTarget(t);
+    renderer.setClearColor(0x000000, 1);
+    renderer.clear(); // black divider lines between the views
+    renderer.setClearColor(this._clear, alpha);
+    for (const { camera, rect } of this.views) {
+      const x = Math.round(rect.x * w);
+      const vw = Math.round((rect.x + rect.w) * w) - x;
+      const y = Math.round((1 - rect.y - rect.h) * h);
+      const vh = Math.round((1 - rect.y) * h) - y;
+      t.viewport.set(x, y, vw, vh);
+      t.scissor.set(x, y, vw, vh);
+      t.scissorTest = true;
+      renderer.setRenderTarget(t);
+      renderer.render(this.scene, camera);
+    }
+    t.viewport.set(0, 0, w, h);
+    t.scissor.set(0, 0, w, h);
+    t.scissorTest = false;
+    renderer.setRenderTarget(t);
+  }
+}
+
 export class RetroRenderer {
   constructor(canvas, hudCanvas, settings) {
     this.settings = settings;
@@ -178,18 +216,29 @@ export class RetroRenderer {
     this.composer.setSize(this.width, this.height);
   }
 
+  // camera: one camera for the full screen, or an array of { camera, rect } views.
   render(scene, camera) {
     if (!this.composer) {
       this.composer = new EffectComposer(this.renderer);
       this.composer.renderToScreen = false;
-      this.renderPass = new RenderPass(scene, camera);
+      this.renderPass = new RenderPass(scene, Array.isArray(camera) ? camera[0].camera : camera);
+      this.multiPass = new MultiViewPass();
       this.composer.addPass(this.renderPass);
+      this.composer.addPass(this.multiPass);
       this.bloom = new UnrealBloomPass(new THREE.Vector2(this.width, this.height), 0.55, 0.35, 0.9);
       this.composer.addPass(this.bloom);
       this.sizeComposer();
     }
-    this.renderPass.scene = scene;
-    this.renderPass.camera = camera;
+    const split = Array.isArray(camera);
+    this.renderPass.enabled = !split;
+    this.multiPass.enabled = split;
+    if (split) {
+      this.multiPass.scene = scene;
+      this.multiPass.views = camera;
+    } else {
+      this.renderPass.scene = scene;
+      this.renderPass.camera = camera;
+    }
     this.bloom.enabled = this.settings.bloom;
     this.hudTexture.needsUpdate = true;
     this.composer.render();

@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
 import { makeRng } from './textures.js';
 import { setUvRect, streetRoadMaterial } from './trackView.js';
-import { SETBACK, STREET, edgeSpans } from '../sim/city.js';
+import { SETBACK, STREET, edgeSpans, TUNNEL_HALF } from '../sim/city.js';
 import { districtLayout, archEdge, samplePath } from '../sim/cityLayout.js';
 
 // A whole city district, built once and shared by every event held there:
@@ -228,7 +228,7 @@ export function buildDistrictView(map, tex) {
   // --- Lots ---
   const lotSurf = { lot: new Surface(), tiles: new Surface(), dirt: new Surface(), parking: new Surface(), grass: new Surface() };
   const surfFor = {
-    buildings: 'lot', yard: 'lot', alley: 'lot', arena: 'lot', tanks: 'lot', plaza: 'tiles', quad: 'tiles', market: 'tiles', casino: 'tiles',
+    buildings: 'lot', yard: 'lot', terminal: 'lot', alley: 'lot', arena: 'lot', tanks: 'lot', plaza: 'tiles', quad: 'tiles', market: 'tiles', casino: 'tiles',
     construction: 'dirt', railyard: 'dirt', parking: 'parking', park: 'grass', housing: 'grass',
   };
   for (const c of map.cells) flat(lotSurf[surfFor[c.kind]], c.lot[0], c.lot[1], c.lot[2], c.lot[3], -0.06, c.kind === 'parking' ? 12 : 8);
@@ -586,6 +586,42 @@ export function buildDistrictView(map, tex) {
         glowGeos.push(box(3.2, 1.2, 1.2, x, y + 22.5, z));
         break;
       }
+      case 'ctunnel': {
+        // Three containers wide, three long, inner walls cut out; a second layer on top.
+        const h = it.len / 2;
+        const y = g0(x, z);
+        const W = 2 * TUNNEL_HALF + 0.32;
+        const along = (w, hgt, l, ox, oy) => (it.alongX ? [l, hgt, w, x, y + oy, z + ox] : [w, hgt, l, x + ox, y + oy, z]);
+        const pick = () => CONTAINER_COLORS[Math.floor(rng() * CONTAINER_COLORS.length)];
+        for (let k = 0; k < 3; k++) {
+          const off = -h + it.len / 6 + (k * it.len) / 3;
+          const seg = (w, hgt, ox, oy) => {
+            const [a, b, c, px, py, pz] = along(w, hgt, it.len / 3 - 0.2, ox, oy);
+            return it.alongX ? colorBox(a, b, c, px + off, py, pz, pick()) : colorBox(a, b, c, px, py, pz + off, pick());
+          };
+          containerGeos.push(seg(0.16, 2.6, -TUNNEL_HALF - 0.08, 1.3), seg(0.16, 2.6, TUNNEL_HALF + 0.08, 1.3), seg(W, 0.16, 0, 2.6));
+          for (let c = -1; c <= 1; c++) containerGeos.push(seg(2.4, 2.6, c * 2.44, 2.6 + 1.3 + 0.08));
+          const [lw, lh, ll, lx, ly, lz] = along(0.3, 0.1, it.len / 3 - 3, 0, 2.45);
+          glowGeos.push(it.alongX ? box(lw, lh, ll, lx + off, ly, lz) : box(lw, lh, ll, lx, ly, lz + off));
+        }
+        break;
+      }
+      case 'signal': {
+        const y = g0(x, z);
+        steelGeos.push(box(0.3, 4, 0.3, x, y + 2, z), box(1.6, 0.5, 0.2, x, y + 3.6, z));
+        beaconGeos.push(box(0.4, 0.4, 0.3, x - 0.5, y + 3.6, z), box(0.4, 0.4, 0.3, x + 0.5, y + 3.6, z));
+        break;
+      }
+      case 'gantry': {
+        const [ax, az] = it.a;
+        const [bx, bz] = it.b;
+        const ya = g0(ax, az);
+        steelGeos.push(box(1.6, 24, 1.6, ax, ya + 12, az), box(1.6, 24, 1.6, bx, g0(bx, bz) + 12, bz));
+        const len = Math.hypot(bx - ax, bz - az);
+        yellowGeos.push(box(2.2, 2.2, len + 2, (ax + bx) / 2, ya + 24, (az + bz) / 2, Math.atan2(bx - ax, bz - az)));
+        darkGeos.push(box(4, 2.5, 5, (ax + bx) / 2, ya + 22, az + (bz - az) * 0.35 + (bx - ax) * 0));
+        break;
+      }
       case 'post':
         steelGeos.push(box(0.6, it.hgt, 0.6, x, g0(x, z) + it.hgt / 2, z));
         break;
@@ -766,6 +802,18 @@ export function buildDistrictView(map, tex) {
     }
   }
 
+  // --- The freight line: rails on their own right of way, a buffer stop on the quay ---
+  if (map.freight) {
+    const { x, z0, z1 } = map.freight;
+    for (let z = z0; z < z1; z += 10) {
+      const len = Math.min(10, z1 - z);
+      const y = g0(x, z + len / 2);
+      darkGeos.push(box(3, 0.12, len, x, y + 0.06, z + len / 2));
+      for (const o of [-0.72, 0.72]) steelGeos.push(box(0.12, 0.16, len, x + o, y + 0.2, z + len / 2));
+    }
+    yellowGeos.push(box(3.4, 1.2, 1, x, g0(x, z1) + 0.6, z1 + 0.5));
+  }
+
   // --- Landmarks ---
   const f = style.features;
   const bounds = map.bounds;
@@ -794,7 +842,7 @@ export function buildDistrictView(map, tex) {
       const depth = top - (minY - 4);
       paintedGeos.push(colorBox(2 * SETBACK + 2, depth, len, p.x, top - depth / 2, zc, '#5a5650'));
       yellowGeos.push(box(0.4, 0.3, len, p.x - SETBACK - 0.8, top + 0.15, zc), box(0.4, 0.3, len, p.x + SETBACK + 0.8, top + 0.15, zc));
-      for (let z = p.z0 + 4; z < p.z1 + 10; z += 9) for (const s of [-1, 1]) darkGeos.push(box(0.6, 0.8, 0.6, p.x + s * (SETBACK - 0.3), top + 0.4, z));
+      for (let z = p.z0 + 4; z < p.z1 + 10; z += 9) for (const s of [-1, 1]) darkGeos.push(box(0.6, 0.8, 0.6, p.x + s * (SETBACK + 0.5), top + 0.4, z));
       for (let z = p.z0 + 36; z < p.z1 + 10; z += 12) for (const s of [-1, 1]) darkGeos.push(box(0.8, 6, 0.8, p.x + s * SETBACK, minY - 3, z));
     }
     for (let x = bounds.minX; x <= bounds.maxX; x += 140) {

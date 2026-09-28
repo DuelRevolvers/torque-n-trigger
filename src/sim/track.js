@@ -39,6 +39,9 @@ export function buildTrack(def) {
   const track = new Track(name, pts, closed, { halfWidth, curbWidth, shoulderWidth });
   track.jumps = jumps;
   track.gaps = gaps.length ? gaps : null;
+  track.train = def.train || null; // the freight line, if the district has one
+  track.closures = def.closures || [];
+  track.narrows = def.narrows?.length ? def.narrows : null; // container tunnels
   // Shortcut branches: narrow roads that leave the main line at s0 and rejoin at s1.
   if (def.branches?.length) {
     track.branches = def.branches.map((b) => ({
@@ -121,6 +124,17 @@ class Track {
     }
     this.minY = minY;
     this.bounds = { minX, maxX, minZ, maxZ };
+  }
+
+  // Wall distance at s: narrow sections (container tunnels) close the walls in to
+  // `wall`, funnelling in over `ramp` metres either side.
+  localWall(s) {
+    let w = this.wallDist;
+    for (const n of this.narrows || []) {
+      const d = s < n.s0 ? n.s0 - s : s > n.s1 ? s - n.s1 : 0;
+      if (d < n.ramp) w = Math.min(w, n.wall + ((this.wallDist - n.wall) * d) / n.ramp);
+    }
+    return w;
   }
 
   // How far the ground falls away at distance s (over a gap between rooftops).
@@ -222,8 +236,11 @@ class Track {
 
     const lateral = (x - seg.px) * rx + (z - seg.pz) * rz;
     const abs = Math.abs(lateral);
+    // In a narrow section the reported lateral is shifted so |lateral| - wallDist
+    // is still the penetration into the (nearer) wall, as for shortcut branches.
+    const squeeze = this.narrows ? this.wallDist - this.localWall(this.s[i0] + u * this.step) : 0;
     const surface =
-      abs <= this.halfWidth
+      abs <= this.halfWidth || (squeeze > 0 && abs <= this.wallDist - squeeze)
         ? SURFACE.ROAD
         : abs <= this.halfWidth + this.curbWidth
           ? SURFACE.CURB
@@ -232,7 +249,7 @@ class Track {
     return {
       index: best,
       s: this.s[i0] + u * this.step,
-      lateral,
+      lateral: squeeze > 0 ? Math.sign(lateral) * (abs + squeeze) : lateral,
       overrun: Math.sqrt(Math.max(0, seg.d - lateral * lateral)), // distance past an open end
 
       height: this.y[i0] + (this.y[i1] - this.y[i0]) * u - this.gapDrop(this.s[i0] + u * this.step),

@@ -4,6 +4,7 @@
 import { SIM_DT } from '../config.js';
 import { createCarState, placeCar, stepCar, carUp, carSpeed } from './vehicle.js';
 import { yawFromDirection } from './math.js';
+import { hitByTrain } from './train.js';
 import { initCombat, initCombatWorld, updateMods, updateCombat, collideCars } from './combat.js';
 import { neutralInput } from './input.js';
 import { initEventCar, eventInput, updateEvent } from './event.js';
@@ -51,6 +52,7 @@ export function stepWorld(world, inputs) {
     if (!track.isArena) updateLap(track, car, state.tick);
   }
   collideCars(world);
+  if (track.train) hitByTrain(world);
   updateCombat(world, effective, SIM_DT, respawnCar);
   if (state.event) updateEvent(world, SIM_DT);
   state.tick++;

@@ -44,6 +44,12 @@ function generateMap(style) {
   const oz = zs[rows - 1] / 2;
   for (let i = 0; i < cols; i++) xs[i] -= ox;
   for (let j = 0; j < rows; j++) zs[j] -= oz;
+  // An authored district (docs/districts) gives its street lines exactly.
+  const g = style.grid || null;
+  if (g) {
+    xs.splice(0, cols, ...g.xs);
+    zs.splice(0, rows, ...g.zs);
+  }
 
   const ph = [rng() * 6.28, rng() * 6.28, rng() * 6.28];
   const hs = style.hillScale || 300;
@@ -62,7 +68,7 @@ function generateMap(style) {
       if (j + 1 < rows) addEdge(nid(i, j), nid(i, j + 1));
     }
   }
-  const avenue = Math.floor(rows / 2); // the main avenue: never broken, hosts drags
+  const avenue = g?.avenue ?? Math.floor(rows / 2); // the main avenue: never broken, hosts drags
   const protect = new Set();
   for (let i = 0; i + 1 < cols; i++) protect.add(ekey(nid(i, avenue), nid(i + 1, avenue)));
 
@@ -73,7 +79,11 @@ function generateMap(style) {
   const sites = [];
   for (const spec of style.sites || []) {
     let placed = null;
-    for (const [w, h] of spec.sizes) {
+    if (spec.at) {
+      const [i0, j0, w, h] = spec.at;
+      placed = { i0, j0, w, h, sx: xs[i0 + w] - xs[i0] - 2 * SETBACK - 4, sz: zs[j0 + h] - zs[j0] - 2 * SETBACK - 4 };
+    }
+    for (const [w, h] of placed ? [] : spec.sizes) {
       const options = [];
       for (let i0 = 0; i0 + w < cols; i0++) {
         for (let j0 = 0; j0 + h < rows; j0++) {
@@ -103,7 +113,7 @@ function generateMap(style) {
     const site = {
       kind: spec.kind, name: spec.name || '', i0, j0, w, h, x0, x1, z0, z1, x, z, y: heightAt(x, z),
       lot: [x0 + SETBACK, x1 - SETBACK, z0 + SETBACK, z1 - SETBACK], side: { n: true, s: true, w: true, e: true },
-      sizeX: placed.sx, sizeZ: placed.sz,
+      sizeX: placed.sx, sizeZ: placed.sz, path: spec.path,
     };
     sites.push(site);
     for (let i = i0; i < i0 + w; i++) for (let j = j0; j < j0 + h; j++) siteOf.set(`${i},${j}`, site);
@@ -134,7 +144,8 @@ function generateMap(style) {
     while (stack.length) for (const nb of adj.get(stack.pop())) if (!seen.has(nb)) seen.add(nb) && stack.push(nb);
     return seen.size === live.length;
   };
-  const removable = [...edges.keys()].filter((k) => !protect.has(k)).sort(() => rng() - 0.5);
+  if (g) for (const [i, j, d] of g.closed || []) edges.delete(d === 'h' ? ekey(nid(i, j), nid(i + 1, j)) : ekey(nid(i, j), nid(i, j + 1)));
+  const removable = g ? [] : [...edges.keys()].filter((k) => !protect.has(k)).sort(() => rng() - 0.5);
   for (const k of removable) {
     if (rng() > style.removeEdges) continue;
     const e = edges.get(k);
@@ -146,22 +157,30 @@ function generateMap(style) {
   const piers = [];
   if (style.features.includes('piers')) {
     const quay = zs[rows - 1] + SETBACK;
-    const picks = [];
-    for (const i of [...Array(cols - 2).keys()].map((k) => k + 1).sort(() => rng() - 0.5)) {
+    const picks = g?.piers ? [...g.piers] : [];
+    if (!g?.piers) for (const i of [...Array(cols - 2).keys()].map((k) => k + 1).sort(() => rng() - 0.5)) {
       if (picks.length < (style.piers || 3) && !picks.some((p) => Math.abs(p - i) < 2) && degree(nid(i, rows - 1))) picks.push(i);
     }
     for (const i of picks) {
-      const z = quay + 110 + rng() * 60;
+      const z = quay + (g ? 160 : 110 + rng() * 60);
       const node = { id: nodes.length, i, j: rows, x: xs[i], z, y: heightAt(xs[i], z), pier: true };
       nodes.push(node);
       addEdge(nid(i, rows - 1), node.id);
-      piers.push({ a: nid(i, rows - 1), b: node.id, x: xs[i], z0: quay, z1: z });
+      piers.push({ a: nid(i, rows - 1), b: node.id, x: xs[i], z0: quay, z1: z, col: i });
     }
   }
   const adj = nodes.map(() => []);
   for (const e of edges.values()) {
     adj[e.a].push(e.b);
     adj[e.b].push(e.a);
+  }
+  // A site's lot is set back only from the sides that have a street.
+  for (const s of sites) {
+    const run = (pairs) => pairs.every(([a, b]) => edges.has(ekey(a, b)));
+    const hs = (j) => [...Array(s.w).keys()].map((k) => [nid(s.i0 + k, j), nid(s.i0 + k + 1, j)]);
+    const vs = (i) => [...Array(s.h).keys()].map((k) => [nid(i, s.j0 + k), nid(i, s.j0 + k + 1)]);
+    s.side = { w: run(vs(s.i0)), e: run(vs(s.i0 + s.w)), n: run(hs(s.j0)), s: run(hs(s.j0 + s.h)) };
+    s.lot = [s.x0 + (s.side.w ? SETBACK : 0), s.x1 - (s.side.e ? SETBACK : 0), s.z0 + (s.side.n ? SETBACK : 0), s.z1 - (s.side.s ? SETBACK : 0)];
   }
 
   // Blocks and their lots (inset from every side that has a street); the blocks
@@ -187,32 +206,42 @@ function generateMap(style) {
 
   // Ways through sites and special lots, from one street to another: shortcut
   // material. Value: the shape of the path (see corridorPoints).
-  const PATHS = { construction: 'construction', plaza: 'plaza', parking: 'parking', alley: 'alley', park: 'park', quad: 'alley', market: 'alley', casino: 'alley', railyard: 'rail' };
+  const PATHS = { terminal: 'haul', construction: 'construction', plaza: 'plaza', parking: 'parking', alley: 'alley', park: 'park', quad: 'alley', market: 'alley', casino: 'alley', railyard: 'rail' };
   const corridors = [];
-  for (const s of sites) if (PATHS[s.kind]) corridors.push({ kind: s.kind, cell: s, points: corridorPoints(s, PATHS[s.kind], rng) });
-  const open = cells
-    .filter((c) => c.kind === 'buildings' && c.side.n && c.side.s && c.side.w && c.side.e && c.lot[1] - c.lot[0] >= 45 && c.lot[3] - c.lot[2] >= 45)
-    .sort(() => rng() - 0.5);
-  for (const [kind, count] of Object.entries(style.lots)) {
-    if (!PATHS[kind]) continue;
-    for (let k = 0; k < count && open.length; k++) {
-      const c = open.pop();
-      c.kind = kind;
-      corridors.push({ kind, cell: c, points: corridorPoints(c, PATHS[kind], rng) });
+  for (const s of sites) if (PATHS[s.kind]) corridors.push({ kind: s.kind, cell: s, points: corridorPoints(s, PATHS[s.kind], rng, s.path) });
+  if (g?.lots) {
+    // An authored district says what every special lot is.
+    for (const L of g.lots) {
+      const c = cells[L.at[1] * (cols - 1) + L.at[0]];
+      c.kind = L.kind;
+      if (PATHS[L.kind]) corridors.push({ kind: L.kind, cell: c, points: corridorPoints(c, PATHS[L.kind], rng, { axis: L.axis }) });
     }
-  }
-  // Filler lots with no way through: container yards, tank farms, housing.
-  const rest = cells.filter((c) => c.kind === 'buildings').sort(() => rng() - 0.5);
-  for (const [kind, count] of Object.entries(style.lots)) {
-    if (PATHS[kind]) continue;
-    for (let k = 0; k < count && rest.length; k++) rest.pop().kind = kind;
+  } else {
+    const open = cells
+      .filter((c) => c.kind === 'buildings' && c.side.n && c.side.s && c.side.w && c.side.e && c.lot[1] - c.lot[0] >= 45 && c.lot[3] - c.lot[2] >= 45)
+      .sort(() => rng() - 0.5);
+    for (const [kind, count] of Object.entries(style.lots)) {
+      if (!PATHS[kind]) continue;
+      for (let k = 0; k < count && open.length; k++) {
+        const c = open.pop();
+        c.kind = kind;
+        corridors.push({ kind, cell: c, points: corridorPoints(c, PATHS[kind], rng) });
+      }
+    }
+    // Filler lots with no way through: container yards, tank farms, housing.
+    const rest = cells.filter((c) => c.kind === 'buildings').sort(() => rng() - 0.5);
+    for (const [kind, count] of Object.entries(style.lots)) {
+      if (PATHS[kind]) continue;
+      for (let k = 0; k < count && rest.length; k++) rest.pop().kind = kind;
+    }
   }
 
   // Solid props the sim needs as well as the renderer (free roam can hit them).
   const pathOf = new Map(corridors.map((c) => [c.cell, c.points]));
   for (const s of sites) {
-    if (s.kind === 'railyard') s.wagons = railWagons(s.lot, pathOf.get(s), rng);
+    if (s.kind === 'railyard') s.wagons = railWagons(s.lot, pathOf.get(s), rng).filter((w) => !g?.freight || w.r[0] - 5 > g.freight.x || w.r[1] + 5 < g.freight.x);
     if (s.kind === 'market') s.stalls = marketStalls(s.lot, pathOf.get(s), rng);
+    if (s.kind === 'terminal') s.tunnels = containerTunnels(s.lot, pathOf.get(s));
   }
   // Tunnels: covered stretches of street under the upper city.
   const tunnels = style.features.includes('tunnels')
@@ -243,6 +272,7 @@ function generateMap(style) {
   const bounds = { minX: xs[0], maxX: xs[cols - 1], minZ: zs[0], maxZ: zs[rows - 1] };
   return {
     style, nodes, edges, adj, cells, corridors, sites, arenas, arena: arenas[0] || null, piers, tunnels, gaps, throughs, gapEdges: new Set(gaps.map((g) => ekey(g.a, g.b))), avenue, heightAt, nid, xs, zs, bounds,
+    freight: g?.freight ? { x: g.freight.x, z0: g.freight.from, z1: zs[rows - 1] + SETBACK + 26 } : null,
     drawBounds: piers.length ? { ...bounds, maxZ: Math.max(...piers.map((p) => p.z1)) } : bounds,
   };
 }
@@ -388,6 +418,29 @@ export function splitLot(r, points, gap) {
   return [[r[0], ax - gap, r[2], r[3]], [ax + gap, r[1], r[2], r[3]]];
 }
 
+// Opened shipping containers, three wide and three long with the inner walls cut
+// out, straddling the terminal haul road's two long legs: drive-through tunnels.
+export const TUNNEL_HALF = 3.5; // inner half-width (m)
+export const TUNNEL_LEN = 36.6;
+function containerTunnels(lot, pts) {
+  if (!pts) return [];
+  const out = [];
+  for (const [p, q] of [[pts[0], pts[1]], [pts[2], pts[3]]]) {
+    const alongX = Math.abs(q[0] - p[0]) > Math.abs(q[1] - p[1]);
+    const k = alongX ? 0 : 1;
+    const lo = Math.max(Math.min(p[k], q[k]), (alongX ? lot[0] : lot[2]) + 15);
+    const hi = Math.min(Math.max(p[k], q[k]), (alongX ? lot[1] : lot[3]) - 15);
+    // Keep clear of the jog at the inner end of each leg.
+    const inner = p === pts[0] ? q[k] : p[k];
+    const a = inner < (lo + hi) / 2 ? lo + 25 : lo;
+    const b = inner < (lo + hi) / 2 ? hi : hi - 25;
+    if (b - a < TUNNEL_LEN) continue;
+    const c = (a + b) / 2;
+    out.push(alongX ? { x: c, z: p[1], alongX, len: TUNNEL_LEN } : { x: p[0], z: c, alongX, len: TUNNEL_LEN });
+  }
+  return out;
+}
+
 // Street nodes round a landmark ('pier': the pier ends), for sprint starts and
 // finishes.
 function landmarkNodes(map, kind) {
@@ -406,7 +459,7 @@ function landmarkNodes(map, kind) {
 }
 
 // A path through a special lot, from one street's centreline to another's.
-function corridorPoints(c, kind, rng) {
+function corridorPoints(c, kind, rng, opts = {}) {
   const [lx0, lx1, lz0, lz1] = c.lot;
   const mx = (lx0 + lx1) / 2;
   const mz = (lz0 + lz1) / 2;
@@ -429,15 +482,18 @@ function corridorPoints(c, kind, rng) {
   // park), or an S through the middle (construction site).
   // Local frame: u runs from one street to the opposite one, v across the lot.
   const straight = kind === 'alley' || kind === 'rail';
-  const alongX = kind === 'rail' ? w < d : w >= d ? rng() < 0.7 : rng() < 0.3;
+  const alongX = opts.axis ? opts.axis === 'x' : kind === 'rail' ? w < d : w >= d ? rng() < 0.7 : rng() < 0.3;
   const [uA, uB, lotA, lotB] = alongX ? [c.x0, c.x1, lx0, lx1] : [c.z0, c.z1, lz0, lz1];
   const [vLo, vHi] = alongX ? [lz0, lz1] : [lx0, lx1];
-  const pick = (spread) => (vLo + vHi) / 2 + (rng() - 0.5) * (vHi - vLo) * spread;
+  const pick = (spread) => (opts.at !== undefined ? vLo + (vHi - vLo) * opts.at : (vLo + vHi) / 2 + (rng() - 0.5) * (vHi - vLo) * spread);
   const a = pick(straight ? 0.3 : 0.5);
   const b = straight ? a : pick(0.5);
   const local =
     straight
       ? [[uA, a], [uB, a]]
+      : kind === 'haul'
+        ? // Terminal haul road: in, a jog between the stack blocks, and out.
+          [[uA, a], [lotA + (lotB - lotA) * 0.45, a], [lotA + (lotB - lotA) * 0.45, a + (a < (vLo + vHi) / 2 ? 1 : -1) * (vHi - vLo) * 0.3], [uB, a + (a < (vLo + vHi) / 2 ? 1 : -1) * (vHi - vLo) * 0.3]]
       : kind === 'parking'
         ? [[uA, a], [lotA + 10, a], [lotB - 10, b], [uB, b]]
         : [[uA, a], [lotA + 6, a], [(lotA + lotB) / 2, pick(0.35)], [lotB - 6, b], [uB, b]];
@@ -934,7 +990,114 @@ function cityRoam(map) {
     roadPoints: map.nodes.filter((n) => map.adj[n.id].length).map((n) => [n.x, n.z]),
     spawns: 1, spawnRadius: 0, spawnAt: { x: start.x, z: start.z, yaw: yawFromDirection(1, 0) },
     obstacles, holes, ramps, hazards: [], platforms: [], lifts: [], sweepers: [],
+    train: map.freight ? freightLine(map) : undefined,
   };
+}
+
+// An authored event route: named junctions ('TR.quay' = Tar St at Quay Road,
+// 'TR.pier' = the pier off Tar St) or a site kind ('terminal' = the way through
+// the container terminal), filled in along the streets between them.
+function pathNodes(map, names) {
+  const g = map.style.grid;
+  const resolve = (name, prev) => {
+    if (!name.includes('.')) {
+      const pts = map.corridors.find((c) => c.cell.kind === name).points.map(([x, z]) => ({ x, z }));
+      const [a, b] = [pts[0], pts[pts.length - 1]];
+      // Enter from the end on the same street as the previous junction.
+      const onLine = (q) => prev && (Math.abs(q.x - prev.x) < 1 || Math.abs(q.z - prev.z) < 1);
+      const flip = prev && (onLine(b) && !onLine(a) ? true : onLine(a) ? false : Math.hypot(b.x - prev.x, b.z - prev.z) < Math.hypot(a.x - prev.x, a.z - prev.z));
+      return flip ? pts.reverse() : pts;
+    }
+    const [c, r] = name.split('.');
+    const i = g.cols[c];
+    if (r === 'pier') return [map.nodes[map.piers.find((p) => p.col === i).b]];
+    return [map.nodes[map.nid(i, g.rows[r])]];
+  };
+  // Junctions passed on the straight street line from p to n.
+  const along = (p, n) =>
+    map.nodes
+      .filter((q) => !q.pier && map.adj[q.id].length && q !== p && q !== n &&
+        ((Math.abs(q.z - p.z) < 1 && Math.abs(q.z - n.z) < 1 && (q.x - p.x) * (q.x - n.x) < 0) ||
+          (Math.abs(q.x - p.x) < 1 && Math.abs(q.x - n.x) < 1 && (q.z - p.z) * (q.z - n.z) < 0)))
+      .sort((u, v) => Math.hypot(u.x - p.x, u.z - p.z) - Math.hypot(v.x - p.x, v.z - p.z));
+  const out = [];
+  for (const name of names) {
+    const seq = resolve(name, out[out.length - 1]);
+    const p = out[out.length - 1];
+    if (p) out.push(...along(p, seq[0]));
+    out.push(...seq);
+  }
+  return out;
+}
+
+// Narrow sections of a route: the container tunnels it drives through.
+function routeNarrows(map, track) {
+  const out = [];
+  for (const site of map.sites) {
+    for (const t of site.tunnels || []) {
+      const h = t.len / 2;
+      const [p0, p1] = t.alongX ? [[t.x - h, t.z], [t.x + h, t.z]] : [[t.x, t.z - h], [t.x, t.z + h]];
+      const qa = track.queryMain(...p0);
+      const qb = track.queryMain(...p1);
+      if (Math.abs(qa.lateral) > 2 || Math.abs(qb.lateral) > 2 || qa.overrun > 1 || qb.overrun > 1) continue;
+      out.push({ s0: Math.min(qa.s, qb.s), s1: Math.max(qa.s, qb.s), wall: TUNNEL_HALF, ramp: 14 });
+    }
+  }
+  return out;
+}
+
+// Side streets a route passes are closed off (the renderer stacks containers
+// across them), except where a shortcut leaves the route.
+function sideClosures(map, list, closed, branches) {
+  const out = [];
+  list.forEach((n, k) => {
+    if (n.id === undefined) return;
+    const near = [list[k - 1], list[k + 1]];
+    if (closed && k === 0) near[0] = list[list.length - 1];
+    if (closed && k === list.length - 1) near[1] = list[0];
+    for (const nb of map.adj[n.id]) {
+      const B = map.nodes[nb];
+      if (near.some((q) => q && q.id === nb)) continue;
+      const L = Math.hypot(B.x - n.x, B.z - n.z);
+      const dx = (B.x - n.x) / L;
+      const dz = (B.z - n.z) / L;
+      const x = n.x + dx * (SETBACK + 2.5);
+      const z = n.z + dz * (SETBACK + 2.5);
+      const shortcut = branches.some((b) => [b.points[0], b.points[b.points.length - 1]].some((p, e) => {
+        const q = e ? b.points[b.points.length - 2] : b.points[1];
+        return Math.hypot(p[0] - n.x, p[2] - n.z) < 25 && (q[0] - p[0]) * dx + (q[2] - p[2]) * dz > 0;
+      }));
+      if (!shortcut) out.push({ x, z, y: map.heightAt(x, z), yaw: Math.atan2(dx, dz) });
+    }
+  });
+  return out;
+}
+
+// The freight line as the train sees it.
+function freightLine(map) {
+  const f = map.freight;
+  return { ax: f.x, az: f.z0, bx: f.x, bz: f.z1, length: f.z1 - f.z0, y: map.heightAt(f.x, (f.z0 + f.z1) / 2), seed: map.style.seed };
+}
+
+function authoredRoute(map, style, route) {
+  const circuit = route.kind === 'circuit';
+  let list = pathNodes(map, circuit ? [...route.path, route.path[0]] : route.path);
+  if (circuit) {
+    // Start and finish halfway along the first street.
+    list.pop();
+    const [a, b] = list;
+    list = [{ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }, ...list.slice(1), a];
+  }
+  const rng = makeRng(style.seed * 131 + route.path.length * 7919);
+  const def = { name: `${style.name} ${route.kind}`, closed: circuit, ...STREET, points: roundedPoints(list, circuit, CORNER_R, map.heightAt) };
+  const track = buildTrack(def);
+  def.gaps = map.gaps.length ? routeGaps(map, track) || [] : [];
+  def.branches = cityShortcuts(map, track, list, circuit, rng, circuit ? 2 : 3);
+  def.jumps = placeJumps(track, rng, route.jumps ?? 0, def.branches.map((b) => [b.s0, b.s1]));
+  def.closures = sideClosures(map, list, circuit, def.branches);
+  def.narrows = routeNarrows(map, track);
+  if (map.freight) def.train = freightLine(map);
+  return def;
 }
 
 // Builds the venue for one event route in a district.
@@ -953,6 +1116,7 @@ export function cityVenue(style, route) {
     for (let i = 0; i < style.cols; i++) line.push(map.nodes[map.nid(i, map.avenue)]);
     return { kind: 'track', def: { name, closed: false, ...STREET, points: roundedPoints(line, false, CORNER_R, map.heightAt), jumps: [] } };
   }
+  if (route.path) return { kind: 'track', def: authoredRoute(map, style, route) };
   // Try several routes and keep the one with the most interesting shortcuts.
   const circuit = route.kind === 'circuit';
   let best = null;
