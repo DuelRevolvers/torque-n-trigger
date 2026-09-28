@@ -1048,9 +1048,10 @@ export class CarView {
     for (const root of [this.group, this.shadow]) {
       root.traverse((o) => {
         if (o.geometry) o.geometry.dispose();
-        if (o.material && !seen.has(o.material)) {
-          seen.add(o.material);
-          o.material.dispose();
+        for (const mat of [o.material, o.userData.baseMaterial].flat()) {
+          if (!mat || seen.has(mat)) continue;
+          seen.add(mat);
+          mat.dispose();
         }
       });
     }

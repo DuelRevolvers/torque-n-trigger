@@ -108,12 +108,16 @@ const ARCADE = {
   latG: 1.5, // cornering the yaw assist may ask for, in g
   yawGain: 6, // how firmly the car follows the steering
   align: 2.6, // per second: how fast sideways motion turns into forward motion
-  driftAlign: 0.3, // ...while drifting (low, so a drift holds its angle)
+  driftAlign: 0.6, // ...while drifting, on street tyres (scaled by wheel grip: better wheels slide less)
+  regrip: 1.6, // align boost just after a drift (also scaled by wheel grip)
   driftKick: 1.1, // rad/s of yaw added when a drift starts
-  driftAngleMin: 0.35, // drift angle (rad) with light steering...
-  driftAngleMax: 0.7, // ...and with full lock into the turn
-  alignMaxSlip: 0.5, // rad: slides bigger than this are left alone (drifts)
+  driftAngleMin: 0.28, // drift angle (rad) with light steering...
+  driftAngleMax: 0.55, // ...and with full lock into the turn
+  alignMaxSlip: 0.65, // rad: slides bigger than this are left alone (drifts)
 };
+
+// Drift traction from wheel grip: 1 on stock street tyres, up to ~2x on the best.
+const tyreHold = (grip) => Math.min(2.2, Math.max(0.5, (grip / 1.2) ** 2));
 
 // Physics params in the shape vehicle.js expects.
 function deriveParams(eff, mass, overweight, powerSupply, powerDraw) {
@@ -164,7 +168,7 @@ function deriveParams(eff, mass, overweight, powerSupply, powerDraw) {
     slideGrip: 0.82,
     lowSpeedSlip: 3,
     minLateralRetain: 0.55,
-    arcade: ARCADE,
+    arcade: { ...ARCADE, driftAlign: ARCADE.driftAlign * tyreHold(wh.grip), regrip: ARCADE.regrip * tyreHold(wh.grip) },
     handbrakeGrip: 0.55,
     brakeForce: eff.brakes ? eff.brakes.brakeForce : ch.brakeBase,
     brakeBias: 0.62,

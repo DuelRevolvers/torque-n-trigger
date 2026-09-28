@@ -33,7 +33,6 @@ const REGION_SLOTS = {
 const WEAR = 0.25; // condition % lost per point of damage, split across the region's parts
 
 const WRECK_TIME = 5; // seconds before a wrecked car respawns
-const RESPAWN_BACK = 15; // metres behind the wreck site
 const MINE_TRIGGER = 2.4;
 const FWD = v3(0, 0, -1);
 const combatOf = (p) => p.combat || DEFAULT_COMBAT;
@@ -445,7 +444,7 @@ export function updateCombat(world, inputs, dt, respawn) {
       car.firing.primary = car.firing.secondary = false;
       car.wreckTimer -= dt;
       if (car.wreckTimer <= 0 && world.respawnOnWreck) {
-        respawn(world, i, { back: RESPAWN_BACK, index: car.wreckIndex });
+        respawn(world, i, { back: 0, index: car.wreckIndex }); // right where it was wrecked
         car.wrecked = false;
         car.hp = car.maxHp;
         car.heat = 0;

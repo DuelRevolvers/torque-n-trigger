@@ -13,6 +13,7 @@ import { applyCarTextures } from './render/carTextures.js';
 import { Hud } from './ui/hud.js';
 import { SettingsMenu } from './ui/settingsMenu.js';
 import { setCrtWarp } from './ui/crtWarp.js';
+import { PadNav } from './ui/padNav.js';
 import { loadCareer, clearCareer } from './career/career.js';
 import { StarterScreen } from './screens/starterScreen.js';
 import { GarageScreen } from './screens/garageScreen.js';
@@ -135,6 +136,7 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // --- Main loop ---
+const padNav = new PadNav();
 startFixedLoop({
   dt: SIM_DT,
   step() {
@@ -142,6 +144,7 @@ startFixedLoop({
   },
   render(alpha, frameDt) {
     if (gamepads.pollStart()) menu.toggle();
+    padNav.poll(menu.open ? menu.root : app.ui, frameDt, menu.open ? null : app.current);
     if (frameDt > 0) app.fps += (1 / frameDt - app.fps) * 0.05;
     const { scene, camera } = app.current.render(alpha, frameDt, menu.open);
     renderer.setSpeedFx(app.current.speedFx || 0);

@@ -366,7 +366,10 @@ function arcadeAssist(car, p, ctl, h) {
     car.driftKick = Math.max(0, car.driftKick - h);
     const holding = Math.sign(steerIn) === car.driftDir && Math.abs(steerIn) > 0.15;
     car.driftExit = holding ? 0 : car.driftExit + h;
-    if (car.driftExit > 0.3 || speed < 6 || (car.driftKick === 0 && slide < 0.08)) car.drifting = false;
+    if (car.driftExit > 0.15 || speed < 6 || (car.driftKick === 0 && slide < 0.15)) {
+      car.drifting = false;
+      car.regrip = 0.8; // then grip back hard, whatever the slide angle
+    }
   }
   const drifting = !!car.drifting;
 
@@ -387,8 +390,9 @@ function arcadeAssist(car, p, ctl, h) {
     torque = scale(up, (want - yaw) * p.inertia.y * (drifting ? a.yawGain * 0.6 : a.yawGain));
   }
 
-  if (!ctl.handbrake && (drifting || slide < a.alignMaxSlip)) {
-    const k = Math.min(1, (drifting ? a.driftAlign : a.align) * h);
+  car.regrip = Math.max(0, (car.regrip || 0) - h);
+  if (!ctl.handbrake && (drifting || car.regrip > 0 || slide < a.alignMaxSlip)) {
+    const k = Math.min(1, (drifting ? a.driftAlign : car.regrip > 0 ? a.align * a.regrip : a.align) * h);
     car.vel = sub(car.vel, scale(right, vLat * k));
     // Keep the speed: redirect the removed sideways motion forward.
     car.vel = add(car.vel, scale(fwd, Math.sign(vLong || 1) * (Math.hypot(vLong, vLat) - Math.hypot(vLong, vLat * (1 - k)))));

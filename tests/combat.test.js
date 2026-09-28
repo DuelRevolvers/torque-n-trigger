@@ -75,7 +75,7 @@ test('wrecks credit a takedown, then respawn with full HP', () => {
   assert.ok(t.wrecked, "still down before 5 s");
   step(w, 0.7);
   assert.equal(t.wrecked, false);
-  assert.ok(Math.abs(t.trackS - (wreckS - 15)) < 3, `respawned at ${t.trackS}, wreck at ${wreckS}`);
+  assert.ok(Math.abs(t.trackS - wreckS) < 3, `respawned at ${t.trackS}, wreck at ${wreckS}`);
   assert.equal(t.hp, t.maxHp);
 });
 

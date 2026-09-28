@@ -157,6 +157,7 @@ export class GarageScreen {
       const cur = parts.paint;
       detail = `<h2>Paint job</h2>
         <div class="swatches">${PAINT_COLORS.map((c) => `<button class="swatch ${cur?.color === c ? 'on' : ''}" data-color="${c}" style="background:${c}" aria-label="${c}"></button>`).join('')}</div>
+        ${colorWheel(cur?.color)}
         <div class="finishes">${Object.entries(PART_TYPES.paint).map(([id, t]) => `<button class="btn small finish ${cur?.type === id ? 'on' : ''}" data-finish="${id}">${t.name}</button>`).join('')}</div>
         <div class="hint">Cosmetic only. Free until the economy arrives.</div>`;
     } else if (this.slot) {
@@ -244,6 +245,11 @@ export class GarageScreen {
       this.save();
       this.refresh();
     });
+    bindColorWheel(this.root, (color) => {
+      repaint(car, { color });
+      this.save();
+      this.refresh();
+    });
     on('.finish', (el) => {
       repaint(car, { finish: el.dataset.finish });
       this.save();
@@ -288,4 +294,79 @@ export class GarageScreen {
     cam.lookAt(this.camTarget);
     return { scene: this.stage.scene, camera: cam };
   }
+}
+
+// Custom paint: a hue/saturation wheel with a brightness slider, next to the
+// preset swatches. The chosen colour applies when you let go.
+const hsvToHex = (h, s, v) => {
+  const f = (n) => {
+    const k = (n + h / 60) % 6;
+    return Math.round((v - v * s * Math.max(0, Math.min(k, 4 - k, 1))) * 255);
+  };
+  return '#' + [f(5), f(3), f(1)].map((c) => c.toString(16).padStart(2, '0')).join('');
+};
+const hexToHsv = (hex) => {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const d = max - Math.min(r, g, b);
+  const h = d === 0 ? 0 : max === r ? 60 * (((g - b) / d + 6) % 6) : max === g ? 60 * ((b - r) / d + 2) : 60 * ((r - g) / d + 4);
+  return [h, max ? d / max : 0, max];
+};
+function colorWheel(current = '#808080') {
+  return `<div class="wheel-row" data-color="${current}">
+    <canvas class="wheel" width="96" height="96" aria-label="Custom colour wheel"></canvas>
+    <div class="wheel-side">
+      <label class="hint">Brightness<input class="wheel-v" type="range" min="15" max="100" value="${Math.round(hexToHsv(current)[2] * 100)}"></label>
+      <span class="wheel-now" style="background:${current}"></span>
+    </div>
+  </div>`;
+}
+function bindColorWheel(root, apply) {
+  const row = root.querySelector('.wheel-row');
+  if (!row) return;
+  const canvas = row.querySelector('.wheel');
+  const slider = row.querySelector('.wheel-v');
+  const swatch = row.querySelector('.wheel-now');
+  let [hue, sat] = hexToHsv(row.dataset.color);
+  const now = () => hsvToHex(hue, sat, slider.value / 100);
+  const draw = () => {
+    const ctx = canvas.getContext('2d');
+    const img = ctx.createImageData(96, 96);
+    const v = slider.value / 100;
+    for (let y = 0; y < 96; y++)
+      for (let x = 0; x < 96; x++) {
+        const [dx, dy] = [x - 47.5, y - 47.5];
+        const d = Math.hypot(dx, dy) / 47.5;
+        if (d > 1) continue;
+        const hex = hsvToHex(((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360, d, v);
+        img.data.set([...[1, 3, 5].map((k) => parseInt(hex.slice(k, k + 2), 16)), 255], (y * 96 + x) * 4);
+      }
+    ctx.putImageData(img, 0, 0);
+  };
+  const pick = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const [dx, dy] = [((e.clientX - rect.left) / rect.width) * 96 - 47.5, ((e.clientY - rect.top) / rect.height) * 96 - 47.5];
+    hue = ((Math.atan2(dy, dx) * 180) / Math.PI + 360) % 360;
+    sat = Math.min(1, Math.hypot(dx, dy) / 47.5);
+    swatch.style.background = now();
+  };
+  let dragging = false;
+  canvas.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    canvas.setPointerCapture(e.pointerId);
+    pick(e);
+  });
+  canvas.addEventListener('pointermove', (e) => dragging && pick(e));
+  canvas.addEventListener('pointerup', (e) => {
+    if (!dragging) return;
+    dragging = false;
+    pick(e);
+    apply(now());
+  });
+  slider.addEventListener('input', () => {
+    draw();
+    swatch.style.background = now();
+  });
+  slider.addEventListener('change', () => apply(now()));
+  draw();
 }

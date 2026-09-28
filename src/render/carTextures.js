@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { makeRng, PALETTE } from './textures.js';
 import { textWidth } from '../ui/bitmapFont.js';
 import { QUALITIES } from '../parts/catalog.js';
@@ -279,7 +280,7 @@ function liveryTex(q, baseHex, stage = 0, marks = null) {
         const base = rgb(baseHex);
         const p = new Pix(w, h);
         const { put, rect, hline, disc, text } = painter(p);
-        const n = fbm(w, h, rng, [40, 20, 10, 5]);
+        const n = fbm(w, h, rng, [16, 8, 4]); // noise cells must divide 320 x 336
         p.fill((x, y) => scale(base, 0.93 + n[y * w + x] * 0.12));
         const sc = contrast(base);
         const sill = lvSide(-0.42);
@@ -292,7 +293,7 @@ function liveryTex(q, baseHex, stage = 0, marks = null) {
           case 'junk': {
             // Rust eating up from the sills and round the arches, primer and
             // odd-colour panels, tape, dents, holes and scratches.
-            const rust = fbm(w, h, rng, [20, 10, 5]);
+            const rust = fbm(w, h, rng, [16, 8, 4]);
             const arches = [lvCol(-1.4), lvCol(1.4)];
             for (let y = 0; y < h; y++)
               for (let x = 0; x < w; x++) {
@@ -502,9 +503,9 @@ const LINES = [16, 48];
 // The earlier panel-style part tiles (framed panels with bolts, stickers,
 // hazard bands, stencils, fins, labels), kept for weapons, engines and utility gear.
 const TANK_LABEL = { fuelTank: 'FUEL', nitrous: 'NOS', utility: 'AUX' };
-function partTexClassic(q, slot, baseHex) {
+function partTexClassic(q, slot, baseHex, face = 'side') {
   const kind = PART_KIND[slot] || 'plain';
-  return cached(`classic|${q}|${slot}|${baseHex}`, () =>
+  return cached(`classic|${q}|${slot}|${baseHex}|${face}`, () =>
     canvasTexture(64, 64, (ctx) => {
       const rng = makeRng(1500 + Q.indexOf(q) * 31 + kind.length);
       const base = rgb(baseHex);
@@ -614,7 +615,57 @@ function partTexClassic(q, slot, baseHex) {
       }
       // Detail for the kind of part, on top of the quality look.
       const worn = q === 'junk';
-      switch (kind) {
+      // Faces other than the sides get detail that belongs there: tops, front and
+      // back ends (and cylinder caps, centred on the tile), undersides.
+      const faceDetail = () => {
+        if (face === 'bottom') {
+          for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) p.set(x, y, scale(p.get(x, y), 0.7 + n[y * 64 + x] * 0.1));
+          return;
+        }
+        if (kind === 'weapon') {
+          if (face === 'top') {
+            // Accessory rail along the top, cooling slots either side.
+            rect(0, 28, 64, 8, rgb('#1a1a20'));
+            for (let x = 1; x < 64; x += 4) rect(x, 29, 2, 6, rgb('#4a4a54'));
+            for (const y of [12, 16, 20, 44, 48, 52]) {
+              rect(14, y, 36, 1, rgb('#0a0a0e'));
+              rect(14, y + 1, 36, 1, light, 0.5);
+            }
+          } else {
+            // Muzzle or breech end: a dark port in a bolted collar.
+            disc(32, 32, 12, light);
+            disc(32, 32, 10, rgb('#141418'));
+            disc(32, 32, 5, rgb('#050506'));
+            for (let a = 0; a < 6; a++) bolt(32 + Math.cos((a * TAU) / 6) * 16, 32 + Math.sin((a * TAU) / 6) * 16);
+          }
+        } else if (kind === 'engine') {
+          if (face === 'top') {
+            // Cam cover: ribs along it, a filler cap.
+            for (let x = 6; x < 58; x += 6) {
+              rect(x, 8, 1, 48, light, 0.6);
+              rect(x + 1, 8, 1, 48, dark, 0.5);
+            }
+            disc(50, 14, 5, rgb('#c8c8d0'));
+            disc(50, 14, 3, rgb('#2a2a30'));
+          } else {
+            // Front and back: cooling louvres in a frame.
+            rect(8, 10, 48, 44, dark);
+            for (let y = 12; y < 52; y += 5) {
+              rect(10, y, 44, 2, rgb('#08080a'));
+              rect(10, y + 2, 44, 1, light, 0.6);
+            }
+          }
+        } else if (face === 'top') {
+          // Utility gear: a filler cap and lid hinges on top.
+          disc(32, 32, 8, rgb('#c8c8d0'));
+          disc(32, 32, 6, rgb('#3a3a40'));
+          rect(28, 31, 9, 2, rgb('#c8c8d0'));
+          rect(10, 6, 10, 4, dark);
+          rect(44, 6, 10, 4, dark);
+        } else for (let a = 0; a < 12; a++) bolt(32 + Math.cos((a * TAU) / 12) * 22, 32 + Math.sin((a * TAU) / 12) * 22); // riveted end plate
+      };
+      if (face !== 'side') faceDetail();
+      else switch (kind) {
         case 'weapon': {
           // Hazard band along the base, mark stencil above it (MK1 junk .. MK6
           // elite), vent slots higher up.
@@ -717,10 +768,10 @@ function fitShortSide(g) {
   uv.needsUpdate = true;
   g.userData.fitted = true;
 }
-function partTex(q, slot, baseHex) {
+function partTex(q, slot, baseHex, face = 'side') {
   const kind = PART_KIND[slot] || 'plain';
-  if (kind === 'weapon' || kind === 'engine' || slot === 'utility') return partTexClassic(q, slot, baseHex);
-  return cached(`part|${q}|${slot}|${baseHex}`, () =>
+  if (kind === 'weapon' || kind === 'engine' || slot === 'utility') return partTexClassic(q, slot, baseHex, face);
+  return cached(`part|${q}|${slot}|${baseHex}|${face}`, () =>
     tiled(64, 64, (ctx) => {
       const rng = makeRng(1500 + Q.indexOf(q) * 31 + kind.length);
       const base = rgb(baseHex);
@@ -776,7 +827,39 @@ function partTex(q, slot, baseHex) {
           p.blend(x, row + 1, [0, 0, 0], 0.25);
         }
       };
-      switch (kind) {
+      // Faces other than the sides, where they differ: armour tops are tread
+      // plate and its edges laminated; pipe outlets sooted and tank ends capped
+      // (cylinder caps centre on the tile corner); wheel rims plain round the band.
+      const faceVariant = () => {
+        if (kind === 'armor' && face === 'top') {
+          for (let y = 0; y < 64; y += 8)
+            for (let x = (y / 8) % 2 ? 4 : 0; x < 64; x += 8) {
+              dot(x, y + 1, [255, 255, 255], 0.4);
+              dot(x + 1, y, [255, 255, 255], 0.4);
+              dot(x + 1, y + 2, [0, 0, 0], 0.4);
+              dot(x + 2, y + 1, [0, 0, 0], 0.4);
+            }
+          for (const at of LINES) seam(true, at);
+          return true;
+        }
+        if (kind === 'armor' && face === 'end') {
+          for (let y = 0; y < 64; y += 3) rect(0, y, 64, 1, [0, 0, 0], 0.35);
+          return true;
+        }
+        if ((kind === 'exhaust' || kind === 'tank') && face === 'end') {
+          for (let y = 0; y < 64; y++)
+            for (let x = 0; x < 64; x++) {
+              const d = Math.hypot(Math.min(x, 64 - x), Math.min(y, 64 - y));
+              if (kind === 'exhaust') {
+                if (d < 6) p.blend(x, y, rgb('#0a0806'), 0.9 - d * 0.1);
+              } else if (Math.abs(d - 9) < 0.8) p.blend(x, y, [255, 255, 255], 0.35);
+              else if (d < 3) p.blend(x, y, rgb('#2a2a30'), 0.9);
+            }
+          return true;
+        }
+        return kind === 'wheel' && face !== 'end';
+      };
+      if (!faceVariant()) switch (kind) {
         case 'engine': {
           // Cast metal with cooling fins, split by bolted casting seams.
           const cast = fbm(64, 64, rng, [8, 4]);
@@ -851,6 +934,8 @@ function partTex(q, slot, baseHex) {
           }
           for (const x of LINES) for (const y of LINES) fixing(x + 3, y + 3);
       }
+
+      if (face === 'bottom') each((c, i) => scale(c, 0.7 + n[i] * 0.1)); // undersides: shadowed and grimy
 
       // Wear.
       if (q === 'junk') {
@@ -1134,12 +1219,43 @@ function plateTex(q) {
 
 // Textures a CarView, picked by each material's tag (kind
 // and quality, set in carView.js). Colour is baked into the texture.
+// Which way a box face points on the car: top, bottom, end (front or back) or side.
+const BOX_NORMALS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]; // BoxGeometry face order
+const _fn = new THREE.Vector3();
+function faceOf(mesh, local) {
+  _fn.set(...local).applyQuaternion(mesh.quaternion);
+  if (_fn.y > 0.7) return 'top';
+  if (_fn.y < -0.7) return 'bottom';
+  return Math.abs(_fn.z) > Math.abs(_fn.x) ? 'end' : 'side';
+}
+// Gives a part mesh one material per face kind (boxes: sides, top, bottom, ends;
+// cylinders: the wrap and the end caps), each a clone of its original material
+// shared between meshes, so every face can take its own texture.
+const faceMats = new WeakMap();
+function splitFaces(mesh) {
+  const base = (mesh.userData.baseMaterial ??= mesh.material);
+  const g = mesh.geometry;
+  const faces = g.type === 'BoxGeometry' ? BOX_NORMALS.map((n) => faceOf(mesh, n)) : g.type === 'CylinderGeometry' ? ['side', 'end', 'end'] : null;
+  if (!faces) return;
+  if (!faceMats.has(base)) faceMats.set(base, {});
+  const cache = faceMats.get(base);
+  mesh.material = faces.map((face) => {
+    if (!cache[face]) {
+      cache[face] = base.clone();
+      cache[face].userData = { ...base.userData, face };
+    }
+    return cache[face];
+  });
+}
+
 export function applyCarTextures(car, { crackedGlass = false } = {}) {
   const seen = new Set();
   const stage = car.stage ?? 0;
   car.group.traverse((o) => {
     if (!o.isMesh) return;
-    if (isClassic(o.material?.userData)) fitShortSide(o.geometry);
+    const baseMat = o.userData.baseMaterial ?? o.material;
+    if (isClassic(baseMat?.userData)) fitShortSide(o.geometry);
+    if (baseMat?.userData?.kind === 'part') splitFaces(o);
     for (const mt of Array.isArray(o.material) ? o.material : [o.material]) {
       if (seen.has(mt)) continue;
       seen.add(mt);
@@ -1151,7 +1267,7 @@ export function applyCarTextures(car, { crackedGlass = false } = {}) {
         if (stage < 4) mt.color.set('#ffffff').multiplyScalar(1.5);
       } else if (!kind && car.headlights.some((h) => h.material === mt)) mt.map = headTex();
       else if (kind === 'paint') map = liveryTex(quality, base, stage, stage ? car.damageMarks : null);
-      else if (kind === 'part') map = partTex(quality, slot, base);
+      else if (kind === 'part') map = partTex(quality, slot, base, mt.userData.face || 'side');
       else if (kind === 'trim') map = trimTex(quality, base);
       else if (kind === 'steel') map = steelTex(quality, base);
       else if (kind === 'glass') map = glassTex(stage >= 3 ? 2 : stage >= 1 || quality === 'junk' || crackedGlass ? 1 : 0);

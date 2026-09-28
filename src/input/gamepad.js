@@ -36,12 +36,12 @@ export class Gamepads {
       frame.brake = Math.max(frame.brake, b(BTN.LT).value);
       frame.handbrake ||= b(BTN.A).pressed;
       frame.nitro ||= b(BTN.B).pressed;
-      frame.fire1 ||= b(BTN.RB).pressed;
-      frame.fire2 ||= b(BTN.LB).pressed;
-      frame.utility ||= b(BTN.Y).pressed;
+      frame.fire1 ||= b(BTN.X).pressed;
+      frame.fire2 ||= b(BTN.Y).pressed;
+      frame.utility ||= b(BTN.LB).pressed;
       frame.lookBack ||= b(BTN.R3).pressed;
       frame.reset ||= b(BTN.BACK).pressed;
-      frame.shiftUp ||= b(BTN.X).pressed;
+      frame.shiftUp ||= b(BTN.RB).pressed;
       if (pad.buttons.some((x) => x.pressed) || pad.axes.some((a) => Math.abs(a) > 0.3)) this.active = true;
     }
   }

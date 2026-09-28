@@ -17,9 +17,10 @@ const PARTICLES = {
   plasmaTrail: { add: true, color: '#05d9e8', s0: 0.6, s1: 0.1, life: 0.2, speed: 0 },
 };
 const PROJECTILE_LOOK = {
-  chaingun: ['#ffe070', 0.35], turret: ['#ffe070', 0.35], scatter: ['#ffa040', 0.25],
+  chaingun: ['#b08a3a', 0.1], turret: ['#b08a3a', 0.1], scatter: ['#8a7050', 0.08],
   plasma: ['#40f0ff', 1.0], rockets: ['#ff8a3a', 0.6],
 };
+const SOLID_ROUNDS = new Set(['chaingun', 'turret', 'scatter']);
 const MAX_PARTICLES = 700;
 const _v = new THREE.Vector3();
 
@@ -189,7 +190,16 @@ export class Fx {
       s.visible = !!pr;
       if (!pr) return;
       const [color, size] = PROJECTILE_LOOK[pr.type] || ['#ffffff', 0.4];
-      s.material.color.set(color).multiplyScalar(3);
+      // Bullets and shot are solid brass rounds; energy bolts and rockets glow.
+      const solid = SOLID_ROUNDS.has(pr.type);
+      const mat = s.material;
+      if (mat.userData.solid !== solid) {
+        mat.userData.solid = solid;
+        mat.map = solid ? null : this.tex.glow;
+        mat.blending = solid ? THREE.NormalBlending : THREE.AdditiveBlending;
+        mat.needsUpdate = true;
+      }
+      mat.color.set(color).multiplyScalar(solid ? 1 : 3);
       s.scale.setScalar(size);
       s.position.set(pr.pos.x, pr.pos.y, pr.pos.z);
       if (pr.type === 'rockets' && Math.random() < 30 * dt) this.emit('smoke', s.position);

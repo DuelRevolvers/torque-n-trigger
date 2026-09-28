@@ -180,6 +180,15 @@ export class CityScreen {
       <h3>For sale</h3>${rows}<h3>Sell your spares</h3>${sell}`;
   }
 
+  // LB / RB on a gamepad: step through home and the unlocked districts.
+  onPadTab(dir) {
+    const stops = ['home', ...DISTRICTS.map((_, i) => i).filter((i) => districtUnlocked(this.app.career, i))];
+    const k = stops.indexOf(this.selected);
+    this.selected = stops[(k + dir + stops.length) % stops.length];
+    this.view = 'events';
+    this.render_();
+  }
+
   pick(e) {
     const rect = e.target.getBoundingClientRect();
     const mx = ((e.clientX - rect.left) / rect.width) * 100;

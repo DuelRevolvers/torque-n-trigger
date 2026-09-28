@@ -40,7 +40,7 @@
         border: 2px solid var(--cyan);
         background: var(--panel);
         color: var(--cyan);
-        font: bold 16px var(--font);
+        font: bold 16px Arial, Helvetica, sans-serif;
         cursor: pointer;
         z-index: 3;
       }
@@ -232,6 +232,11 @@
       .swatches { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       .swatch { width: 30px; height: 30px; border: 2px solid #000; cursor: pointer; }
       .swatch.on { outline: 2px solid var(--amber); }
+      .wheel-row { display: flex; gap: 10px; align-items: center; margin-bottom: 8px; }
+      .wheel { width: 96px; height: 96px; border-radius: 50%; cursor: crosshair; touch-action: none; }
+      .wheel-side { display: flex; flex-direction: column; gap: 6px; }
+      .wheel-side input { display: block; width: 110px; }
+      .wheel-now { width: 30px; height: 30px; border: 2px solid #000; }
       .finishes { display: flex; flex-wrap: wrap; gap: 6px; }
       .menu-action { justify-content: center; margin-top: 4px; }
 
@@ -288,6 +293,7 @@
         .slot-btn { flex: 0 0 140px; margin: 0; }
         .g-side { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 50vh; }
       }
+      .pad-focus { outline: 3px solid #ffe14d !important; outline-offset: 2px; box-shadow: 0 0 12px #ffe14d88; }
     </style>
   </head>
   <body>

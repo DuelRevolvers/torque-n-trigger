@@ -230,6 +230,12 @@ export class RaceScreen {
     for (let i = 1; i < state.cars.length; i++) inputs.push(aiInput(this.world, i, SIM_DT));
     this.prevPoses = this.capturePoses();
     stepWorld(this.world, inputs);
+    // Wrong way: moving against the track direction for over a second.
+    const car = state.cars[0];
+    const i = car.trackIndex;
+    const racing = !this.track.isArena && state.event.phase === 'racing' && !car.wrecked && i >= 0;
+    const along = racing ? car.vel.x * this.track.tx[i] + car.vel.z * this.track.tz[i] : 0;
+    this.wrongWay = along < -4 ? (this.wrongWay || 0) + SIM_DT : along > 1 || !racing ? 0 : this.wrongWay || 0;
   }
 
   pose(i, alpha) {
@@ -309,6 +315,7 @@ export class RaceScreen {
       manual: car.manual,
       finishedText: place ? `FINISHED ${ordinal(place)}` : car.wrecked && ev.mode === 'lastStanding' ? 'ELIMINATED' : null,
       inPit: car.inPit,
+      wrongWay: this.wrongWay > 1,
       popups: this.popups,
     };
   }
@@ -388,6 +395,7 @@ export class RaceScreen {
       markers: this.markers(player),
       position: state.cars.length > 1 ? { pos: order.findIndex((r) => r.id === 0) + 1, total: state.cars.length } : null,
       eventInfo: this.eventInfo(),
+      minimap: { track: this.track, cars: state.cars, player: 0 },
     });
     return { scene: this.scene, camera: this.camera };
   }
