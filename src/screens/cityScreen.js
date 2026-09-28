@@ -15,8 +15,25 @@ const MAP_H = 300;
 const TYPE_COLOR = { free: '#ffffff', circuit: '#05d9e8', sprint: '#ff2a6d', arena: '#ffb000', drag: '#39ff14' };
 const TYPE_LABEL = { free: 'FREE DRIVE', sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG' };
 const HOME = { x: 19.5, y: 50 }; // map coords (0-100)
-// On the map but not raced yet (designs in docs/districts).
-const UPCOMING = [{ name: 'Maple Hollow', map: [[40.8, 9.9], [64.7, 9.9], [64.7, 43.6], [40.8, 43.6]] }];
+// On the map but not raced yet (designs in docs/districts). Lobed like its cul-de-sacs.
+const UPCOMING = [{
+  name: 'Maple Hollow', label: [52.5, 14.5],
+  map: [[45.5, 13.3], [49.5, 9.3], [54.5, 10.7], [59, 8.7], [62, 13.3], [62.5, 20.7], [60.5, 26.7], [62, 33.3], [59.5, 40.7], [54, 42.7], [49.5, 40.7], [45, 42.7], [42.5, 36.7], [44, 29.3], [42.5, 22], [43.5, 16.7]],
+}];
+// The river, through these points: down between Maple Hollow and Chrome
+// Heights, then east between Chrome and the Undercity.
+const RIVER = [[66.25, -2], [65.5, 8], [66.5, 17.3], [67.5, 26.3], [66.5, 35], [65.75, 40.7], [67, 45.7], [70.25, 49], [75, 50], [81.25, 50.7], [87.25, 51.7], [93.75, 52.3], [101.25, 51.3]];
+// Highways between the districts, through these points. Bridges where they cross the river.
+const ROADS = [
+  [[25, 42.3], [27, 45.3], [24.5, 48], [21.75, 49.7]], // Corporate Spire - home: winding down the hill
+  [[17.25, 50.3], [14, 51], [12.5, 53.7], [14.5, 55.3], [13, 58.7]], // home - Rustline Docks: a hairpin down to the docks
+  [[36.5, 24.7], [39.5, 22.5], [40.5, 25.5], [43.5, 26]], // Corporate Spire (Mercantile Street) - Maple Hollow: an S-bend
+  [[61.5, 18.7], [65, 14.7], [68.5, 14], [71.5, 16]], // Maple Hollow - Chrome Heights: a humped bridge
+  [[53, 41.7], [57, 44.7], [49, 47.3], [53, 50], [53, 52.3]], // Maple Hollow - Neon Strip: switchbacks
+  [[90, 44.7], [88, 49.3], [92.5, 52.7], [90, 58.7]], // Chrome Heights - The Undercity: an S across the river
+  [[35.5, 71.3], [38.5, 68.7], [40, 75.3], [42.75, 72.7]], // Rustline Docks (Dock Road) - Neon Strip (the Strip)
+  [[63.5, 74], [66.25, 74], [69, 72.3], [68.25, 69], [66, 70], [66.5, 73], [69.25, 74.7], [72, 73.3]], // Neon Strip - The Undercity: a corkscrew ramp
+];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
 // The career hub: a pixel map of Neon Sprawl. Pick a district to see its
@@ -228,52 +245,70 @@ export class CityScreen {
     for (let x = 2; x < W; x += 7 + Math.floor(rng() * 7)) ctx.fillRect(x, 0, 1, H);
     for (let y = 2; y < H; y += 6 + Math.floor(rng() * 7)) ctx.fillRect(0, y, W, 1);
 
-    // The bay along the south and the river through the middle.
+    // The bay along the south: the docks sit right on it, further east the
+    // shore drops away. Then the river through the middle.
     const water = '#0c1c36';
+    const shore = (x) => (x < W * 0.375 ? 0.873 : x < W * 0.44 ? 0.873 + ((x - W * 0.375) / (W * 0.065)) * 0.06 : 0.933) * H;
     ctx.fillStyle = water;
     ctx.beginPath();
     ctx.moveTo(0, H);
-    for (let x = 0; x <= W; x += 3) ctx.lineTo(x, H * 0.94 + Math.sin(x / 19) * 2.5 + Math.sin(x / 6) * 0.8);
+    for (let x = 0; x <= W; x += 3) ctx.lineTo(x, shore(x) + Math.sin(x / 19) * 2.5 + Math.sin(x / 6) * 0.8);
     ctx.lineTo(W, H);
     ctx.fill();
+    const river = spline(RIVER.map((p) => P(...p)));
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
     ctx.strokeStyle = water;
     ctx.lineWidth = 7;
-    ctx.beginPath();
-    ctx.moveTo(...P(66.2, -2));
-    ctx.bezierCurveTo(...P(65.2, 20), ...P(66.4, 38), ...P(66.8, 45));
-    ctx.bezierCurveTo(...P(67.2, 49.5), ...P(80, 48.5), ...P(102, 51));
+    path(ctx, river);
     ctx.stroke();
     ctx.fillStyle = '#1c3050';
     for (let k = 0; k < 40; k++) ctx.fillRect(Math.floor(rng() * W), Math.floor(H * 0.965 + rng() * H * 0.03), 2, 1);
 
-    // Highways between the districts (bridges over the river).
-    const roads = [
-      [[37.2, 27], [40.8, 27]], // Corporate Spire - Maple Hollow
-      [[64.7, 27], [68.8, 27]], // Maple Hollow - Chrome Heights
-      [[19.5, 43.6], [19.5, 59.6]], // Corporate Spire - home - Rustline Docks
-      [[52.7, 43.6], [52.7, 55.3]], // Maple Hollow - Neon Strip
-      [[82.8, 44], [82.8, 55.3]], // Chrome Heights - The Undercity
-      [[34.6, 71.5], [39.6, 71.5]], // Rustline Docks - Neon Strip
-      [[65.1, 71.5], [70.3, 71.5]], // Neon Strip - The Undercity
-    ];
-    for (const [w, col, dash] of [[5, '#261e38', []], [1.4, '#6a4aa8', [3, 3]]]) {
-      ctx.strokeStyle = col;
-      ctx.lineWidth = w;
-      ctx.setLineDash(dash);
-      for (const [a, b] of roads) {
-        ctx.beginPath();
-        ctx.moveTo(...P(...a));
-        ctx.lineTo(...P(...b));
+    // Highways between the districts, with railed bridge decks over the river.
+    const roads = ROADS.map((r) => spline(r.map((p) => P(...p)), 10));
+    ctx.strokeStyle = '#261e38';
+    ctx.lineWidth = 5;
+    for (const r of roads) {
+      path(ctx, r);
+      ctx.stroke();
+    }
+    for (const r of roads) {
+      for (let k = 1; k < r.length; k++) {
+        const [x0, y0] = r[k - 1];
+        const [x1, y1] = r[k];
+        if (distToLine(river, [(x0 + x1) / 2, (y0 + y1) / 2]) > 6.5) continue;
+        const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+        const nx = (-(y1 - y0) / len) * 3.2;
+        const ny = ((x1 - x0) / len) * 3.2;
+        ctx.strokeStyle = '#3a3050';
+        ctx.lineWidth = 5;
+        path(ctx, [[x0, y0], [x1, y1]]);
         ctx.stroke();
+        ctx.strokeStyle = '#8a82b0';
+        ctx.lineWidth = 1;
+        for (const s of [1, -1]) {
+          path(ctx, [[x0 + nx * s, y0 + ny * s], [x1 + nx * s, y1 + ny * s]]);
+          ctx.stroke();
+        }
       }
     }
-    ctx.setLineDash([]);
+    ctx.lineCap = 'butt';
+    ctx.strokeStyle = '#6a4aa8';
+    ctx.lineWidth = 1.4;
+    ctx.setLineDash([3, 3]);
+    for (const r of roads) {
+      path(ctx, r);
+      ctx.stroke();
+    }
+    ctx.restore();
 
     DISTRICTS.forEach((d, i) => this.drawDistrict(ctx, d, i, P));
     for (const u of UPCOMING) this.drawUpcoming(ctx, u, P);
 
     // Home garage.
-    const [hx, hy] = home;
+    const [hx, hy] = P(HOME.x, HOME.y);
     ctx.fillStyle = this.selected === 'home' ? '#ffffff' : '#ffb000';
     ctx.beginPath();
     ctx.moveTo(hx, hy - 8);
@@ -285,14 +320,18 @@ export class CityScreen {
     ctx.fillRect(hx - 2, hy + 2, 4, 5);
     this.plate(ctx, 'HOME', hx, hy + 10, '#ffb000');
 
-    // Legend and compass.
+    // Legend (one row along the bay) and compass.
     const items = [['CIRCUIT', TYPE_COLOR.circuit], ['SPRINT', TYPE_COLOR.sprint], ['ARENA', TYPE_COLOR.arena], ['DRAG', TYPE_COLOR.drag], ['SHOP', '#e8e8ff']];
+    const widths = items.map(([t]) => textWidth(t) + 14);
+    const ly = H - 12;
     ctx.fillStyle = 'rgba(5,3,10,0.85)';
-    ctx.fillRect(4, 4, 64, items.length * 10 + 6);
+    ctx.fillRect(4, ly - 3, widths.reduce((a, w) => a + w, 0) + 2, 13);
+    let lx = 8;
     items.forEach(([t, c], k) => {
       ctx.fillStyle = c;
-      ctx.fillRect(8, 9 + k * 10, 5, 5);
-      drawText(ctx, t, 17, 8 + k * 10, { color: '#c8c0e8' });
+      ctx.fillRect(lx, ly + 1, 5, 5);
+      drawText(ctx, t, lx + 9, ly, { color: '#c8c0e8' });
+      lx += widths[k];
     });
     drawText(ctx, 'N', W - 10, 5, { color: '#8a82b0', align: 'center' });
     ctx.fillStyle = '#8a82b0';
@@ -329,8 +368,7 @@ export class CityScreen {
     ctx.strokeStyle = '#3a3448';
     ctx.lineWidth = 1.5;
     ctx.stroke();
-    const x = (poly[0][0] + poly[1][0]) / 2;
-    const y = Math.min(poly[0][1], poly[1][1]) + 4;
+    const [x, y] = labelAt(u, P);
     this.plate(ctx, u.name.toUpperCase(), x, y, '#6a6478');
     this.plate(ctx, 'COMING SOON', x, y + 11, '#6a6478');
   }
@@ -339,10 +377,11 @@ export class CityScreen {
     const { career } = this.app;
     const open = districtUnlocked(career, i);
     const poly = d.map.map(([x, y]) => P(x, y));
+    const frame = (d.frame || boxQuad(d.map)).map(([x, y]) => P(x, y));
     const map = districtMap(d.city);
     const b = map.drawBounds || map.bounds;
     const pad = SETBACK + 14;
-    const at = (x, z) => bilinear(poly, (x - b.minX + pad) / (b.maxX - b.minX + 2 * pad), (z - b.minZ + pad) / (b.maxZ - b.minZ + 2 * pad));
+    const at = (x, z) => bilinear(frame, (x - b.minX + pad) / (b.maxX - b.minX + 2 * pad), (z - b.minZ + pad) / (b.maxZ - b.minZ + 2 * pad));
     const outline = () => {
       ctx.beginPath();
       poly.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
@@ -372,16 +411,43 @@ export class CityScreen {
       line([[x0, z0], [x1, z0], [x1, z1], [x0, z1]], true);
       ctx.fill();
     }
-    // Streets, with the main avenue picked out.
+    // Streets, with the main avenue picked out. Piers come after the clip: they run out over the bay.
+    const piers = [];
     for (const e of map.edges.values()) {
       const A = map.nodes[e.a];
       const B = map.nodes[e.b];
+      if (A.pier || B.pier) {
+        piers.push([[A.x, A.z], [B.x, B.z]]);
+        continue;
+      }
       const avenue = A.j === map.avenue && B.j === map.avenue;
       ctx.strokeStyle = !open ? '#2e2838' : avenue ? d.color : '#8a86a4';
       ctx.lineWidth = avenue ? 1.8 : 1;
       line([[A.x, A.z], [B.x, B.z]]);
       ctx.stroke();
     }
+    if (!open) {
+      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+      ctx.lineWidth = 2;
+      for (let k = -MAP_H; k < MAP_W; k += 6) {
+        ctx.beginPath();
+        ctx.moveTo(k, 0);
+        ctx.lineTo(k + MAP_H, MAP_H);
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+    ctx.strokeStyle = !open ? '#2e2838' : '#8a86a4';
+    ctx.lineWidth = 1.6;
+    for (const p of piers) {
+      line(p);
+      ctx.stroke();
+    }
+    outline();
+    ctx.strokeStyle = this.selected === i ? '#ffffff' : open ? d.color : '#3a3448';
+    ctx.lineWidth = this.selected === i ? 2 : 1.5;
+    ctx.stroke();
+
     if (open) {
       // The hovered event's route (shortcuts dashed), then numbered markers.
       const events = this.selected === i ? districtEvents(d) : this.selected === 'home' && d.id === 'rustline' ? HOME_EVENTS : [];
@@ -424,25 +490,10 @@ export class CityScreen {
       if (shop) pins.push([at(...lotCentre(shop.lot)), '#e8e8ff', '$']);
       if (!events.length && map.arena) pins.push([at(map.arena.x, map.arena.z), TYPE_COLOR.arena, '']);
       for (const [[x, y], color, text] of pins) this.pin(ctx, x, y, color, String(text));
-    } else {
-      ctx.strokeStyle = 'rgba(0,0,0,0.6)';
-      ctx.lineWidth = 2;
-      for (let k = -MAP_H; k < MAP_W; k += 6) {
-        ctx.beginPath();
-        ctx.moveTo(k, 0);
-        ctx.lineTo(k + MAP_H, MAP_H);
-        ctx.stroke();
-      }
     }
-    ctx.restore();
-    outline();
-    ctx.strokeStyle = this.selected === i ? '#ffffff' : open ? d.color : '#3a3448';
-    ctx.lineWidth = this.selected === i ? 2 : 1.5;
-    ctx.stroke();
 
-    // Name plate at the top edge, status underneath.
-    const x = (poly[0][0] + poly[1][0]) / 2;
-    const y = Math.min(poly[0][1], poly[1][1]) + 4;
+    // Name plate, status underneath.
+    const [x, y] = labelAt(d, P);
     const status = !open ? 'LOCKED' : career.bosses.includes(d.id) ? 'CLEARED' : `TIER ${d.tier + 1}`;
     this.plate(ctx, d.name.toUpperCase(), x, y, open ? d.color : '#6a6478');
     this.plate(ctx, status, x, y + 11, open ? '#e8e8ff' : '#6a6478');
@@ -476,6 +527,54 @@ function bilinear(q, u, v) {
 }
 
 const lotCentre = (lot) => [(lot[0] + lot[1]) / 2, (lot[2] + lot[3]) / 2];
+
+// The bounding box of an outline, as a quad.
+function boxQuad(pts) {
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  return [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+}
+
+// Where a district's name plate goes (canvas px): its label, or top middle.
+function labelAt(d, P) {
+  if (d.label) return P(...d.label);
+  const [[x0, y0], [x1]] = boxQuad(d.map);
+  const [x, y] = P((x0 + x1) / 2, y0);
+  return [x, y + 4];
+}
+
+// A smooth curve through the points (Catmull-Rom), as a polyline.
+function spline(pts, steps = 8) {
+  const out = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [a, b, c, d] = [pts[Math.max(i - 1, 0)], pts[i], pts[i + 1], pts[Math.min(i + 2, pts.length - 1)]];
+    for (let k = 0; k < steps; k++) {
+      const t = k / steps;
+      out.push([0, 1].map((j) => 0.5 * (2 * b[j] + (c[j] - a[j]) * t + (2 * a[j] - 5 * b[j] + 4 * c[j] - d[j]) * t * t + (3 * b[j] - a[j] - 3 * c[j] + d[j]) * t * t * t)));
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+
+function path(ctx, pts) {
+  ctx.beginPath();
+  pts.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+}
+
+// Distance from a point to a polyline.
+function distToLine(pts, [px, py]) {
+  let best = Infinity;
+  for (let k = 1; k < pts.length; k++) {
+    const [ax, ay] = pts[k - 1];
+    const [bx, by] = pts[k];
+    const l2 = (bx - ax) ** 2 + (by - ay) ** 2 || 1;
+    const t = Math.max(0, Math.min(1, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / l2));
+    best = Math.min(best, Math.hypot(px - ax - t * (bx - ax), py - ay - t * (by - ay)));
+  }
+  return best;
+}
 
 // Blend two #rrggbb colours: t = 0 gives a, 1 gives b.
 function mix(a, b, t) {

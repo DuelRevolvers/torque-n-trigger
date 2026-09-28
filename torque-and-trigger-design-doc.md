@@ -281,7 +281,7 @@ An enclosed arena with ramps, obstacles and hazards. Win by being last car stand
 Two to four cars on a straight strip, around 15 to 30 seconds. Launch timing, gear-shift timing and nitrous timing decide most of it. Combat is limited to **rear-facing weapons and utility**, which makes the leader the target and makes a rear mine layer a real counter to a pure speed build. Rewards acceleration, transmission and slick tires.
 
 ### Event modifiers
-Any event can carry a modifier to vary the career, such as acid rain (grip down), blackout (lights matter), weapons only in the second half, one-hit wrecks, no nitrous, or endurance (fuel matters). Districts favour modifiers that fit their theme.
+Any event can carry a modifier to vary the career, such as blackout (lights matter), weapons only in the second half, one-hit wrecks, no nitrous, or endurance (fuel matters). Districts favour modifiers that fit their theme.
 
 ---
 

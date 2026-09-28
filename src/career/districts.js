@@ -13,6 +13,11 @@
 // city.lots: single-block lots by kind: construction, plaza, parking, alley, park, quad (ways through) and yard, tanks, housing (filler).
 // city.buildings: 'warehouse' | 'dense' | 'block' | 'tower' | 'mega'.
 // city.features: 'waterfront' | 'piers' | 'arches' | 'skybridges' | 'overpass' | 'tunnels' | 'spire'. city.streetTrees: tree-lined sidewalks.
+//
+// On the city map (0-100 each way): map is the district's outline, frame the
+// quad [top-left, top-right, bottom-right, bottom-left] its streets are drawn
+// into (default: the outline's bounding box; clipped to the outline), label
+// where its name plate goes (default: top middle).
 
 const GROUND = [[2, 2], [3, 2], [2, 3], [3, 3]]; // event ground sizes, smallest first
 
@@ -21,7 +26,10 @@ export const DISTRICTS = [
     id: 'rustline', name: 'Rustline Docks', tier: 0, faction: 'Dock Rats', color: '#ff7a1a',
     blurb: 'A working port: piers over the water, a rail yard, tank farms, container stacks and cranes. Everyone starts here.',
     theme: { haze: '#20140f', fog: 0.0042 },
-    map: [[6.1, 59.6], [33.9, 59.6], [35.2, 90.5], [3.9, 90.5]],
+    // Stepped like stacked containers, the quay along the bay.
+    map: [[4.5, 57.3], [15.5, 57.3], [15.5, 58.7], [25, 58.7], [25, 55.3], [32.5, 55.3], [32.5, 57.3], [35, 57.3], [36.5, 68.7], [35.8, 78.7], [36.5, 85.3], [28, 85.7], [21, 85], [11.5, 86], [3, 85.3], [2.8, 76.7], [3.3, 66.7], [4.5, 63.3]],
+    frame: [[6.1, 59.6], [33.9, 59.6], [35.2, 90.5], [3.9, 90.5]],
+    label: [20, 61],
     city: {
       id: 'rustline', name: 'Rustline', seed: 1101, cols: 9, rows: 5,
       spacingX: [140, 210], spacingZ: [115, 165], removeEdges: 0, elevation: 0.3, hillScale: 400,
@@ -68,9 +76,11 @@ export const DISTRICTS = [
   },
   {
     id: 'strip', name: 'Neon Strip', tier: 1, faction: 'Glow Syndicate', color: '#ff2a6d',
-    blurb: 'The Glow Palace casino, a night market and clubs packed into tight blocks under neon arches. Acid rain most nights.',
+    blurb: 'The Glow Palace casino, a night market and clubs packed into tight blocks under neon arches.',
     theme: { haze: '#1e0d30', fog: 0.0045 },
-    map: [[39.6, 55.3], [65.1, 55.3], [65.1, 90], [39.6, 90]],
+    // Pointed at the top where Palace Drive comes in, the seawall along the bottom.
+    map: [[44, 58.7], [47.5, 55], [52, 53.3], [53, 51.3], [54.5, 53.3], [59.5, 52.7], [64, 55.3], [65, 64], [63, 71.3], [64.5, 80], [62.5, 87.3], [63.5, 91.3], [55.5, 90.7], [48.5, 91.7], [43, 91], [41.5, 84], [43, 76.7], [41, 68.7], [42.5, 62.7]],
+    label: [53, 57],
     city: {
       id: 'strip', name: 'Neon Strip', seed: 2202, cols: 12, rows: 9,
       spacingX: [80, 122], spacingZ: [72, 108], removeEdges: 0.07, elevation: 0.5, hillScale: 350,
@@ -84,7 +94,7 @@ export const DISTRICTS = [
       look: { building: '#8070a8', buildingTex: 'building', lamp: '#ff9ad0', barrier: '#ffffff', signs: 0.85, lot: '#5a5068', neon: ['#ff2a6d', '#05d9e8', '#b04dff'], road: '#c8b0d0', roadGloss: 1, walk: '#c0b0c8' },
     },
     events: [
-      { key: 'sprint', type: 'sprint', name: 'Neon Strip Sprint', desc: 'From the Glow Palace forecourt out through the back streets.', route: { kind: 'sprint', seed: 1, length: 3000, from: 'casino' }, cars: 6, purse: 1500, modifiers: ['acidRain'] },
+      { key: 'sprint', type: 'sprint', name: 'Neon Strip Sprint', desc: 'From the Glow Palace forecourt out through the back streets.', route: { kind: 'sprint', seed: 1, length: 3000, from: 'casino' }, cars: 6, purse: 1500 },
       { key: 'circuit', type: 'circuit', name: 'Casino Circuit', desc: 'Round the Glow Palace and down the Strip under the arches.', route: { kind: 'circuit', seed: 2, cells: 7, around: 'casino' }, cars: 6, laps: 3, purse: 1700 },
       { key: 'drag', type: 'drag', name: 'Strip Quarter Mile', desc: 'A quarter mile down the Strip itself.', route: { kind: 'drag' }, cars: 4, purse: 1100, finishS: 414 },
       { key: 'rival', type: 'circuit', name: 'Rival: Glow Laps', desc: 'Laps round the night market. Mind the stalls.', route: { kind: 'circuit', seed: 4, cells: 6, around: 'market' }, cars: 5, laps: 2, purse: 1900, rival: true, modifiers: ['noNitro'] },
@@ -95,7 +105,9 @@ export const DISTRICTS = [
     id: 'chrome', name: 'Chrome Heights', tier: 2, faction: 'Kessler Motors', color: '#05d9e8',
     blurb: 'Uptown, up top: every race runs across the skyscraper rooftops. Jump the gaps between buildings, cut across roof gardens and drive straight through a tower. Sponsors pay well, rivals hit hard.',
     theme: { haze: '#0d1530', fog: 0.0038 },
-    map: [[68.8, 9.5], [96.8, 9.5], [96.8, 44], [68.8, 44]],
+    // A ridge of hilltops along the north, the river along the west and south.
+    map: [[71, 11.3], [74.5, 7.3], [78, 10.7], [82.5, 5.3], [87, 10], [90.5, 6.7], [95, 10.7], [97, 20], [96, 32], [97.5, 40], [93, 45.3], [85, 46], [77.5, 44.7], [73, 41.3], [71.5, 33.3], [73, 24], [70.5, 16.7]],
+    label: [84, 13],
     city: {
       id: 'chrome', name: 'Chrome Heights', seed: 3303, cols: 9, rows: 8,
       spacingX: [115, 170], spacingZ: [115, 165], removeEdges: 0.08, elevation: 2, hillScale: 240, rooftop: 60, gapShare: 0.4,
@@ -120,7 +132,9 @@ export const DISTRICTS = [
     id: 'undercity', name: 'The Undercity', tier: 3, faction: 'Low Road Crew', color: '#39ff14',
     blurb: 'Streets under the elevated city deck: ramshackle towers of shacks and tin, tunnels, pillars, tank farms, a black market and flooded asphalt. The lights go out down here.',
     theme: { haze: '#081a12', fog: 0.0058 },
-    map: [[70.3, 55.3], [96.4, 55.3], [96.4, 90], [70.3, 90]],
+    // Ragged and sprawling, under the river's south bank.
+    map: [[72, 60], [77.5, 57.3], [82.5, 59.3], [88, 56.7], [93.5, 58.7], [98, 57.3], [98.5, 66.7], [96.5, 75.3], [98.5, 84], [95, 91.3], [88, 89.3], [82.5, 91.3], [76, 90], [71.5, 85.3], [73, 77.3], [70.5, 70], [72.5, 64]],
+    label: [85, 61.5],
     city: {
       id: 'undercity', name: 'Undercity', seed: 4404, cols: 12, rows: 9,
       spacingX: [85, 128], spacingZ: [80, 118], removeEdges: 0.15, elevation: 1.5, hillScale: 260,
@@ -136,7 +150,7 @@ export const DISTRICTS = [
     events: [
       { key: 'sprint', type: 'sprint', name: 'Tunnel Blackout', desc: 'From the black market through the tunnels, lights out.', route: { kind: 'sprint', seed: 1, length: 3200, from: 'market' }, cars: 6, purse: 3200, modifiers: ['blackout'] },
       { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Sump Brawl', desc: 'The Sump: a drained lot under the deck.', route: { kind: 'arena', site: 0 }, cars: 6, timeLimit: 120, purse: 3000, modifiers: ['oneHit'] },
-      { key: 'circuit', type: 'circuit', name: 'Underpass Loop', desc: 'Round the black market, under the deck and back.', route: { kind: 'circuit', seed: 3, cells: 7, around: 'market' }, cars: 6, laps: 3, purse: 3400, modifiers: ['acidRain'] },
+      { key: 'circuit', type: 'circuit', name: 'Underpass Loop', desc: 'Round the black market, under the deck and back.', route: { kind: 'circuit', seed: 3, cells: 7, around: 'market' }, cars: 6, laps: 3, purse: 3400 },
       { key: 'rival', type: 'circuit', name: 'Rival: Low Road', desc: 'A tight loop through the tunnels and alleys.', route: { kind: 'circuit', seed: 4, cells: 6 }, cars: 5, laps: 3, purse: 3800, rival: true },
     ],
     boss: { key: 'boss', type: 'arena', mode: 'lastStanding', name: 'Boss: Hammer', desc: 'Hammer waits in Pillar Hall.', route: { kind: 'arena', site: 1 }, cars: 5, timeLimit: 240, purse: 5500, driver: 'hammer' },
@@ -145,7 +159,9 @@ export const DISTRICTS = [
     id: 'spire', name: 'Corporate Spire', tier: 4, faction: 'Syncorp', color: '#b04dff',
     blurb: 'Downtown: pale stone monoliths trimmed in gold, grand plazas, boulevards, Central Park and the Spire itself. Win here and the championship is yours.',
     theme: { haze: '#1c160c', fog: 0.0033 },
-    map: [[9.7, 9.9], [37.2, 9.9], [37.2, 43.6], [9.7, 43.6]],
+    // Faceted round the radial downtown.
+    map: [[20, 8], [27.5, 6], [35, 9.3], [37.5, 17.3], [37.5, 28], [35, 37.3], [29, 42.7], [21, 43.3], [15, 38], [13.5, 28.7], [13.5, 17.3]],
+    label: [25.5, 10.5],
     city: {
       id: 'spire', name: 'Corporate Spire', seed: 5505, cols: 9, rows: 7,
       spacingX: [150, 210], spacingZ: [140, 190], removeEdges: 0.04, elevation: 3, hillScale: 320,
@@ -172,7 +188,6 @@ export const DISTRICTS = [
 export const RIVALS = ['jackal', 'ghost', 'mule', 'vixen', 'static'];
 
 export const MODIFIER_LABELS = {
-  acidRain: 'Acid rain: grip down',
   noNitro: 'No nitrous',
   weaponsLate: 'Weapons in the second half only',
   oneHit: 'One-hit wrecks',

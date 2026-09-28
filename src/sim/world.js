@@ -46,7 +46,6 @@ export function stepWorld(world, inputs) {
     const input = effective[i];
     updateMods(world, i);
     if (car.launchBoost > 0) car.mods.torque *= 1.3;
-    if (state.event?.modifiers?.includes('acidRain')) car.mods.grip *= 0.82;
     stepCar(car, params[i], input, track, SIM_DT);
     if (!car.wrecked) updateRecovery(world, car, params[i], input);
     if (!track.isArena) updateLap(track, car, state.tick);

@@ -725,7 +725,7 @@
         if (def.city) group.add(buildDistrictView(districtMap(def.city), cur));
         venueScene.add(group);
         const theme = DISTRICTS.find((d) => d.id === def.district)?.theme;
-        const haze = (def.modifiers || []).includes('acidRain') ? '#10241a' : theme?.haze || PALETTE.haze;
+        const haze = theme?.haze || PALETTE.haze;
         venueScene.fog = new THREE.FogExp2(haze, theme?.fog || 0.0045);
         venueScene.background = cur.sky;
         venueNow = { def, group, pose: gridPoses(track, def, 1)[0] };

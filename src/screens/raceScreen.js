@@ -149,12 +149,11 @@ export class RaceScreen {
     const theme = DISTRICTS.find((d) => d.id === this.def.district)?.theme;
     const mods = this.def.modifiers || [];
     const blackout = mods.includes('blackout');
-    const haze = mods.includes('acidRain') ? '#10241a' : theme?.haze || PALETTE.haze;
+    const haze = theme?.haze || PALETTE.haze;
     this.scene.fog = venue.outdoor
       ? new THREE.FogExp2(haze, (theme?.fog || 0.0045) * (blackout ? 2.4 : 1))
       : new THREE.Fog('#07050d', blackout ? 15 : 40, blackout ? 70 : 160);
     this.hemi.intensity = blackout ? 0.3 : 1.4;
-    this.forceRain = mods.includes('acidRain');
     this.scene.background = venue.outdoor ? this.app.tex.sky : new THREE.Color('#07050d');
 
     // AI field: random named drivers at a tier matching the player's car.
@@ -531,7 +530,7 @@ export class RaceScreen {
     const fxOn = settings.speedFx !== false && !this.resultsShown && !split;
     this.speedFx = fxOn ? this.rigs[0].intensity || 0 : 0;
     this.speedLines.update(paused ? 0 : dt, Math.hypot(player.vel.x, player.vel.z), this.speedFx);
-    this.rain.mesh.visible = (settings.rain || this.forceRain) && this.outdoor && !split;
+    this.rain.mesh.visible = settings.rain && this.outdoor && !split;
     if (this.rain.mesh.visible) this.rain.update(this.camera.position, dt);
 
     // Results a moment after the player finishes, is eliminated, or the event ends.
