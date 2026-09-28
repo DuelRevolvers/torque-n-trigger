@@ -1,7 +1,8 @@
 # 2. Neon Strip
 
-**Status:** agreed, ready to build (everything is open to change after
-playtesting). **Campaign:** 2nd. **Faction:** Glow Syndicate.
+**Status:** agreed and built. Everything in the game is authored to this doc,
+with nothing generated (the numbers are in "Build spec" near the end). Everything
+is open to change after playtesting. **Campaign:** 2nd. **Faction:** Glow Syndicate.
 
 **On the city map:** bottom middle. The outline is pointed at the top, where
 Palace Drive comes in, with ragged sides and the seawall along the bottom. The
@@ -438,3 +439,196 @@ the lengths above were measured from it. The ASCII map comes from the same data.
 - **No acid rain.** It's removed from the game entirely.
 
 All of these can change after playtesting.
+
+## Build spec
+
+What the game builds, with the numbers it uses. The data is in
+`src/districts/neonStrip.js`:
+- **The plan:** the boundary, nodes, streets and sites exactly as above.
+- **The rest of the file:** what every block is, the set pieces and the Car
+  Park Brawl's structures.
+
+The code that builds it:
+- `src/sim/planMap.js`: the streets and blocks;
+- `src/sim/planLayout.js`: fills the blocks by fixed rules;
+- `src/sim/planRoute.js`: the event routes and free roam;
+- `src/render/planView.js`: draws it all.
+
+Metres: x east, z south, origin mid-district. Nothing is random: the same plan
+always builds the same district.
+
+**Ground and streets**
+- **Terrain:** flat, falling 3 m from the north edge (+1.5) to the south edge (−1.5).
+- **Streets:** each has its own road width, with 4 m sidewalks (none on the lanes).
+  Its lot line is half the road plus the sidewalk:
+  - lanes: 3.5 m;
+  - streets: 10 m;
+  - Palace Drive: 14 m;
+  - the Strip: 19 m.
+- **Rounded corners:** built exactly from the plan's `via` points and radii.
+- **Roads out:** the three roads out (to Rustline, the Undercity and Maple
+  Hollow) end on the boundary. A barrier stands across each 6 m inside it, and
+  the road carries on beyond, out of reach.
+- **Blocks:** the 23 faces between the streets and the boundary, each set back by
+  its streets' lot lines.
+- **Street furniture:**
+  - **Lamps:** pinkish-white street lamps every 32 m on both sides, on the lots.
+  - **Arches:** ten neon arches over the Strip, at x −562, −462, −362, −262,
+    −162, −62, +38, +238, +438 and +538. One every 100 m, except the two that
+    would have stood in Seven St and Pawn St.
+  - **Median:** a 0.6 m kerb, 2 m wide, with a neon palm every 12 m. It's
+    broken for 16 m either side of every junction.
+  - **Service alleys:** 5 m wide. Two run behind the Strip casinos at z −8 (Velvet
+    Curve to Lucky St, and Seven St to East Row). One runs behind the Club St
+    clubs at z −139. Brick walls line them wherever no building does.
+
+**What each block holds** (buildings stand along each street frontage in turn,
+sized from fixed cycles)
+- **Casinos,** on the Strip's north side: 30–48 m wide, 42 m deep, 26–45 m tall,
+  with neon fronts, a lit marquee canopy and big signs.
+- **Clubs:** 20–30 m wide, 24 m deep, 10–18 m tall, with a second row behind.
+- **Hotels,** north of Marquee St up to the pointed top, and in the lobes east
+  of East Row: 44–60 m wide, 50–86 m tall, with their names in neon.
+- **Motels,** round the drive-in and west of Tinsel St: two storeys (7 m), set
+  18 m back behind a courtyard car park, each with a MOTEL pole sign.
+- **Wedding chapels,** south of Back St by the depot, with steeples. The first
+  on Chapel St is the drive-through.
+- **Pawnshops and bail bonds,** between Dice St and Pawn St and east of East Row.
+- **Low flats,** between Motel Row and Chapel St, south of Back St.
+- **Named buildings:**
+  - **The Pink Room:** inside Velvet Curve's bend.
+  - **The Hi-Score Arcade:** 110 × 50 m, with a Googie roof and pylon.
+  - **Candy Chrome:** on the Strip, behind a 30 m forecourt.
+  - **The counting house:** on Shore Road, just west of Chapel St.
+- **The promenade:** between Shore Road and the seawall. The seawall is a
+  1 m parapet with a railing, with palms along a tiled walk and spray over the
+  wall.
+- **Beyond the edge:** a ring of filler buildings just outside the boundary,
+  solid, so free roam stays in the district. It's open where the roads leave and
+  along the seawall.
+
+**The Glow Palace** (x ±222 at Marquee St, ±135 at the car park)
+- **Podium:** 15 m high, running from z −290 to −150.
+  - Its wings stand back to z −262 either side of the mouth, making the
+    fountain forecourt (a fountain each side at x ±112).
+  - The mouth blocks (x ±5 to ±30) come out to Marquee St.
+- **Porte-cochère:** a gold-lit canopy over the mouth, 80 m wide, 8 m up.
+- **The Palace Underpass:**
+  - 10 m between the walls, a 6 m ceiling, gold-lit;
+  - it runs under the podium from z −290 to −150, and the walls funnel in over
+    10 m at each end (z −300 to −140 in all);
+  - the cash dock is a bay in its west wall, from z −215 to −195.
+- **Hotel tower:** 60 × 44 m on the podium, 110 m to the top, then the neon
+  crown and its beacon.
+
+**The Casino Car Park** (x ±128, z −135 to +42)
+- **The aisle:** Palace Drive, 20 m wide with no kerbs.
+- **Entrances:** side entrances off Lucky St and Seven St at z −40, and the
+  aisle's two ends. A low wall runs round the rest.
+- **Parked cars:** eight double rows each side of the aisle, 1,183 cars in all,
+  with 8 m lanes and a cross aisle.
+- **The circuit's shortcut lane:** it cuts diagonally through the south-east
+  rows, from Seven St's entrance to a gap onto the Strip at x +60.
+- **The rest:** eight lamp masts, the valet booth and the shuttle shelter.
+
+**The other sites**
+- **Night Market:**
+  - the lane winds from its gate on the Strip (x +25) to Back St at Dice St;
+  - stalls line it 4.2 m either side (solid), with gaps and food trucks;
+  - strings of lights cross it every 14 m;
+  - it's fenced, with a neon gate.
+- **Starlite Drive-In:**
+  - the lit screen (60 m wide, 22 m high, solid) at the south end;
+  - the snack bar and projection booth in the middle;
+  - six rows of humps (0.45 m, small jumps);
+  - 168 speaker posts, which go down when you drive through them;
+  - the gate at Drive-in Road.
+- **Sign Boneyard:**
+  - thirteen dead signs, all solid: giant letters (G, L, O, W), a cowboy, a
+    cocktail glass, dice, arrows, a horseshoe, a star, a motel sign and a
+    showgirl;
+  - four still flicker, and three lie toppled beside the path;
+  - it's fenced, with gates on Crown Road and Marquee St.
+- **Bus Depot:** 92 tour buses in rows parallel to the diagonal way through, the
+  depot office, and a fence with gates where the way meets East Row and Shore
+  Road.
+
+**Events as built**
+- **Neon Strip Sprint:** 2.70 km. The depot shortcut saves 102 m.
+- **Casino Circuit:** 1.44 km a lap. The start and finish are 40 m east of the
+  porte-cochère. The car park rows shortcut saves 35 m.
+- **Strip Quarter Mile:**
+  - 402 m, from x −262 (under an arch, with the start lights) to Seven St;
+  - two cars each side of the median;
+  - crowds behind the barriers on both sides.
+- **Car Park Brawl:**
+  - bounds the car park itself;
+  - limos across the entrances and the underpass mouth;
+  - the valet ramp: a 48 × 14 m deck 5.5 m up over the aisle, with a 22 m ramp
+    from the west, and off the east end (its legs stand clear of the aisle);
+  - the Glow Palace shuttle bus laps the lot at 7 m/s and does 30 damage a
+    second.
+- **Rival: Glow Laps:** 1.99 km a lap, starting 30 m east of Motel Row. The depot
+  shortcut saves 102 m.
+- **Boss: Vixen:** 2.82 km, finishing in the car park. The boneyard shortcut
+  saves 120 m.
+- **Race widths:** each stretch of a route takes its street's width. The race
+  wall stands at the lot line: 10 m on the streets, 3.5 m on the lanes and 19 m
+  on the Strip. It closes to 5 m through the underpass, and in the car park
+  aisle the wall is at the aisle's edge (10 m).
+- **Race dressing:**
+  - every street leaving a route is closed with stretch limos parked nose to tail
+    (tour buses across Palace Drive);
+  - LED strips run along the barrier tops;
+  - at the start: four searchlights, the NEON STRIP banner on the nearest arch
+    (or on a truss over the road, away from the Strip), and Glow Syndicate crews
+    on the limo roofs and the steps of the nearest hotel or casino.
+- **The armoured truck:**
+  - about one minute in five, never in the first minute, at 50 km/h;
+  - it runs from the cash dock, down the car park aisle, across the Strip and down
+    Chapel St to the counting house, or the other way, keeping to its lane;
+  - hitting it throws you off and does 12 damage, plus 1.6 for every m/s of
+    closing speed.
+
+## Built vs this doc
+
+The Neon Strip was built from the ground up to this doc on 2026-09-28, with
+every part authored. It was checked against the doc point by point.
+`tests/neonStrip.test.js` checks that:
+- the build uses no randomness;
+- the plan's widths, exits and loop match this doc;
+- the route lengths match, and every shortcut saves distance;
+- the underpass and the median work as walls;
+- the truck is rare, never in the first minute, and hits hard;
+- the brawl and free roam hold their structures.
+
+**Not done as this doc describes:**
+- **Rustline's street data:** this doc says `generateMap` should convert a grid
+  district into a plan internally, so there's one code path. That hasn't been
+  done. Rustline still builds from `city.grid`, the path it was just rebuilt and
+  tested on.
+  - The two paths share the route, arena, free roam and track code.
+  - Converting Rustline is a refactor that shouldn't change anything you can see.
+  - It can be done as its own job.
+
+**Decisions made while building, all open to change after playtesting:**
+- **The shortcuts' savings:** the depot saves 102 m and the boneyard 120 m. The
+  doc said about 130 m for both. These are its own paths, measured as built.
+- **The Palace:**
+  - the porte-cochère is a canopy cantilevered over the mouth;
+  - the fountain forecourt is either side of it, where the podium's wings stand
+    back.
+- **The valet ramp:**
+  - it spans the aisle, so races run under it;
+  - its legs stand just outside the aisle;
+  - it stands in every event, like Rustline's structures;
+  - the shuttle bus only runs in the brawl.
+- **The counting house:** on Shore Road, just west of Chapel St. The truck turns
+  off Chapel St onto Shore Road to reach it.
+- **Speaker posts:** they knock down rather than being solid, so you can drive
+  through the drive-in rows.
+- **Where the doc gives no numbers:** the median's height, lamp spacing,
+  building sizes and the filler ring are this build's choices.
+- **A fix that applies to both districts:** arena structures now stand in every
+  event, not only in their arena and free roam. For example, Rustline's gantry
+  deck and cranes are now visible from races that pass them.

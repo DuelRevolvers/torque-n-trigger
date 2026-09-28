@@ -21,6 +21,8 @@ import { buildCityView } from '../render/cityView.js';
 import { buildArenaView } from '../render/arenaView.js';
 import { buildDistrictView, districtClear } from '../render/districtView.js';
 import { buildTrainView, updateTrainView } from '../render/trainView.js';
+import { buildTruckView, updateTruckView } from '../render/truckView.js';
+import { districtLayout } from '../sim/cityLayout.js';
 import { trainAt } from '../sim/train.js';
 import { additiveMaterial } from '../render/retroMaterial.js';
 import { CarView } from '../render/carView.js';
@@ -44,6 +46,13 @@ const conditionsOf = (build) =>
 
 // Runs one event: countdown, the race or fight against AI, then results with
 // cash and salvage paid into the career.
+// The street faces of a plan district's hotels and casinos (where crews stand at the start).
+function buildingFronts(map) {
+  return districtLayout(map).items
+    .filter((it) => it.t === 'bldg' && (it.kind === 'hotel' || it.kind === 'casino'))
+    .map((it) => ({ x: it.obb.x + it.front[0] * it.obb.hd, z: it.obb.z + it.front[1] * it.obb.hd, fx: it.front[0], fz: it.front[1], w: it.obb.hw * 2, y: map.heightAt(it.obb.x, it.obb.z) }));
+}
+
 export class RaceScreen {
   constructor(app) {
     this.app = app;
@@ -87,8 +96,7 @@ export class RaceScreen {
     const group = new THREE.Group();
     if (v.kind === 'arena') {
       track = buildArena(v.def);
-      // Free roam in an authored district still shows the arenas' structures.
-      if (!v.def.roam || v.def.authored) {
+      if (!v.def.roam) {
         const view = buildArenaView(track, tex, { outdoor: !!def.city, look: def.city?.look });
         animate = view.userData.animate;
         group.add(view);
@@ -97,7 +105,16 @@ export class RaceScreen {
       track = buildTrack(v.def);
       if (def.finishS) track.finishS = def.finishS;
       if (def.city) {
-        group.add(buildTrackView(track, tex, { city: true, sidewalk: def.city.rooftop ? tex.lot : tex.sidewalk, barrierColor: def.city.look.barrier, look: def.city.look, clear: def.city.authored ? districtClear(districtMap(def.city)) : null }));
+        const map = districtMap(def.city);
+        const view = buildTrackView(track, tex, {
+          city: true, sidewalk: def.city.rooftop ? tex.lot : tex.sidewalk, barrierColor: def.city.look.barrier, look: def.city.look,
+          clear: def.city.authored ? districtClear(map) : null,
+          arches: map.plan ? districtLayout(map).items.filter((it) => it.t === 'arch') : null,
+          fronts: map.plan ? buildingFronts(map) : null,
+          drag: def.type === 'drag',
+        });
+        animate = view.userData.animate || null;
+        group.add(view);
       } else {
         group.add(buildTrackView(track, tex), buildCityView(track, tex));
       }
@@ -105,9 +122,11 @@ export class RaceScreen {
     }
     const train = track.train ? buildTrainView() : null;
     if (train) group.add(train);
+    const truck = track.truck ? buildTruckView(track.truck) : null;
+    if (truck) group.add(truck);
     group.visible = false;
     this.scene.add(group);
-    const entry = { track, group, outdoor: v.kind !== 'arena' || !!def.city, animate, train };
+    const entry = { track, group, outdoor: v.kind !== 'arena' || !!def.city, animate, train, truck, heightAt: def.city ? districtMap(def.city).heightAt : null };
     this.venues.set(key, entry);
     return entry;
   }
@@ -478,6 +497,9 @@ export class RaceScreen {
     this.time += dt;
     const { state } = this.world;
     if (this.venueEntry?.train) updateTrainView(this.venueEntry.train, this.track.train, state.tick - 1 + alpha);
+    if (this.venueEntry?.truck) updateTruckView(this.venueEntry.truck, this.track.truck, state.tick - 1 + alpha, this.venueEntry.heightAt);
+    // Speaker posts at the drive-in go down when a car drives through them.
+    this.envGroup?.userData.knock?.(state.cars.map((c) => ({ x: c.pos.x, y: c.pos.y, z: c.pos.z, vx: c.vel.x, vz: c.vel.z })));
     if (this.crossingLights) {
       // Level crossing lamps flash from a few seconds before a train until it's gone.
       const line = this.track.train;
@@ -518,7 +540,8 @@ export class RaceScreen {
     this.popupsBy = this.popupsBy.map((list) => list.filter((p) => p.age < 1.8));
 
     state.cars.forEach((car, i) => this.views[i].update(this.pose(i, paused ? 1 : alpha), car, this.track, this.time));
-    this.venueEntry.animate?.((state.tick + (paused ? 0 : alpha)) * SIM_DT);
+    this.venueEntry.animate?.((state.tick + (paused ? 0 : alpha)) * SIM_DT, this.time);
+    this.envGroup?.userData.animate?.((state.tick + (paused ? 0 : alpha)) * SIM_DT, this.time);
     this.fx.handleEvents(events, this.world, this.views);
     this.fx.update(paused ? 0 : dt, this.world, this.views);
 

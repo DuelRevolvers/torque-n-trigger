@@ -15,10 +15,12 @@ import { valid, placeJumps } from './trackgen.js';
 import { yawFromDirection } from './math.js';
 import { districtLayout } from './cityLayout.js';
 import { authoredGridMap } from './authoredMap.js';
+import { planMap } from './planMap.js';
+import { planTrack, planRoam } from './planRoute.js';
 
 export const STREET = { halfWidth: 8, curbWidth: 1.2, shoulderWidth: 4 };
 export const SETBACK = STREET.halfWidth + STREET.curbWidth + STREET.shoulderWidth; // centreline to lot edge
-const CORNER_R = 22;
+export const CORNER_R = 22;
 const BRANCH_R = 13;
 const BRANCH_HALF = 6.5;
 
@@ -35,6 +37,7 @@ export function districtMap(style) {
 
 function generateMap(style) {
   // Authored districts (docs/districts) are built from their data, not generated.
+  if (style.plan) return planMap(style);
   if (style.authored) return authoredGridMap(style);
   const rng = makeRng(style.seed);
   const span = ([a, b]) => a + rng() * (b - a);
@@ -505,7 +508,7 @@ function corridorPoints(c, kind, rng, opts = {}) {
 
 // Rounded corners (arcs of radius R) and extra points on long straights, as
 // [x, y, z] control points for buildTrack.
-function roundedPoints(list, closed, R, heightAt) {
+export function roundedPoints(list, closed, R, heightAt) {
   const P = list.map((n) => [n.x, n.z]);
   const n = P.length;
   const out = [];
@@ -998,7 +1001,8 @@ function cityRoam(map) {
 }
 
 // Legs under a raised deck (a gantry deck or a catwalk), every 25 m along both long edges.
-function deckLegs(p) {
+export function deckLegs(p) {
+  if (p.legs) return p.legs.map(([x, z]) => ({ x, z, hw: 0.4, hd: 0.4, h: p.h - (p.thick || 0.8), kind: 'leg', render: true }));
   const out = [];
   const long = p.hw >= p.hd;
   const L = long ? p.hw : p.hd;
@@ -1012,11 +1016,15 @@ function deckLegs(p) {
   return out;
 }
 
-// A solid layout item as an arena obstacle, relative to (cx, cz).
-function layoutObstacle(it, cx, cz) {
+// A solid layout item as an arena obstacle, relative to (cx, cz) and height y0.
+export function layoutObstacle(it, cx, cz, y0 = 0) {
   const [x0, x1, z0, z1] = it.r;
-  const base = it.y ?? -2;
-  const top = (it.y ?? 0) + it.h;
+  const base = (it.y ?? -2) - y0;
+  const top = (it.y ?? 0) - y0 + it.h;
+  if (it.poly) {
+    const b = { x: (x0 + x1) / 2 - cx, z: (z0 + z1) / 2 - cz, hw: (x1 - x0) / 2, hd: (z1 - z0) / 2 };
+    return { ...b, poly: it.poly.map(([x, z]) => [x - cx, z - cz]), y: base, h: top - base };
+  }
   if (it.obb) return { x: it.obb.x - cx, z: it.obb.z - cz, hw: it.obb.hw, hd: it.obb.hd, yaw: it.obb.yaw, y: base, h: top - base };
   return { x: (x0 + x1) / 2 - cx, z: (z0 + z1) / 2 - cz, hw: (x1 - x0) / 2, hd: (z1 - z0) / 2, y: base, h: top - base };
 }
@@ -1034,11 +1042,13 @@ function authoredArena(map, site, spec) {
     ...(spec.obstacles || []).map((o) => ({ ...L(o), render: true })),
     ...platforms.filter((p) => p.under).flatMap(deckLegs),
   ];
+  // A plan district's ground slopes: the arena sits at its middle's height and its floor follows the slope.
+  const y0 = map.plan ? map.heightAt(cx, cz) : 0;
   for (const it of districtLayout(map).items) {
     if (!it.solid || !it.r) continue;
     const [a0, a1, b0, b1] = it.r;
     if (a1 < x0 || a0 > x1 || b1 < z0 || b0 > z1) continue;
-    obstacles.push(layoutObstacle(it, cx, cz));
+    obstacles.push(layoutObstacle(it, cx, cz, y0));
   }
   const holes = (spec.holes || []).map((h) => ({ ...h, r: [h.r[0] - cx, h.r[1] - cx, h.r[2] - cz, h.r[3] - cz] }));
   const spawnPoints = spec.spawns.map((p) => ({ x: p.x - cx, z: p.z - cz, yaw: yawFromDirection(cx - p.x, cz - p.z) }));
@@ -1048,12 +1058,13 @@ function authoredArena(map, site, spec) {
     return { type: p.type, x: q.x, z: q.z, y: (p.deck ? deckTop(q) : 0) + 0.8 };
   });
   return {
-    name: site.name, authored: true, sizeX: x1 - x0, sizeZ: z1 - z0, cx, cz, y: 0, minY: -20,
+    name: site.name, authored: true, sizeX: x1 - x0, sizeZ: z1 - z0, cx, cz, y: y0, minY: y0 - 20, ...(map.plan ? { heightAt: map.heightAt, plan: true } : {}),
     spawns: spawnPoints.length, spawnRadius: 0, spawnPoints, pickups,
     obstacles, platforms, ramps: (spec.ramps || []).map((r) => ({ ...L(r), render: true })),
     lifts: (spec.lifts || []).map(L), movers: (spec.movers || []).map(L), sweepers: [], hazards: [], holes,
     fence: spec.fence || null, shell: !!spec.shell,
     barriers: (spec.barriers || []).map(([ax, az, bx, bz]) => [ax - cx, az - cz, bx - cx, bz - cz]),
+    limos: (spec.limos || []).map(([ax, az, bx, bz]) => [ax - cx, az - cz, bx - cx, bz - cz]),
   };
 }
 
@@ -1161,7 +1172,7 @@ function pathNodes(map, names) {
 
 // Authored shortcuts: named ways through (district file) that leave the route
 // and rejoin it further on. Their ends sit on the route's centreline.
-function authoredShortcuts(map, track, ids) {
+export function authoredShortcuts(map, track, ids, ground = () => 0) {
   const out = [];
   for (const id of ids) {
     const c = map.corridors.find((q) => q.id === id);
@@ -1180,7 +1191,7 @@ function authoredShortcuts(map, track, ids) {
     const flat = !c.heights;
     out.push({
       s0, s1, kind: c.kind, halfWidth, curbWidth, shoulderWidth: Math.max(0.1, wall - halfWidth - curbWidth),
-      points: flat ? roundedPoints(pts.map(([x, , z]) => ({ x, z })), false, BRANCH_R, () => 0) : pts,
+      points: flat ? roundedPoints(pts.map(([x, , z]) => ({ x, z })), false, BRANCH_R, ground) : pts,
       jumps: [],
     });
   }
@@ -1343,13 +1354,14 @@ function authoredRoute(map, style, route) {
 //   around? (circuit: site kind), from?/to? (sprint: site kind or 'pier'), site? (arena: event ground index) }
 export function cityVenue(style, route) {
   const map = districtMap(style);
-  if (route.kind === 'roam') return { kind: 'arena', def: map.authored ? authoredRoam(map) : cityRoam(map) };
+  if (route.kind === 'roam') return { kind: 'arena', def: map.plan ? planRoam(map) : map.authored ? authoredRoam(map) : cityRoam(map) };
   if (route.kind === 'arena') {
     const site = route.site || 0;
     const spec = style.arenas?.[map.arenas[site]?.name];
     if (spec) return { kind: 'arena', def: authoredArena(map, map.arenas[site], spec) };
     return { kind: 'arena', def: cityArena(map, makeRng(style.seed * 17 + 3 + site * 101), map.arenas[site] || map.arena) };
   }
+  if (map.plan) return { kind: 'track', def: planTrack(map, style, route) };
   const name = `${style.name} ${route.kind}`;
   if (route.kind === 'drag') {
     const line = [];

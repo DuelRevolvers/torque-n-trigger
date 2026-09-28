@@ -10,11 +10,12 @@
 import { makeRng } from '../parts/generate.js';
 import { SETBACK, quadRing, splitLot, nearPath, edgeSpans, TUNNEL_HALF } from './city.js';
 import { authoredLayout } from './authoredLayout.js';
+import { planLayout } from './planLayout.js';
 
 const cache = new WeakMap();
 
 export function districtLayout(map) {
-  if (!cache.has(map)) cache.set(map, map.authored ? authoredLayout(map) : buildLayout(map));
+  if (!cache.has(map)) cache.set(map, map.plan ? planLayout(map) : map.authored ? authoredLayout(map) : buildLayout(map));
   return cache.get(map);
 }
 

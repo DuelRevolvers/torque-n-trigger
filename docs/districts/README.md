@@ -54,13 +54,14 @@ A district doc covers:
 ## Status
 
 The table is in campaign order. **All six docs are agreed.** They're being built
-in campaign order. Rustline Docks is done. Next is the Neon Strip, which
-introduces the `city.plan` format the others use.
+in campaign order. Rustline Docks and the Neon Strip are done. Next is Maple
+Hollow, which adds a few extras to the `city.plan` format the Neon Strip
+introduced.
 
 | # | District | Theme | Status |
 |---|----------|-------|--------|
 | 1 | [Rustline Docks](01-rustline-docks.md) | Working port, grid | Agreed and built: rebuilt from the ground up, everything authored to the doc (see its "Build spec"). |
-| 2 | [Neon Strip](02-neon-strip.md) | Casinos and clubs: a main strip with diagonals and curves, a central car park | Agreed, ready to build |
+| 2 | [Neon Strip](02-neon-strip.md) | Casinos and clubs: a main strip with diagonals and curves, a central car park | Agreed and built: everything authored to the doc, the first `city.plan` district (see its "Build spec"). |
 | 3 | [Maple Hollow](03-maple-hollow.md) | Suburbs: curving loops and cul-de-sacs (new district, not in the game yet) | Agreed, ready to build |
 | 4 | [Chrome Heights](04-chrome-heights.md) | Skyscraper rooftops: roof decks in three tiers, skybridges, ramp bridges and gap jumps over the street canyons | Agreed, ready to build |
 | 5 | [The Undercity](05-the-undercity.md) | A sinkhole city, half under the upper city's deck: twisting streets round the pit, and a storm drain along the south | Agreed, ready to build |
@@ -100,8 +101,8 @@ In `src/career/districts.js`, each district has:
   box, clipped to the outline);
 - `label`: where its name plate goes.
 
-Only Rustline is built to its doc so far, and it's fully authored: streets,
-lots, arenas, shortcuts, set pieces and race dressing. The other four playable
+Rustline and the Neon Strip are built to their docs, fully authored: streets,
+lots, arenas, shortcuts, set pieces and race dressing. The other three playable
 districts still use the old generator, which makes a grid with randomly placed
 sites, and Maple Hollow isn't in the game yet. That's what the docs replace.
 
@@ -134,8 +135,16 @@ sites, and Maple Hollow isn't in the game yet. That's what the docs replace.
 
 - **The district definition:** in `src/career/districts.js`, each district has a
   `city` style and its `events`.
-- **Authored districts** (Rustline so far) live in `src/districts/` and set
-  `authored: true`. Nothing in them is generated.
+- **Authored districts** live in `src/districts/` and set `authored: true`.
+  Nothing in them is generated.
+  - **Plan districts** (the Neon Strip on) give `city.plan`, as the Neon Strip
+    doc describes:
+    - `src/sim/planMap.js` builds the streets and blocks;
+    - `src/sim/planLayout.js` fills them;
+    - `src/sim/planRoute.js` builds the routes and free roam;
+    - `src/render/planView.js` draws them.
+  - **Rustline** still uses `city.grid`. Converting it to a plan is listed in
+    the Neon Strip doc as not done yet.
   - `src/sim/authoredMap.js` builds the map from the data.
   - `src/sim/authoredLayout.js` fills the lots by fixed rules.
   - Rustline's data is `city.grid` plus its arenas:
@@ -183,7 +192,10 @@ sites, and Maple Hollow isn't in the game yet. That's what the docs replace.
   - The renderer (`src/render/districtView.js`) draws exactly those.
   - Free roam (`cityRoam` or `authoredRoam` in `city.js`) collides with exactly
     those, plus the arenas' structures.
-  - Arena structures and moving cranes are drawn by `src/render/arenaView.js`.
+  - Arena structures and moving cranes are drawn with the district
+    (`buildAuthoredStructures` in `src/render/arenaView.js`), so they stand in
+    every event. An arena event adds only its own pieces: barriers, limos and
+    the shuttle bus.
   - Keep that rule. Anything solid goes in the layout or the arena data.
 - **The track** (`src/sim/track.js`) supports:
   - jumps;
@@ -194,6 +206,11 @@ sites, and Maple Hollow isn't in the game yet. That's what the docs replace.
   material, with concrete barriers and container closures.
 - **The train:** `src/sim/train.js` (deterministic schedule and hits) and
   `src/render/trainView.js`.
+- **The armoured truck** (the Neon Strip): `src/sim/truck.js` and
+  `src/render/truckView.js`, the same kind of schedule.
+- **Track widths:** plan routes have `sections` (each street's road and wall
+  width) and `medians` (the Strip's). The AI keeps to one side of a median and
+  only switches at the gaps.
 
 ## The next step for the format
 

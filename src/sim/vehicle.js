@@ -72,7 +72,7 @@ export function stepCar(car, params, input, track, dt) {
   const center = track.query(car.pos.x, car.pos.z, car.trackIndex, car.pos.y);
   car.trackIndex = center.index;
   car.trackS = center.s;
-  car.lateral = center.lateral;
+  car.lateral = center.trueLateral ?? center.lateral;
 
   updateNitro(car, params, input, dt);
   updateSteering(car, params, input, dt);

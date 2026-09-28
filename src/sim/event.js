@@ -4,6 +4,7 @@
 // world.state.event and on each car.
 
 import { neutralInput } from './input.js';
+import { gridLateral } from './world.js';
 import { quatRotate } from './math.js';
 import { applyDamage } from './combat.js';
 import { pickupSpots } from './trackgen.js';
@@ -69,11 +70,16 @@ export function gridPoses(track, def, count) {
     };
   };
   if (def.type === 'drag') {
-    const lanes = count <= 2 ? [-3, 3] : [-6, -2, 2, 6];
+    // Two abreast either side of a median, if the drag strip has one.
+    const m = track.medianAt?.(12) || 0;
+    const lanes = m ? (count <= 2 ? [-(m + 4), m + 4] : [-(m + 8), -(m + 3.4), m + 3.4, m + 8]) : count <= 2 ? [-3, 3] : [-6, -2, 2, 6];
     return Array.from({ length: count }, (_, i) => pose(12, lanes[i % lanes.length]));
   }
   const back = track.closed ? track.length - 10 : 40;
-  return Array.from({ length: count }, (_, i) => pose(back - Math.floor(i / 2) * 8, (i % 2 ? 1 : -1) * track.halfWidth * 0.35));
+  return Array.from({ length: count }, (_, i) => {
+    const s = back - Math.floor(i / 2) * 8;
+    return pose(s, (i % 2 ? 1 : -1) * gridLateral(track, track.closed ? (s + track.length) % track.length : s));
+  });
 }
 
 // Filters a car's input through the event: held at the line during the

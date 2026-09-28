@@ -380,7 +380,8 @@ export class CityScreen {
     const frame = (d.frame || boxQuad(d.map)).map(([x, y]) => P(x, y));
     const map = districtMap(d.city);
     const b = map.drawBounds || map.bounds;
-    const pad = SETBACK + 14;
+    // A plan district's streets are drawn to its boundary, which is its outline.
+    const pad = map.plan ? 0 : SETBACK + 14;
     const at = (x, z) => bilinear(frame, (x - b.minX + pad) / (b.maxX - b.minX + 2 * pad), (z - b.minZ + pad) / (b.maxZ - b.minZ + 2 * pad));
     const outline = () => {
       ctx.beginPath();
@@ -406,6 +407,7 @@ export class CityScreen {
       railyard: '#3e3630', tanks: '#44444c', terminal: '#3a3440',
       warehouses: mix(d.color, '#1c1828', 0.78), fish: '#34464e', shop: mix(d.color, '#1c1828', 0.5),
     };
+    if (map.plan) drawPlan(ctx, map, d, open, line, lotColor);
     for (const c of map.cells) {
       const [x0, x1, z0, z1] = c.lot;
       ctx.fillStyle = open ? lotColor[c.kind] : '#191522';
@@ -414,7 +416,7 @@ export class CityScreen {
     }
     // Streets, with the main avenue picked out. Piers come after the clip: they run out over the bay.
     const piers = [];
-    for (const e of map.edges.values()) {
+    for (const e of map.plan ? [] : map.edges.values()) {
       const A = map.nodes[e.a];
       const B = map.nodes[e.b];
       if (A.pier || B.pier) {
@@ -487,8 +489,10 @@ export class CityScreen {
         pins.push([at(pts[0][0], pts[0][1]), TYPE_COLOR[e.type], k + 1]);
       });
       const grid = d.city.grid;
-      const shop = grid?.shop ? map.cells[grid.shop[1] * (d.city.cols - 1) + grid.shop[0]] : map.cells.filter((c) => c.kind === 'buildings').sort((p, q) => Math.hypot(...lotCentre(p.lot)) - Math.hypot(...lotCentre(q.lot)))[0];
-      if (shop) pins.push([at(...lotCentre(shop.lot)), '#e8e8ff', '$']);
+      const planShop = d.city.plan?.specials?.find((q) => q.kind === 'shop');
+      const shop = planShop ? null : grid?.shop ? map.cells[grid.shop[1] * (d.city.cols - 1) + grid.shop[0]] : map.cells.filter((c) => c.kind === 'buildings').sort((p, q) => Math.hypot(...lotCentre(p.lot)) - Math.hypot(...lotCentre(q.lot)))[0];
+      if (planShop) pins.push([at(planShop.x, planShop.z), '#e8e8ff', '$']);
+      else if (shop) pins.push([at(...lotCentre(shop.lot)), '#e8e8ff', '$']);
       if (!events.length && map.arena) pins.push([at(map.arena.x, map.arena.z), TYPE_COLOR.arena, '']);
       for (const [[x, y], color, text] of pins) this.pin(ctx, x, y, color, String(text));
     }
@@ -592,4 +596,37 @@ function inside(poly, x, y) {
     if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
   }
   return c;
+}
+
+// A plan district on the city map: its blocks and sites coloured by what's on
+// them, then its streets along their curves (the main street picked out).
+function drawPlan(ctx, map, d, open, line, lotColor) {
+  const colors = {
+    ...lotColor, hotels: mix(d.color, '#1c1828', 0.7), clubs: mix(d.color, '#1c1828', 0.62), motels: '#3a3a52', chapels: '#4a4660',
+    pawn: '#40382e', flats: '#2e2c3c', arcade: '#1e4a4a', palace: mix(d.color, '#1c1828', 0.5), drivein: '#26242e', boneyard: '#3a2e2a',
+    depot: '#2a2832', market: '#6a2a58', promenade: '#1f4a2a',
+  };
+  for (const b of map.blocks) {
+    ctx.fillStyle = open ? colors[b.kind] || colors.buildings : '#191522';
+    line(b.lot, true);
+    ctx.fill();
+  }
+  for (const L of map.style.plan.lots || []) {
+    if (!L.poly) continue;
+    ctx.fillStyle = open ? colors[L.kind] || colors.buildings : '#191522';
+    line(L.poly, true);
+    ctx.fill();
+  }
+  for (const s of map.sites) {
+    ctx.fillStyle = open ? colors[s.kind] || colors.arena : '#191522';
+    line(s.poly, true);
+    ctx.fill();
+  }
+  for (const st of map.streets) {
+    const main = !!st.median;
+    ctx.strokeStyle = !open ? '#2e2838' : main ? d.color : '#8a86a4';
+    ctx.lineWidth = main ? 2 : st.width >= 20 ? 1.4 : st.width >= 12 ? 1 : 0.7;
+    line(st.pts, false);
+    ctx.stroke();
+  }
 }

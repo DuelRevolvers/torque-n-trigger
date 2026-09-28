@@ -6,6 +6,9 @@ import { setUvRect, streetRoadMaterial } from './trackView.js';
 import { SETBACK, STREET, edgeSpans, TUNNEL_HALF } from '../sim/city.js';
 import { districtLayout, archEdge, samplePath } from '../sim/cityLayout.js';
 import { CRANE_LEGS } from '../sim/authoredLayout.js';
+import { rampGeometry } from './shapes.js';
+import { buildAuthoredStructures } from './arenaView.js';
+import { buildPlanDistrictView } from './planView.js';
 
 // A whole city district, built once and shared by every event held there:
 // streets and sidewalks in the district's own surface (roof decks with gaps to
@@ -65,6 +68,7 @@ const HOUSE_COLORS = ['#c8b8a0', '#a8b8c8', '#b8a8c0', '#d0c0a8', '#a0b0a0', '#c
 const SHACK_COLORS = ['#6a5a48', '#4a6a6a', '#7a4a3a', '#5a5a62', '#6a6a3a', '#3a4a5a', '#5a3a4a'];
 
 export function buildDistrictView(map, tex) {
+  if (map.plan) return buildPlanDistrictView(map, tex);
   const { style, heightAt, nodes } = map;
   const look = style.look;
   const roof = style.rooftop || 0;
@@ -1250,6 +1254,12 @@ export function buildDistrictView(map, tex) {
   sky.position.set(0, minY + 130, 0);
   sky.renderOrder = -1;
   add(sky);
+  // An authored district's arena structures stand in every event.
+  if (map.authored) {
+    const structures = buildAuthoredStructures(style, tex);
+    add(structures);
+    group.userData.animate = structures.userData.animate;
+  }
   return group;
 }
 
@@ -1267,28 +1277,6 @@ export function districtClear(map) {
     if (water && z > edge - 1) return map.piers.some((p) => Math.abs(x - p.x) < SETBACK && z < p.z1 + 11);
     return true;
   };
-}
-
-// A ramp wedge in world space: rises `height` over `len` along (dirX, dirZ) from (x, z).
-export function rampGeometry({ x, z, dirX, dirZ, len, width, height, base = 0 }, y = 0) {
-  const g = new THREE.BufferGeometry();
-  const w = width / 2;
-  const P = [[-w, 0, 0], [w, 0, 0], [w, height, len], [-w, height, len], [-w, 0, len], [w, 0, len]];
-  const faces = [[0, 1, 2], [0, 2, 3], [1, 5, 2], [0, 3, 4], [3, 2, 5], [3, 5, 4]];
-  const pos = [];
-  const uvs = [];
-  for (const f of faces) {
-    for (const k of f) {
-      pos.push(...P[k]);
-      uvs.push(P[k][0] / 2, P[k][2] / 3);
-    }
-  }
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-  g.computeVertexNormals();
-  g.rotateY(Math.atan2(dirX, dirZ));
-  g.translate(x, y + base, z);
-  return g;
 }
 
 // A rotated box: hw across, hd along the yaw direction, from y0 up h.

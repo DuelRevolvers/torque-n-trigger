@@ -9,6 +9,14 @@ import { GRAVITY } from '../config.js';
 
 const lines = new WeakMap(); // track -> racing line (derived data, not state)
 
+// Beside a median at s: at least clear of it, on the AI's chosen side.
+function keepSide(track, ai, lat, s) {
+  const m = track.medianAt(s);
+  if (!m) return lat;
+  const side = ai.side || 1;
+  return side * Math.max(m + 2.2, lat * side);
+}
+
 // Racing line: curvature per sample, and a lateral offset toward the inside of
 // corners, smoothed so the car sweeps across rather than zig-zagging.
 function racingLine(track) {
@@ -33,10 +41,10 @@ function racingLine(track) {
     return out;
   };
   const k = smooth(curv, 4);
-  const maxOff = track.halfWidth * 0.6;
+  const maxOff = (i) => (track.localHalf ? track.localHalf(track.s[i]) : track.halfWidth) * 0.6;
   // In this frame a positive cross product is a turn to the right, whose inside is +lateral.
   const raw = new Float64Array(n);
-  for (let i = 0; i < n; i++) raw[i] = clamp(Math.sign(k[i]) * Math.abs(k[i]) * 400, -maxOff, maxOff);
+  for (let i = 0; i < n; i++) raw[i] = clamp(Math.sign(k[i]) * Math.abs(k[i]) * 400, -maxOff(i), maxOff(i));
   const line = { curvature: k, offset: smooth(raw, 12) };
   lines.set(track, line);
   return line;
@@ -237,6 +245,7 @@ export function aiInput(world, i, dt) {
   });
 
   // --- Lateral plan: racing line, overtaking, and lining up on a target ---
+  const halfHere = track.localHalf ? track.localHalf(car.trackS) : track.halfWidth;
   let wantOffset = line.offset[idx];
   if (ev?.type === 'drag') {
     ai.lane ??= car.lateral;
@@ -246,19 +255,25 @@ export function aiInput(world, i, dt) {
   if (pitting) wantOffset = ev.pit.lateral + 2.5;
   if (blocker && !pitting && ev?.type !== 'drag') {
     const passRight = blocker.c.lateral < line.offset[idx] ? true : blocker.c.lateral <= 0;
-    wantOffset = clamp(blocker.c.lateral + (passRight ? 3.6 : -3.6), -track.halfWidth + 1.5, track.halfWidth - 1.5);
+    wantOffset = clamp(blocker.c.lateral + (passRight ? 3.6 : -3.6), -halfHere + 1.5, halfHere - 1.5);
   }
   if (target && ai.aggression > 0.45 && !pitting && ev?.type !== 'drag') {
     const gap = trackGap(track, car, target);
     if (gap > 0 && gap < 45) wantOffset += (target.lateral - wantOffset) * ai.aggression * 0.6;
   }
-  wantOffset = clamp(wantOffset, -track.halfWidth + 1.2, track.halfWidth - 1.2);
+  wantOffset = clamp(wantOffset, -halfHere + 1.2, halfHere - 1.2);
+  // A median (the Strip's): keep to one side of it, switching only at a gap.
+  if (track.medians) {
+    if (track.medianAt(car.trackS)) ai.side = Math.sign(car.lateral) || ai.side || 1;
+    else if (track.medianAt(car.trackS + 30)) ai.side = Math.sign(wantOffset) || ai.side || 1;
+    wantOffset = keepSide(track, ai, wantOffset, car.trackS + 10);
+  }
   ai.offset += clamp(wantOffset - ai.offset, -4 * dt, 4 * dt);
 
   // --- Steering: pure pursuit toward a point on the line, with skill noise ---
   const look = 8 + speed * 0.55;
   const ti = track.indexAtDistance(car.trackS + look);
-  const lat = ai.offset + (line.offset[ti] - line.offset[idx]);
+  const lat = track.medians ? keepSide(track, ai, ai.offset + (line.offset[ti] - line.offset[idx]), track.s[ti]) : ai.offset + (line.offset[ti] - line.offset[idx]);
   const tx = track.x[ti] + track.rx[ti] * lat - car.pos.x;
   const tz = track.z[ti] + track.rz[ti] * lat - car.pos.z;
   const angle = Math.atan2(fwd.x * tz - fwd.z * tx, fwd.x * tx + fwd.z * tz);

@@ -5,6 +5,7 @@
 export const SURFACE = Object.freeze({ ROAD: 0, CURB: 1, OFFROAD: 2 });
 
 const SEARCH_WINDOW = 16; // samples either side of the hint index
+const SECTION_RAMP = 8; // metres over which a street's width blends into the next
 
 export function buildTrack(def) {
   const {
@@ -36,10 +37,17 @@ export function buildTrack(def) {
       else if (s >= g.s1 && s <= g.s1 + g.len) pt[1] += g.rise * (1 - (s - g.s1) / g.len);
     });
   }
-  const track = new Track(name, pts, closed, { halfWidth, curbWidth, shoulderWidth });
+  // Sections (plan districts): the road's half-width and wall distance change
+  // street by street; the track's widths are then the widest of them.
+  const sections = def.sections?.length ? def.sections : null;
+  const widest = sections ? { halfWidth: Math.max(...sections.map((q) => q.half)), wall: Math.max(...sections.map((q) => q.wall)) } : null;
+  const track = new Track(name, pts, closed, widest ? { halfWidth: widest.halfWidth, curbWidth, shoulderWidth: widest.wall - widest.halfWidth - curbWidth } : { halfWidth, curbWidth, shoulderWidth });
+  track.sections = sections;
+  track.medians = def.medians?.length ? def.medians : null; // a solid median down the middle (the Strip)
   track.jumps = jumps;
   track.gaps = gaps.length ? gaps : null;
   track.train = def.train || null; // the freight line, if the district has one
+  track.truck = def.truck || null; // the armoured cash truck (the Neon Strip)
   track.closures = def.closures || [];
   track.narrows = def.narrows?.length ? def.narrows : null; // container tunnels, alleys
   track.authored = !!def.authored;
@@ -127,15 +135,42 @@ class Track {
     this.bounds = { minX, maxX, minZ, maxZ };
   }
 
-  // Wall distance at s: narrow sections (container tunnels) close the walls in to
-  // `wall`, funnelling in over `ramp` metres either side.
+  // A section value at s (half or wall), blended over SECTION_RAMP metres where
+  // one street's width changes to the next.
+  sectionAt(s, key) {
+    const secs = this.sections;
+    const k = Math.max(0, secs.findIndex((q) => s < q.s1));
+    const q = secs[k];
+    const v = q[key];
+    if (k > 0 && s - q.s0 < SECTION_RAMP) return secs[k - 1][key] + (v - secs[k - 1][key]) * (0.5 + (s - q.s0) / (2 * SECTION_RAMP));
+    if (k + 1 < secs.length && q.s1 - s < SECTION_RAMP) return v + (secs[k + 1][key] - v) * (0.5 - (q.s1 - s) / (2 * SECTION_RAMP));
+    return v;
+  }
+
+  // Wall distance at s: the street's own (sections), with narrow sections
+  // (container tunnels, the Palace Underpass) closing the walls in to `wall`,
+  // funnelling in over `ramp` metres either side.
   localWall(s) {
-    let w = this.wallDist;
+    const base = this.sections ? this.sectionAt(s, 'wall') : this.wallDist;
+    let w = base;
     for (const n of this.narrows || []) {
       const d = s < n.s0 ? n.s0 - s : s > n.s1 ? s - n.s1 : 0;
-      if (d < n.ramp) w = Math.min(w, n.wall + ((this.wallDist - n.wall) * d) / n.ramp);
+      if (d < n.ramp) w = Math.min(w, n.wall + ((base - n.wall) * d) / n.ramp);
     }
     return w;
+  }
+
+  // Road half-width at s (in a narrow section the road runs wall to wall).
+  localHalf(s) {
+    const half = this.sections ? this.sectionAt(s, 'half') : this.halfWidth;
+    return this.narrows || this.sections ? Math.min(half, this.localWall(s)) : half;
+  }
+
+  // The median's half-width at s (0 where there isn't one: at the junction gaps).
+  medianAt(s) {
+    if (!this.medians) return 0;
+    for (const m of this.medians) if (s > m.s0 && s < m.s1) return m.half;
+    return 0;
   }
 
   // How far the ground falls away at distance s (over a gap between rooftops).
@@ -237,20 +272,24 @@ class Track {
 
     const lateral = (x - seg.px) * rx + (z - seg.pz) * rz;
     const abs = Math.abs(lateral);
-    // In a narrow section the reported lateral is shifted so |lateral| - wallDist
-    // is still the penetration into the (nearer) wall, as for shortcut branches.
-    const squeeze = this.narrows ? this.wallDist - this.localWall(this.s[i0] + u * this.step) : 0;
-    const surface =
-      abs <= this.halfWidth || (squeeze > 0 && abs <= this.wallDist - squeeze)
-        ? SURFACE.ROAD
-        : abs <= this.halfWidth + this.curbWidth
-          ? SURFACE.CURB
-          : SURFACE.OFFROAD;
+    const s = this.s[i0] + u * this.step;
+    // Where the walls are nearer than wallDist (a narrow section, a narrower
+    // street) the reported lateral is shifted so |lateral| - wallDist is still the
+    // penetration into the nearer wall, as for shortcut branches.
+    const varied = this.narrows || this.sections;
+    const squeeze = varied ? this.wallDist - this.localWall(s) : 0;
+    const half = varied ? this.localHalf(s) : this.halfWidth;
+    const surface = abs <= half ? SURFACE.ROAD : abs <= half + this.curbWidth ? SURFACE.CURB : SURFACE.OFFROAD;
+    let reported = squeeze > 0 ? Math.sign(lateral) * (abs + squeeze) : lateral;
+    // Inside the median: a wall pushing out to the side the point is on.
+    const median = this.medians ? this.medianAt(s) : 0;
+    if (median && abs < median && median - abs > abs + squeeze - this.wallDist) reported = -(Math.sign(lateral) || 1) * (this.wallDist + median - abs);
 
     return {
       index: best,
-      s: this.s[i0] + u * this.step,
-      lateral: squeeze > 0 ? Math.sign(lateral) * (abs + squeeze) : lateral,
+      s,
+      lateral: reported,
+      trueLateral: lateral,
       overrun: Math.sqrt(Math.max(0, seg.d - lateral * lateral)), // distance past an open end
 
       height: this.y[i0] + (this.y[i1] - this.y[i0]) * u - this.gapDrop(this.s[i0] + u * this.step),

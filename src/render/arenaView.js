@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
 import { PALETTE } from './textures.js';
-import { rampGeometry } from './districtView.js';
+import { rampGeometry, box, tint, indexed, scaleUv } from './shapes.js';
+import { deckLegs } from '../sim/city.js';
+import { pathPose } from '../sim/arena.js';
 
 // Arena venues. Indoors (the data centre): glossy floor, walls, server racks,
 // ceiling light strips. Outdoors in a city district (opts.outdoor): a walled-off
@@ -206,128 +208,180 @@ export function buildArenaView(arena, tex, { outdoor = false, look = null } = {}
   return group;
 }
 
-// An arena (or free roam) in an authored district. The district view already
-// draws the ground, fences, walls and every layout item; this adds only what
-// the arena's data adds, drawn by kind: container stacks, rubble, the gantry
-// deck and catwalks with their legs and ramps, the lifts, event barriers, and
-// the moving cranes. Everything drawn here is exactly what the car can hit.
+// An authored district's arena structures, drawn with the district so they
+// stand in every event (races pass them): container stacks, rubble, crane legs,
+// the decks (gantry, catwalks, valet ramp) with their legs and ramps, lift pads
+// and the cranes, which move with the simulation clock. Only the event's own
+// pieces (barriers, limos, the shuttle bus) are drawn by the arena view.
+// Everything drawn here is exactly what the car can hit. World coordinates.
 const CONTAINER_COLORS = ['#b83a2a', '#2a6ab8', '#d8a020', '#3a8a4a', '#8a3ab0', '#c8c8c8', '#d86a1a'];
 // Rubble blocks as fractions of the pile: [x, z, half-width, half-depth, height], all inside it.
 const RUBBLE = [[-0.4, -0.3, 0.5, 0.5, 1], [0.35, 0.2, 0.5, 0.55, 0.8], [0.1, -0.4, 0.4, 0.3, 0.7]];
 
-function authoredArenaView(group, def, tex) {
-  const box = (w, h, d, x, y, z) => new THREE.BoxGeometry(w, h, d).translate(x, y, z);
-  const geos = { steel: [], yellow: [], dark: [], concrete: [], grating: [], containers: [], barrier: [] };
+export function buildAuthoredStructures(style, tex, heightAt = null) {
+  const group = new THREE.Group();
+  const geos = { steel: [], yellow: [], dark: [], concrete: [], grating: [], containers: [] };
   const mesh = (list, mat) => list.length && group.add(new THREE.Mesh(mergeGeometries(list), mat));
+  const liftPads = [];
+  const movers = [];
   let k = 0;
-  for (const o of def.obstacles) {
-    if (!o.render) continue;
-    if (o.kind === 'stack') {
-      const n = Math.max(1, Math.round(o.h / 2.6));
-      for (let s = 0; s < n; s++) geos.containers.push(tint(box(o.hw * 2, 2.56, o.hd * 2, o.x, 1.3 + s * 2.6, o.z), CONTAINER_COLORS[k++ % CONTAINER_COLORS.length]));
-    } else if (o.kind === 'rubble') {
-      geos.concrete.push(box(o.hw * 2, o.h * 0.55, o.hd * 2, o.x, o.h * 0.275, o.z));
-      for (const [fx, fz, fw, fd, fh] of RUBBLE) geos.concrete.push(box(o.hw * 2 * fw, o.h * fh, o.hd * 2 * fd, o.x + o.hw * fx, (o.h * fh) / 2, o.z + o.hd * fz));
-    } else if (o.kind === 'craneLeg') {
-      geos.yellow.push(box(o.hw * 2, o.h, o.hd * 2, o.x, o.h / 2, o.z));
-    } else {
-      geos.steel.push(box(o.hw * 2, o.h, o.hd * 2, o.x, o.h / 2, o.z));
-    }
-  }
-  // Decks: a steel girder under a grating, yellow lines along the edges (no
-  // railings: nothing stops a car going over the side).
-  for (const p of def.platforms) {
-    if (!p.render) continue;
-    const thick = p.under ? p.thick || 0.8 : p.h;
-    geos.steel.push(box(p.hw * 2, thick - 0.05, p.hd * 2, p.x, p.h - thick / 2 - 0.025, p.z));
-    geos.grating.push(box(p.hw * 2, 0.05, p.hd * 2, p.x, p.h - 0.025, p.z));
-    const long = p.hw >= p.hd;
-    for (const s of [-1, 1]) geos.yellow.push(long ? box(p.hw * 2, 0.04, 0.3, p.x, p.h + 0.01, p.z + s * (p.hd - 0.3)) : box(0.3, 0.04, p.hd * 2, p.x + s * (p.hw - 0.3), p.h + 0.01, p.z));
-  }
-  for (const r of def.ramps) {
-    if (!r.render) continue;
-    geos.grating.push(indexed(rampGeometry(r)));
-    const yaw = Math.atan2(r.dirX, r.dirZ);
-    geos.yellow.push(new THREE.BoxGeometry(r.width, 0.04, 0.5).rotateY(yaw).translate(r.x + r.dirX * (r.len - 0.4), (r.base || 0) + r.height + 0.01, r.z + r.dirZ * (r.len - 0.4)));
-  }
-  // Event barriers along the arena's edge where no fence or wall stands.
-  for (const [ax, az, bx, bz] of def.barriers || []) {
-    const len = Math.hypot(bx - ax, bz - az);
-    const n = Math.max(1, Math.round(len / 2.1));
-    for (let q = 0; q < n; q++) {
-      const t = (q + 0.5) / n;
-      geos.barrier.push(new THREE.BoxGeometry(0.6, 0.9, len / n - 0.1).rotateY(Math.atan2(bx - ax, bz - az)).translate(ax + (bx - ax) * t, 0.45, az + (bz - az) * t));
-    }
-  }
-
-  // Lifts: a pad between four posts with warning lights.
-  const liftPads = def.lifts.map((l) => {
-    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) geos.steel.push(box(0.4, l.hMax + 2, 0.4, l.x + sx * (l.hw + 0.4), (l.hMax + 2) / 2, l.z + sz * (l.hd + 0.4)));
-    const pad = new THREE.Mesh(scaleUv(new THREE.BoxGeometry(l.hw * 2, 0.6, l.hd * 2), 3, 1), litMaterial({ map: tex.wall, color: '#ffe0a0' }));
-    group.add(pad);
-    return { l, pad };
-  });
-
-  // Cranes. The hook: a portal crane over the yard (its legs are obstacles),
-  // the trolley running along the girders with the hook hung at car height.
-  // The overhead crane: runways along the hall's long walls, the bridge
-  // rolling on them, the trolley running across the bridge with the load.
-  const movers = def.movers.map((m) => {
-    const parts = { bridge: { yellow: [], dark: [] }, trolley: { yellow: [], dark: [], steel: [], glow: [] } };
-    const top = m.y0 + m.h;
-    const T = parts.trolley;
-    if (m.kind === 'hook') {
-      const x0 = m.x - m.ax - 15;
-      const x1 = m.x + m.ax + 15;
-      for (const s of [-1, 1]) geos.yellow.push(box(x1 - x0 + 2, 2, 1.6, (x0 + x1) / 2, m.beam + 1, m.z + s * 6));
-      for (const x of [x0, x1]) geos.yellow.push(box(2, 2, 14, x, m.beam + 1, m.z));
-      T.dark.push(box(4, 2, 14, 0, m.beam + 3, 0));
-      T.steel.push(box(0.2, m.beam + 2 - top, 0.2, 0, (m.beam + 2 + top) / 2, 0));
-    } else {
-      const x0 = m.x - m.ax - 22;
-      const x1 = m.x + m.ax + 22;
-      for (const s of [-1, 1]) {
-        const z = m.z + s * m.span;
-        geos.steel.push(box(x1 - x0, 1.2, 1, (x0 + x1) / 2, m.beam - 0.6, z));
-        for (let x = x0; x <= x1; x += 20) geos.steel.push(box(0.8, 0.8, 1.4, x, m.beam - 1.6, z + s * 1.2));
-        parts.bridge.dark.push(box(5, 1.2, 2, 0, m.beam + 0.6, s * m.span));
+  for (const spec of Object.values(style.arenas || {})) {
+    const [x0, x1, z0, z1] = spec.bounds;
+    const gy = heightAt ? heightAt((x0 + x1) / 2, (z0 + z1) / 2) : 0; // the arena's floor height
+    for (const o of [...(spec.obstacles || []), ...(spec.platforms || []).filter((p) => p.under).flatMap(deckLegs)]) {
+      if (o.kind === 'stack') {
+        const n = Math.max(1, Math.round(o.h / 2.6));
+        for (let s = 0; s < n; s++) geos.containers.push(tint(box(o.hw * 2, 2.56, o.hd * 2, o.x, gy + 1.3 + s * 2.6, o.z), CONTAINER_COLORS[k++ % CONTAINER_COLORS.length]));
+      } else if (o.kind === 'rubble') {
+        geos.concrete.push(box(o.hw * 2, o.h * 0.55, o.hd * 2, o.x, gy + o.h * 0.275, o.z));
+        for (const [fx, fz, fw, fd, fh] of RUBBLE) geos.concrete.push(box(o.hw * 2 * fw, o.h * fh, o.hd * 2 * fd, o.x + o.hw * fx, gy + (o.h * fh) / 2, o.z + o.hd * fz));
+      } else if (o.kind === 'craneLeg') {
+        geos.yellow.push(box(o.hw * 2, o.h, o.hd * 2, o.x, gy + o.h / 2, o.z));
+      } else {
+        geos.steel.push(box(o.hw * 2, o.h + 1, o.hd * 2, o.x, gy + (o.h - 1) / 2, o.z));
       }
-      parts.bridge.yellow.push(box(3, 2, 2 * m.span, 0, m.beam + 1.2, 0));
-      T.dark.push(box(4, 1.6, 4, 0, m.beam + 3, 0));
-      T.steel.push(box(0.2, m.beam + 2.2 - top, 0.2, 0, (m.beam + 2.2 + top) / 2, 0));
     }
-    T.yellow.push(box(m.hw * 2, m.h, m.hd * 2, 0, m.y0 + m.h / 2, 0));
-    for (const f of [0.35, 0.75]) T.dark.push(box(m.hw * 2 + 0.05, 0.4, m.hd * 2 + 0.05, 0, m.y0 + m.h * f, 0));
-    T.glow.push(box(0.4, 0.4, 0.4, 0, top + 0.3, 0));
-    const build = (set) => {
-      const g = new THREE.Group();
-      const mats = { yellow: YELLOW, dark: DARK, steel: STEEL, glow: () => glowMaterial({ color: '#ff3030', intensity: 3 }) };
-      for (const [name, list] of Object.entries(set)) if (list.length) g.add(new THREE.Mesh(mergeGeometries(list), mats[name]()));
-      group.add(g);
-      return g;
-    };
-    return { m, bridge: build(parts.bridge), trolley: build(parts.trolley) };
-  });
-
+    // Decks: a steel girder under a grating, yellow lines along the edges (no
+    // railings: nothing stops a car going over the side).
+    for (const p of spec.platforms || []) {
+      const thick = p.under ? p.thick || 0.8 : p.h;
+      geos.steel.push(box(p.hw * 2, thick - 0.05, p.hd * 2, p.x, gy + p.h - thick / 2 - 0.025, p.z));
+      geos.grating.push(box(p.hw * 2, 0.05, p.hd * 2, p.x, gy + p.h - 0.025, p.z));
+      const long = p.hw >= p.hd;
+      for (const s of [-1, 1]) geos.yellow.push(long ? box(p.hw * 2, 0.04, 0.3, p.x, gy + p.h + 0.01, p.z + s * (p.hd - 0.3)) : box(0.3, 0.04, p.hd * 2, p.x + s * (p.hw - 0.3), gy + p.h + 0.01, p.z));
+    }
+    for (const r of spec.ramps || []) {
+      geos.grating.push(indexed(rampGeometry(r, heightAt ? heightAt(r.x, r.z) : 0)));
+      const yaw = Math.atan2(r.dirX, r.dirZ);
+      geos.yellow.push(new THREE.BoxGeometry(r.width, 0.04, 0.5).rotateY(yaw).translate(r.x + r.dirX * (r.len - 0.4), gy + (r.base || 0) + r.height + 0.01, r.z + r.dirZ * (r.len - 0.4)));
+    }
+    // Lifts: a pad between four posts.
+    for (const l of spec.lifts || []) {
+      for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) geos.steel.push(box(0.4, l.hMax + 2, 0.4, l.x + sx * (l.hw + 0.4), gy + (l.hMax + 2) / 2, l.z + sz * (l.hd + 0.4)));
+      const pad = new THREE.Mesh(scaleUv(new THREE.BoxGeometry(l.hw * 2, 0.6, l.hd * 2), 3, 1), litMaterial({ map: tex.wall, color: '#ffe0a0' }));
+      group.add(pad);
+      liftPads.push({ l, pad, gy });
+    }
+    // Cranes (the event-only shuttle bus is the arena view's).
+    for (const m of (spec.movers || []).filter((q) => !q.event)) movers.push(craneView(group, geos, m, gy));
+  }
   mesh(geos.steel, STEEL());
   mesh(geos.yellow, YELLOW());
   mesh(geos.dark, DARK());
   mesh(geos.concrete, litMaterial({ map: tex.wallConcrete || tex.wall, color: '#8a8278' }));
   mesh(geos.grating, litMaterial({ map: tex.tiles || tex.lot, color: '#8a8a92', side: THREE.DoubleSide }));
   mesh(geos.containers, litMaterial({ map: tex.container, vertexColors: true }));
-  mesh(geos.barrier, litMaterial({ map: tex.wallConcrete || tex.wall, color: '#ffd0a0' }));
-
   // Moving parts follow the simulation clock (seconds), with the same motion as the sim.
   group.userData.animate = (t) => {
-    for (const { l, pad } of liftPads) {
-      const top = l.hMax * (0.5 - 0.5 * Math.cos((2 * Math.PI * t) / l.period + l.phase));
-      pad.position.set(l.x, top - 0.3, l.z);
-    }
-    for (const { m, bridge, trolley } of movers) {
+    for (const { l, pad, gy } of liftPads) pad.position.set(l.x, gy + l.hMax * (0.5 - 0.5 * Math.cos((2 * Math.PI * t) / l.period + l.phase)) - 0.3, l.z);
+    for (const { m, bridge, trolley, gy } of movers) {
       const x = m.x + m.ax * Math.sin((2 * Math.PI * t) / m.px + m.phase);
       const z = m.z + m.az * Math.sin((2 * Math.PI * t) / m.pz + m.phase);
-      bridge.position.set(x, 0, m.z);
-      trolley.position.set(x, 0, z);
+      bridge.position.set(x, gy, m.z);
+      trolley.position.set(x, gy, z);
+    }
+  };
+  group.userData.animate(0);
+  return group;
+}
+
+// Cranes. The hook: a portal crane over the yard (its legs are obstacles),
+// the trolley running along the girders with the hook hung at car height.
+// The overhead crane: runways along the hall's long walls, the bridge
+// rolling on them, the trolley running across the bridge with the load.
+function craneView(group, geos, m, gy) {
+  const box0 = (w, h, d, x, y, z) => box(w, h, d, x, y + gy, z);
+  const parts = { bridge: { yellow: [], dark: [] }, trolley: { yellow: [], dark: [], steel: [], glow: [] } };
+  const top = m.y0 + m.h;
+  const T = parts.trolley;
+  if (m.kind === 'hook') {
+    const x0 = m.x - m.ax - 15;
+    const x1 = m.x + m.ax + 15;
+    for (const s of [-1, 1]) geos.yellow.push(box0(x1 - x0 + 2, 2, 1.6, (x0 + x1) / 2, m.beam + 1, m.z + s * 6));
+    for (const x of [x0, x1]) geos.yellow.push(box0(2, 2, 14, x, m.beam + 1, m.z));
+    T.dark.push(box(4, 2, 14, 0, m.beam + 3, 0));
+    T.steel.push(box(0.2, m.beam + 2 - top, 0.2, 0, (m.beam + 2 + top) / 2, 0));
+  } else {
+    const x0 = m.x - m.ax - 22;
+    const x1 = m.x + m.ax + 22;
+    for (const s of [-1, 1]) {
+      const z = m.z + s * m.span;
+      geos.steel.push(box0(x1 - x0, 1.2, 1, (x0 + x1) / 2, m.beam - 0.6, z));
+      for (let x = x0; x <= x1; x += 20) geos.steel.push(box0(0.8, 0.8, 1.4, x, m.beam - 1.6, z + s * 1.2));
+      parts.bridge.dark.push(box(5, 1.2, 2, 0, m.beam + 0.6, s * m.span));
+    }
+    parts.bridge.yellow.push(box(3, 2, 2 * m.span, 0, m.beam + 1.2, 0));
+    T.dark.push(box(4, 1.6, 4, 0, m.beam + 3, 0));
+    T.steel.push(box(0.2, m.beam + 2.2 - top, 0.2, 0, (m.beam + 2.2 + top) / 2, 0));
+  }
+  T.yellow.push(box(m.hw * 2, m.h, m.hd * 2, 0, m.y0 + m.h / 2, 0));
+  for (const f of [0.35, 0.75]) T.dark.push(box(m.hw * 2 + 0.05, 0.4, m.hd * 2 + 0.05, 0, m.y0 + m.h * f, 0));
+  T.glow.push(box(0.4, 0.4, 0.4, 0, top + 0.3, 0));
+  const build = (set) => {
+    const g = new THREE.Group();
+    const mats = { yellow: YELLOW, dark: DARK, steel: STEEL, glow: () => glowMaterial({ color: '#ff3030', intensity: 3 }) };
+    for (const [name, list] of Object.entries(set)) if (list.length) g.add(new THREE.Mesh(mergeGeometries(list), mats[name]()));
+    group.add(g);
+    return g;
+  };
+  return { m, bridge: build(parts.bridge), trolley: build(parts.trolley), gy };
+}
+
+// An arena event in an authored district: the district view already draws the
+// ground, every layout item and the arena structures; this adds the event's
+// own pieces. Barriers along the arena edge where no fence or wall stands,
+// limos parked across the entrances, and the event-only movers (the Glow
+// Palace shuttle bus doing laps of the car park). Arena-local coordinates.
+function authoredArenaView(group, def, tex) {
+  const geos = { barrier: [], limo: [], chrome: [], glass: [] };
+  const mesh = (list, mat) => list.length && group.add(new THREE.Mesh(mergeGeometries(list), mat));
+  const floor = (x, z) => (def.heightAt ? def.heightAt(x + def.cx, z + def.cz) - def.y : 0);
+  for (const [ax, az, bx, bz] of def.barriers || []) {
+    const len = Math.hypot(bx - ax, bz - az);
+    const n = Math.max(1, Math.round(len / 2.1));
+    for (let q = 0; q < n; q++) {
+      const t = (q + 0.5) / n;
+      const x = ax + (bx - ax) * t;
+      const z = az + (bz - az) * t;
+      geos.barrier.push(new THREE.BoxGeometry(0.6, 0.9, len / n - 0.1).rotateY(Math.atan2(bx - ax, bz - az)).translate(x, floor(x, z) + 0.45, z));
+    }
+  }
+  // Stretch limos nose to tail across each gap.
+  for (const [ax, az, bx, bz] of def.limos || []) {
+    const len = Math.hypot(bx - ax, bz - az);
+    const yaw = Math.atan2(bx - ax, bz - az);
+    const n = Math.max(1, Math.ceil(len / 7.2));
+    for (let q = 0; q < n; q++) {
+      const t = (q + 0.5) / n;
+      const x = ax + (bx - ax) * t;
+      const z = az + (bz - az) * t;
+      const y = floor(x, z);
+      geos.limo.push(box(2, 1, 6.8, x, y + 0.75, z, yaw));
+      geos.glass.push(box(1.8, 0.5, 4.8, x, y + 1.5, z, yaw));
+      geos.chrome.push(box(2.05, 0.12, 6.9, x, y + 0.5, z, yaw));
+    }
+  }
+  mesh(geos.barrier, litMaterial({ map: tex.wallConcrete || tex.wall, color: '#ffd0a0' }));
+  mesh(geos.limo, litMaterial({ color: '#15121c' }));
+  mesh(geos.glass, litMaterial({ color: '#2a2440' }));
+  mesh(geos.chrome, glowMaterial({ color: '#d8d0ff', intensity: 1.2 }));
+  // The shuttle bus (and any other event mover), moved along its path.
+  const buses = (def.movers || []).filter((m) => m.event).map((m) => {
+    const bus = new THREE.Group();
+    const body = [box(m.hw * 2, m.h - 0.5, m.hd * 2, 0, 0.5 + (m.h - 0.5) / 2, 0)];
+    const dark = [box(m.hw * 2 - 0.2, 0.7, m.hd * 2 - 1, 0, 0.35, 0)];
+    const glow = [box(m.hw * 2 + 0.04, 0.8, m.hd * 2 - 2.4, 0, m.h - 1.1, -0.4), box(m.hw * 2 - 0.4, 0.5, 0.08, 0, m.h - 0.6, m.hd + 0.02)];
+    bus.add(new THREE.Mesh(mergeGeometries(body), litMaterial({ color: '#d8a020' })));
+    bus.add(new THREE.Mesh(mergeGeometries(dark), DARK()));
+    bus.add(new THREE.Mesh(mergeGeometries(glow), glowMaterial({ color: '#ff2a6d', intensity: 2.2 })));
+    group.add(bus);
+    return { m, bus };
+  });
+  group.userData.animate = (t) => {
+    for (const { m, bus } of buses) {
+      const p = pathPose(m, t);
+      bus.position.set(p.x, floor(p.x, p.z), p.z);
+      bus.rotation.y = p.yaw;
     }
   };
   group.userData.animate(0);
@@ -338,21 +392,3 @@ const STEEL = () => litMaterial({ color: '#4a4858' });
 const YELLOW = () => litMaterial({ color: '#e0b020' });
 const DARK = () => litMaterial({ color: '#1c1a24' });
 
-function tint(g, color) {
-  const c = new THREE.Color(color);
-  const colors = new Float32Array(g.attributes.position.count * 3);
-  for (let k = 0; k < colors.length; k += 3) colors.set([c.r, c.g, c.b], k);
-  g.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  return g;
-}
-
-function indexed(g) {
-  if (!g.index) g.setIndex([...Array(g.attributes.position.count).keys()]);
-  return g;
-}
-
-function scaleUv(g, su, sv) {
-  const uv = g.attributes.uv;
-  for (let k = 0; k < uv.count; k++) uv.setXY(k, uv.getX(k) * su, uv.getY(k) * sv);
-  return g;
-}

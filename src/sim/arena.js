@@ -30,6 +30,32 @@ const extents = (o) => {
   return [o.hw * c + o.hd * s, o.hw * s + o.hd * c];
 };
 
+const inPoly = (x, z, p) => {
+  let inside = false;
+  for (let i = 0, j = p.length - 1; i < p.length; j = i++) {
+    const [xi, zi] = p[i];
+    const [xj, zj] = p[j];
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+};
+
+// A path mover's place on its loop at time t: position and heading.
+export function pathPose(m, t) {
+  if (!m.cum) {
+    m.cum = [0];
+    for (let k = 1; k < m.path.length; k++) m.cum.push(m.cum[k - 1] + Math.hypot(m.path[k][0] - m.path[k - 1][0], m.path[k][1] - m.path[k - 1][1]));
+  }
+  const L = m.cum[m.cum.length - 1];
+  const s = (((m.phase || 0) + m.speed * t) % L + L) % L;
+  let k = 1;
+  while (k < m.cum.length - 1 && m.cum[k] < s) k++;
+  const [ax, az] = m.path[k - 1];
+  const [bx, bz] = m.path[k];
+  const u = (s - m.cum[k - 1]) / Math.max(1e-6, m.cum[k] - m.cum[k - 1]);
+  return { x: ax + (bx - ax) * u, z: az + (bz - az) * u, yaw: Math.atan2(bx - ax, bz - az) };
+}
+
 // (x, z) in a rotated box's frame: across (along hw) and along (along hd).
 const toLocal = (o, x, z) => {
   const dx = Math.sin(o.yaw);
@@ -60,6 +86,7 @@ class Arena {
     this.heightAt = def.heightAt || null; // free roam: follows the district's hills (world y)
     this.holes = def.holes || [];
     this.train = def.train || null;
+    this.truck = def.truck || null;
     if (def.obstacles.length > 64) {
       this.grid = new Map();
       for (const o of def.obstacles) {
@@ -95,17 +122,21 @@ class Arena {
     return s.phase + s.speed * this.time;
   }
 
-  // Where a mover (crane hook) is now, arena-local.
+  // Where a mover (crane hook, shuttle bus) is now, arena-local: [x, z, yaw].
   moverAt(m) {
     const t = this.time;
-    return [m.x + m.ax * Math.sin((2 * Math.PI * t) / m.px + m.phase), m.z + m.az * Math.sin((2 * Math.PI * t) / m.pz + m.phase)];
+    if (m.path) {
+      const p = pathPose(m, t);
+      return [p.x, p.z, p.yaw];
+    }
+    return [m.x + m.ax * Math.sin((2 * Math.PI * t) / m.px + m.phase), m.z + m.az * Math.sin((2 * Math.PI * t) / m.pz + m.phase), 0];
   }
 
   // The hole at world (wx, wz), if any.
   holeAt(wx, wz) {
     const x = wx - this.cx;
     const z = wz - this.cz;
-    return this.holes.find((hl) => x > hl.r[0] && x < hl.r[1] && z > hl.r[2] && z < hl.r[3]) || null;
+    return this.holes.find((hl) => (hl.poly ? inPoly(x, z, hl.poly) : x > hl.r[0] && x < hl.r[1] && z > hl.r[2] && z < hl.r[3])) || null;
   }
 
   isHole(wx, wz) {
@@ -130,7 +161,7 @@ class Arena {
     const base = this.heightAt ? this.heightAt(x + this.cx, z + this.cz) - this.y0 : 0;
     for (const hl of this.holes) {
       const r = hl.r;
-      if (x > r[0] && x < r[1] && z > r[2] && z < r[3]) return { h: base - hl.drop, nx: 0, ny: 1, nz: 0 };
+      if (hl.poly ? inPoly(x, z, hl.poly) : x > r[0] && x < r[1] && z > r[2] && z < r[3]) return { h: base - hl.drop, nx: 0, ny: 1, nz: 0 };
     }
     for (const r of this.def.ramps) {
       const dx = x - r.x;
@@ -226,9 +257,41 @@ class Arena {
         }
       }
     };
+    // A convex polygon (the Palace podium): the nearest edge pushes back.
+    const polyWall = (o) => {
+      const p = o.poly;
+      if (o.sgn === undefined) {
+        let a = 0;
+        for (let k = 0; k < p.length; k++) a += p[k][0] * p[(k + 1) % p.length][1] - p[(k + 1) % p.length][0] * p[k][1];
+        o.sgn = a > 0 ? 1 : -1;
+      }
+      let best = Infinity;
+      let bx = 0;
+      let bz = 0;
+      for (let k = 0; k < p.length; k++) {
+        const [ax, az] = p[k];
+        const [cx, cz] = p[(k + 1) % p.length];
+        const L = Math.hypot(cx - ax, cz - az) || 1;
+        const nx = (-(cz - az) / L) * o.sgn; // inward
+        const nz = ((cx - ax) / L) * o.sgn;
+        const d = (x - ax) * nx + (z - az) * nz;
+        if (d < best) {
+          best = d;
+          bx = nx;
+          bz = nz;
+        }
+      }
+      if (best > pen) {
+        pen = best;
+        rx = bx;
+        rz = bz;
+      }
+    };
     for (const o of this.nearObstacles(x, z)) {
       if (ly !== undefined && o.h && ly > (o.y || 0) + o.h + 0.3) continue; // flying over it
-      if (o.yaw) obbWall(o);
+      if (ly !== undefined && (o.y || 0) > ly + 2.5) continue; // driving under it (the Palace Underpass)
+      if (o.poly) polyWall(o);
+      else if (o.yaw) obbWall(o);
       else boxWall(o.x, o.z, o.hw, o.hd);
     }
     // Decks and lifts: ground when you're on top, a wall when you're beside.
@@ -250,9 +313,10 @@ class Arena {
     // Movers: a heavy block at car height (clear it by jumping).
     for (const m of this.def.movers) {
       if (ly !== undefined && (ly > m.y0 + m.h + 0.3 || ly < m.y0 - 1.5)) continue;
-      const [mx, mz] = this.moverAt(m);
-      if (Math.abs(x - mx) > m.hw + 40 || Math.abs(z - mz) > m.hd + 40) continue;
-      boxWall(mx, mz, m.hw, m.hd);
+      const [mx, mz, yaw] = this.moverAt(m);
+      if (Math.abs(x - mx) > m.hw + m.hd + 40 || Math.abs(z - mz) > m.hw + m.hd + 40) continue;
+      if (yaw) obbWall({ x: mx, z: mz, hw: m.hw, hd: m.hd, yaw });
+      else boxWall(mx, mz, m.hw, m.hd);
     }
     // Sweepers: rotating bars at car height (clear them by jumping).
     for (const s of this.def.sweepers) {
@@ -318,8 +382,9 @@ class Arena {
     }
     for (const m of this.def.movers) {
       if (ly > m.y0 + m.h + 0.5 || ly < m.y0 - 1.5) continue;
-      const [mx, mz] = this.moverAt(m);
-      if (Math.abs(x - mx) < m.hw + 1.4 && Math.abs(z - mz) < m.hd + 1.4) return { dps: m.dps || 40 };
+      const [mx, mz, yaw] = this.moverAt(m);
+      const [u, v] = yaw ? toLocal({ x: mx, z: mz, yaw }, x, z) : [x - mx, z - mz];
+      if (Math.abs(u) < m.hw + 1.4 && Math.abs(v) < m.hd + 1.4) return { dps: m.dps || 40 };
     }
     return null;
   }

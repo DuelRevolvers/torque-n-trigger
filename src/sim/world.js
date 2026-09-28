@@ -5,6 +5,7 @@ import { SIM_DT } from '../config.js';
 import { createCarState, placeCar, stepCar, carUp, carSpeed } from './vehicle.js';
 import { yawFromDirection } from './math.js';
 import { hitByTrain } from './train.js';
+import { hitByTruck } from './truck.js';
 import { initCombat, initCombatWorld, updateMods, updateCombat, collideCars, ringOut } from './combat.js';
 import { neutralInput } from './input.js';
 import { initEventCar, eventInput, updateEvent } from './event.js';
@@ -52,6 +53,7 @@ export function stepWorld(world, inputs) {
   }
   collideCars(world);
   if (track.train) hitByTrain(world);
+  if (track.truck) hitByTruck(world);
   updateCombat(world, effective, SIM_DT, respawnCar);
   if (state.event) updateEvent(world, SIM_DT);
   state.tick++;
@@ -67,7 +69,15 @@ function gridPose(track, slot) {
   const row = Math.floor(slot / 2);
   const side = slot % 2 === 0 ? -1 : 1;
   const i = track.indexAtDistance(track.length - 10 - row * 8);
-  return poseAt(track, i, side * track.halfWidth * 0.35);
+  return poseAt(track, i, side * gridLateral(track, track.s[i]));
+}
+
+// How far off the centreline a grid slot sits: a third of the road's half-width,
+// clear of a median.
+export function gridLateral(track, s) {
+  const half = track.localHalf ? track.localHalf(s) : track.halfWidth;
+  const median = track.medianAt?.(s) || 0;
+  return Math.max(half * 0.35, median ? median + 2.6 : 0);
 }
 
 function poseAt(track, i, lateral = 0) {
@@ -130,10 +140,13 @@ export function respawnCar(world, id, { back = 0, index = null } = {}) {
   // Never put a car back in (or right before) a gap between rooftops.
   const gap = track.gaps?.find((g) => track.s[i] > g.s0 - g.len - 5 && track.s[i] < g.s1 + 5);
   if (gap) i = track.indexAtDistance(Math.max(0, gap.s0 - gap.len - 60));
-  placeCar(car, params, poseAt(track, i));
+  // On the centreline, or beside the median where there is one (on the side the car was on).
+  const median = track.medianAt?.(track.s[i]) || 0;
+  const lateral = median ? (Math.sign(car.lateral) || 1) * (median + 3) : 0;
+  placeCar(car, params, poseAt(track, i, lateral));
   car.trackIndex = i;
   car.trackS = track.s[i];
-  car.lateral = 0;
+  car.lateral = lateral;
   car.nitro.charges = Math.min(car.nitro.charges, params.nitro.charges);
 }
 

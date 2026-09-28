@@ -20,6 +20,11 @@
 // where its name plate goes (default: top middle).
 
 import { RUSTLINE_CITY } from '../districts/rustline.js';
+import { STRIP_CITY } from '../districts/neonStrip.js';
+
+// A plan district's outline on the city map: its boundary, scaled into place
+// (centre and metres per map unit), so the map and the district always match.
+const planOutline = (boundary, [cx, cy], [sx, sy]) => boundary.map(([x, z]) => [+(cx + x / sx).toFixed(2), +(cy + z / sy).toFixed(2)]);
 
 const GROUND = [[2, 2], [3, 2], [2, 3], [3, 3]]; // event ground sizes, smallest first
 
@@ -47,27 +52,18 @@ export const DISTRICTS = [
     blurb: 'The Glow Palace casino, a night market and clubs packed into tight blocks under neon arches.',
     theme: { haze: '#1e0d30', fog: 0.0045 },
     // Pointed at the top where Palace Drive comes in, the seawall along the bottom.
-    map: [[44, 58.7], [47.5, 55], [52, 53.3], [53, 51.3], [54.5, 53.3], [59.5, 52.7], [64, 55.3], [65, 64], [63, 71.3], [64.5, 80], [62.5, 87.3], [63.5, 91.3], [55.5, 90.7], [48.5, 91.7], [43, 91], [41.5, 84], [43, 76.7], [41, 68.7], [42.5, 62.7]],
+    map: planOutline(STRIP_CITY.plan.boundary, [53, 71.5], [54.17, 29.7]),
     label: [53, 57],
-    city: {
-      id: 'strip', name: 'Neon Strip', seed: 2202, cols: 12, rows: 9,
-      spacingX: [80, 122], spacingZ: [72, 108], removeEdges: 0.07, elevation: 0.5, hillScale: 350,
-      sites: [
-        { kind: 'arena', name: 'Casino Car Park', sizes: GROUND, min: 150 },
-        { kind: 'casino', name: 'The Glow Palace', sizes: [[2, 1], [3, 1]], where: 'avenue' },
-        { kind: 'market', name: 'Night Market', sizes: [[2, 1], [1, 2]] },
-      ],
-      lots: { plaza: 2, parking: 2, alley: 6, construction: 1, park: 1 },
-      buildings: 'dense', heights: [14, 48], features: ['arches'],
-      look: { building: '#8070a8', buildingTex: 'building', lamp: '#ff9ad0', barrier: '#ffffff', signs: 0.85, lot: '#5a5068', neon: ['#ff2a6d', '#05d9e8', '#b04dff'], road: '#c8b0d0', roadGloss: 1, walk: '#c0b0c8' },
-    },
+    // Authored to docs/districts/02-neon-strip.md (src/districts/neonStrip.js).
+    city: STRIP_CITY,
     events: [
-      { key: 'sprint', type: 'sprint', name: 'Neon Strip Sprint', desc: 'From the Glow Palace forecourt out through the back streets.', route: { kind: 'sprint', seed: 1, length: 3000, from: 'casino' }, cars: 6, purse: 1500 },
-      { key: 'circuit', type: 'circuit', name: 'Casino Circuit', desc: 'Round the Glow Palace and down the Strip under the arches.', route: { kind: 'circuit', seed: 2, cells: 7, around: 'casino' }, cars: 6, laps: 3, purse: 1700 },
-      { key: 'drag', type: 'drag', name: 'Strip Quarter Mile', desc: 'A quarter mile down the Strip itself.', route: { kind: 'drag' }, cars: 4, purse: 1100, finishS: 414 },
-      { key: 'rival', type: 'circuit', name: 'Rival: Glow Laps', desc: 'Laps round the night market. Mind the stalls.', route: { kind: 'circuit', seed: 4, cells: 6, around: 'market' }, cars: 5, laps: 2, purse: 1900, rival: true, modifiers: ['noNitro'] },
+      { key: 'sprint', type: 'sprint', name: 'Neon Strip Sprint', desc: 'Through the Glow Palace underpass, along the Strip and the seawall, to the drive-in gate. Shortcut through the bus depot.', route: { kind: 'sprint', path: ['crown-palace', 'strip-palace', 'strip-pawn', 'pawn-east', 'shore-east', 'shore-proj', 'loop-s', 'loop-e', 'loop-n'], shortcuts: ['depot'] }, cars: 6, purse: 1500 },
+      { key: 'circuit', type: 'circuit', name: 'Casino Circuit', desc: 'Round the Glow Palace and its car park: Marquee St, Seven St, the Strip under the arches, Lucky St. Shortcut through the car park rows.', route: { kind: 'circuit', path: ['marquee-palace', 'marquee-seven', 'strip-seven', 'strip-lucky', 'marquee-lucky'], shortcuts: ['car-park'], start: 40 }, cars: 6, laps: 3, purse: 1700 },
+      { key: 'drag', type: 'drag', name: 'Strip Quarter Mile', desc: 'Eastbound on the Strip from the motels to Seven St, two cars each side of the median.', route: { kind: 'drag', along: 'The Strip', from: -274, to: 260 }, cars: 4, purse: 1100, finishS: 414 },
+      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Car Park Brawl', desc: 'The Casino Car Park, closed off with limos for the night. Mind the shuttle bus.', route: { kind: 'arena', site: 0 }, cars: 6, timeLimit: 120, purse: 1600 },
+      { key: 'rival', type: 'circuit', name: 'Rival: Glow Laps', desc: 'Through the night market between the stalls, round by the seawall and up Motel Row. No nitrous.', route: { kind: 'circuit', path: ['strip-lucky', 'strip-palace', 'market', 'back-dice', 'back-east', 'shore-east', 'shore-motel'], shortcuts: ['depot'], start: 30 }, cars: 5, laps: 2, purse: 1900, rival: true, modifiers: ['noNitro'] },
     ],
-    boss: { key: 'boss', type: 'sprint', name: 'Boss: Vixen', desc: 'Vixen: from the night market to the casino car park.', route: { kind: 'sprint', seed: 5, length: 3300, from: 'market', to: 'arena' }, cars: 5, purse: 3000, driver: 'vixen' },
+    boss: { key: 'boss', type: 'sprint', name: 'Boss: Vixen', desc: 'Vixen: the long way round the edge of the district, through the Palace Underpass, into the Casino Car Park.', route: { kind: 'sprint', path: ['strip-palace', 'strip-velvet', 'crown-palace', 'marquee-east', 'marquee-palace', 'arena'], shortcuts: ['boneyard'] }, cars: 5, purse: 3000, driver: 'vixen' },
   },
   {
     id: 'chrome', name: 'Chrome Heights', tier: 2, faction: 'Kessler Motors', color: '#05d9e8',
