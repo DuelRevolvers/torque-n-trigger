@@ -899,11 +899,19 @@ function partTex(q, slot, baseHex, face = 'side') {
           for (const at of LINES) {
             seam(true, at);
             seam(false, at);
+            if (q === 'race') continue; // bonded carbon panels: no rivet rows
             for (let i = 4; i < 64; i += 8) {
               fixing(i, at + 3);
               fixing(at + 3, i);
             }
           }
+          // Race: one flush dark-titanium fastener where the seams cross.
+          if (q === 'race')
+            for (const x of LINES)
+              for (const y of LINES) {
+                rect(x + 2, y + 2, 2, 2, rgb('#4a4a56'));
+                dot(x + 2, y + 2, rgb('#6a6a78'));
+              }
           break;
         case 'exhaust':
           // Brushed pipe with weld beads at its joints (rings round a pipe).

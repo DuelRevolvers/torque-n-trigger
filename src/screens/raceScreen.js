@@ -94,7 +94,7 @@ export class RaceScreen {
       track = buildTrack(v.def);
       if (def.finishS) track.finishS = def.finishS;
       if (def.city) {
-        group.add(buildTrackView(track, tex, { city: true, sidewalk: tex.sidewalk, barrierColor: def.city.look.barrier }));
+        group.add(buildTrackView(track, tex, { city: true, sidewalk: def.city.rooftop ? tex.lot : tex.sidewalk, barrierColor: def.city.look.barrier, look: def.city.look }));
       } else {
         group.add(buildTrackView(track, tex), buildCityView(track, tex));
       }
@@ -392,6 +392,7 @@ export class RaceScreen {
       touchLayout: touch.visible,
       label: settings.godMode ? `${this.label}  GOD MODE` : this.label,
       units: settings.units,
+      hudScale: settings.hudSize,
       markers: this.markers(player),
       position: state.cars.length > 1 ? { pos: order.findIndex((r) => r.id === 0) + 1, total: state.cars.length } : null,
       eventInfo: this.eventInfo(),

@@ -39,11 +39,12 @@ export class Hud {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  draw({ car, params, tick, fps, showFps, touchLayout, label, units = 'kmh', markers = [], position = null, eventInfo = null, minimap = null }) {
+  draw({ car, params, tick, fps, showFps, touchLayout, label, units = 'kmh', markers = [], position = null, eventInfo = null, minimap = null, hudScale = 1 }) {
     const { ctx, canvas } = this;
-    // Layout is in 270-line units, scaled up by an integer so the pixel font stays
-    // crisp and readable at any internal resolution.
-    const S = Math.max(1, Math.round(canvas.height / 270));
+    // Layout is in 270-line units, scaled to the screen and the HUD size setting;
+    // a scale near a whole number snaps to it so the pixel font stays crisp.
+    const raw = (canvas.height / 270) * hudScale;
+    const S = Math.abs(raw - Math.round(raw)) < 0.15 ? Math.max(1, Math.round(raw)) : Math.max(0.5, raw);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.setTransform(S, 0, 0, S, 0, 0);
@@ -101,7 +102,7 @@ export class Hud {
     const speed = Math.round(units === 'mph' ? kmh * 0.6214 : kmh);
     const dialMax = units === 'mph' ? 250 : 400;
     const R = touchLayout ? 26 : 34;
-    const gx = touchLayout ? Math.round(W / 2) : W - R - 26;
+    const gx = touchLayout ? Math.round(W / 2) : W - R - 36;
     const gy = touchLayout ? R + 6 : H - R - 8;
     ctx.fillStyle = PANEL;
     for (let y = -R - 2; y <= R + 2; y++) {
@@ -135,7 +136,7 @@ export class Hud {
     text(String(speed), gx + 4, gy + (touchLayout ? 6 : 9), { scale: 2, color: GOLD, align: 'center' });
     if (!touchLayout) text(units === 'mph' ? 'MPH' : 'KM/H', gx + 4, gy + 25, { color: GOLD, align: 'center' });
     const gear = car.reverse ? 'R' : String(car.gear);
-    text(gear, gx, gy - R + 12, { color: car.reverse ? PALETTE.amber : PALETTE.pink, align: 'center' });
+    text(gear, gx, gy - 11, { color: car.reverse ? PALETTE.amber : PALETTE.pink, align: 'center' });
 
     // Boost: nitro charges as a vertical segmented bar, draining while active.
     const n = car.nitro;
@@ -143,7 +144,7 @@ export class Hud {
     const bh = touchLayout ? 44 : 60;
     const bx = gx + R + 8;
     const byy = gy + R - bh + 2;
-    if (!touchLayout) text('BOOST', bx + bw, byy - 10, { color: DIM, align: 'right' });
+    if (!touchLayout) text('BOOST', bx + bw + 8, byy - 20, { color: DIM, align: 'right' });
     frame(bx, byy, bw, bh);
     const charges = params.nitro.charges;
     const fill = n.active > 0 ? (n.charges + n.active / params.nitro.duration) / charges : (n.charges + (n.charges < charges ? n.recharge / params.nitro.rechargeTime : 0)) / charges;
@@ -153,6 +154,18 @@ export class Hud {
       ctx.fillStyle = lit ? (n.active > 0 ? PALETTE.pink : i < bars * 0.15 ? '#ff3030' : '#2f7fff') : '#1c1a2c';
       ctx.fillRect(bx + 2, byy + bh - 4 - i * 4, bw - 4, 3);
     }
+    // Uses left: a divider in the bar between charges, a pip per charge beside it
+    // (pink for the one burning), and the count by the label.
+    ctx.fillStyle = SHADOW;
+    for (let k = 1; k < charges; k++) ctx.fillRect(bx + 1, Math.round(byy + bh - 2 - ((bh - 4) * k) / charges), bw - 2, 1);
+    for (let k = 0; k < charges; k++) {
+      const burning = n.active > 0 && k === n.charges;
+      ctx.fillStyle = SHADOW;
+      ctx.fillRect(bx + bw + 3, byy + bh - 7 - k * 8, 6, 6);
+      ctx.fillStyle = burning ? PALETTE.pink : k < n.charges ? PALETTE.cyan : '#2a2340';
+      ctx.fillRect(bx + bw + 2, byy + bh - 8 - k * 8, 6, 6);
+    }
+    text(`x${n.charges}`, bx + bw + 8, byy - 10, { color: n.charges ? PALETTE.cyan : DIM, align: 'right' });
 
     // Health and ammo panels, bottom-left (top-left on touch, where the steering
     // pad isn't), with the minimap above.

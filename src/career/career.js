@@ -2,7 +2,7 @@
 // Economy, districts and progression arrive in M6; this is the garage's storage.
 
 import { makeRng, makePart } from '../parts/generate.js';
-import { PART_TYPES, SLOTS } from '../parts/catalog.js';
+import { PART_TYPES, SLOTS, QUALITIES } from '../parts/catalog.js';
 
 const KEY = 'tt.career.v1';
 
@@ -84,4 +84,20 @@ function sparePartsBin(seed) {
     parts.push(makePart(rng, slot, types[Math.floor(rng() * types.length)], qualities[Math.floor(rng() * qualities.length)]));
   }
   return parts;
+}
+
+// Unlock everything: every part type at every quality goes into the spares. The
+// garage as it was (cars and their builds, spares, active car) is kept in the save
+// so turning it off puts it all back, undoing anything installed meanwhile.
+export function unlockAll(career) {
+  if (career.unlockSnapshot) return;
+  career.unlockSnapshot = JSON.parse(JSON.stringify({ cars: career.cars, inventory: career.inventory, activeCar: career.activeCar }));
+  const rng = makeRng((career.seed || 1) + 4242);
+  for (const slot of SLOTS) for (const type of Object.keys(PART_TYPES[slot])) for (const q of QUALITIES) career.inventory.push(makePart(rng, slot, type, q.id));
+}
+
+export function relockAll(career) {
+  if (!career.unlockSnapshot) return;
+  Object.assign(career, career.unlockSnapshot);
+  delete career.unlockSnapshot;
 }

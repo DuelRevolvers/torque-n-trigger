@@ -26,8 +26,19 @@ export function buildTrack(def) {
       if (s >= j.s && s <= j.s + j.len) pt[1] += (j.height * (s - j.s)) / j.len;
     });
   }
+  // Gaps (rooftop districts): a launch ramp up to the gap, nothing under it
+  // (see queryMain) and a landing ramp down from the far lip.
+  const gaps = def.gaps || [];
+  for (const g of gaps) {
+    pts.points.forEach((pt, i) => {
+      const s = i * pts.step;
+      if (s >= g.s0 - g.len && s <= g.s0) pt[1] += (g.rise * (s - (g.s0 - g.len))) / g.len;
+      else if (s >= g.s1 && s <= g.s1 + g.len) pt[1] += g.rise * (1 - (s - g.s1) / g.len);
+    });
+  }
   const track = new Track(name, pts, closed, { halfWidth, curbWidth, shoulderWidth });
   track.jumps = jumps;
+  track.gaps = gaps.length ? gaps : null;
   // Shortcut branches: narrow roads that leave the main line at s0 and rejoin at s1.
   if (def.branches?.length) {
     track.branches = def.branches.map((b) => ({
@@ -110,6 +121,13 @@ class Track {
     }
     this.minY = minY;
     this.bounds = { minX, maxX, minZ, maxZ };
+  }
+
+  // How far the ground falls away at distance s (over a gap between rooftops).
+  gapDrop(s) {
+    if (!this.gaps) return 0;
+    for (const g of this.gaps) if (s > g.s0 && s < g.s1) return g.drop;
+    return 0;
   }
 
   wrap(i) {
@@ -217,7 +235,7 @@ class Track {
       lateral,
       overrun: Math.sqrt(Math.max(0, seg.d - lateral * lateral)), // distance past an open end
 
-      height: this.y[i0] + (this.y[i1] - this.y[i0]) * u,
+      height: this.y[i0] + (this.y[i1] - this.y[i0]) * u - this.gapDrop(this.s[i0] + u * this.step),
       nx,
       ny,
       nz,

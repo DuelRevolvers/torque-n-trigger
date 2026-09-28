@@ -14,7 +14,7 @@ import { Hud } from './ui/hud.js';
 import { SettingsMenu } from './ui/settingsMenu.js';
 import { setCrtWarp } from './ui/crtWarp.js';
 import { PadNav } from './ui/padNav.js';
-import { loadCareer, clearCareer } from './career/career.js';
+import { loadCareer, clearCareer, saveCareer, unlockAll, relockAll } from './career/career.js';
 import { StarterScreen } from './screens/starterScreen.js';
 import { GarageScreen } from './screens/garageScreen.js';
 import { RaceScreen } from './screens/raceScreen.js';
@@ -40,7 +40,7 @@ tex.env = createEnvMap(renderer.renderer);
 // The concept-art street set replaces the road, barriers and facades, and cars
 // get their quality texture sets (applied by CarView).
 const street = createStreetTextures();
-Object.assign(tex, { road: street.road, roadRough: street.roadRough, wall: street.wallChevron, building: street.building, buildingGlow: street.buildingGlow });
+Object.assign(tex, { road: street.road, roadRough: street.roadRough, wall: street.wallChevron, wallConcrete: street.wallConcrete, building: street.building, buildingGlow: street.buildingGlow });
 tex.carTextures = applyCarTextures;
 
 const app = {
@@ -102,6 +102,7 @@ const menu = new SettingsMenu(
     if (key === 'resolution') onResize();
     if (key === 'touchControls') updateTouchVisibility();
     if (key === 'crt') setCrtWarp(settings.crt);
+    if (key === 'unlockAll') syncUnlockAll();
     renderer.applySettings();
   },
   [
@@ -152,6 +153,23 @@ startFixedLoop({
   },
 });
 
+// Unlock everything follows the setting: applied to the career while it's on (also
+// to a career started while it's on), undone when it's turned off.
+function syncUnlockAll() {
+  const career = app.career;
+  if (!career) return;
+  if (settings.unlockAll && !career.unlockSnapshot) unlockAll(career);
+  else if (!settings.unlockAll && career.unlockSnapshot) relockAll(career);
+  else return;
+  saveCareer(career);
+  app.current?.refresh?.();
+}
+const goTo = app.go.bind(app);
+app.go = (...args) => {
+  syncUnlockAll();
+  return goTo(...args);
+};
+syncUnlockAll();
 app.go(app.career ? 'garage' : 'starter');
 
 // Handy for poking at the game from the browser console.

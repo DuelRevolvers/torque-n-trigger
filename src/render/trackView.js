@@ -10,7 +10,8 @@ const LAMP_SPACING = 36;
 // street lamps, jump kickers and shortcut branches from the simulation's track
 // data, so what you see is what you drive on.
 // opts.city: the route runs through a district (districtView draws the ground,
-// buildings and lamps); opts.sidewalk / opts.barrierColor restyle it.
+// buildings and lamps) and looks like its streets: the district's road surface
+// (opts.look), sidewalk kerbs and concrete barriers (opts.barrierColor).
 export function buildTrackView(track, tex, opts = {}) {
   const group = new THREE.Group();
   const groundY = track.minY - 0.6;
@@ -23,6 +24,11 @@ export function buildTrackView(track, tex, opts = {}) {
     skirt: litMaterial({ color: PALETTE.wallDark, ...doubleSided }),
     chevron: litMaterial({ map: tex.wall, ...doubleSided, polygonOffset: true, polygonOffsetFactor: -2 }),
   };
+  if (opts.city) {
+    mats.road = streetRoadMaterial(tex, opts.look);
+    mats.curb = mats.shoulder;
+    mats.barrier = litMaterial({ map: tex.wallConcrete || tex.wall, color: opts.barrierColor || '#ffffff', ...doubleSided });
+  }
 
   // Where a shortcut meets the main road, neither road gets a wall in the way.
   const branches = track.branches || [];
@@ -70,15 +76,19 @@ function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roa
   const at = pointAt(track);
   const add = (geometry, material) => group.add(new THREE.Mesh(geometry, material));
 
-  add(ribbon(track, (i) => at(i, -hw, lift), (i) => at(i, hw, lift), { vLength: 16 }), roadMat || mats.road);
-  add(ribbon(track, (i) => at(i, -curbOuter, lift), (i) => at(i, -hw, lift), { vLength: 3 }), mats.curb);
-  add(ribbon(track, (i) => at(i, hw, lift), (i) => at(i, curbOuter, lift), { vLength: 3 }), mats.curb);
+  // Nothing is drawn over a gap between rooftops.
+  const gaps = track.gaps || [];
+  const inGap = gaps.length ? (i) => gaps.some((g) => track.s[i] > g.s0 && track.s[i] < g.s1) : null;
+  add(ribbon(track, (i) => at(i, -hw, lift), (i) => at(i, hw, lift), { vLength: 16, skip: inGap }), roadMat || mats.road);
+  add(ribbon(track, (i) => at(i, -curbOuter, lift), (i) => at(i, -hw, lift), { vLength: 3, skip: inGap }), mats.curb);
+  add(ribbon(track, (i) => at(i, hw, lift), (i) => at(i, curbOuter, lift), { vLength: 3, skip: inGap }), mats.curb);
   const shoulderU = (wall - curbOuter) / 4;
-  add(ribbon(track, (i) => at(i, -wall, lift), (i) => at(i, -curbOuter, lift), { vLength: 4, uB: shoulderU }), mats.shoulder);
-  add(ribbon(track, (i) => at(i, curbOuter, lift), (i) => at(i, wall, lift), { vLength: 4, uB: shoulderU }), mats.shoulder);
+  add(ribbon(track, (i) => at(i, -wall, lift), (i) => at(i, -curbOuter, lift), { vLength: 4, uB: shoulderU, skip: inGap }), mats.shoulder);
+  add(ribbon(track, (i) => at(i, curbOuter, lift), (i) => at(i, wall, lift), { vLength: 4, uB: shoulderU, skip: inGap }), mats.shoulder);
 
   for (const side of [-1, 1]) {
-    const skip = wallSkip ? (i) => { const p = at(i, side * wall); return wallSkip(p[0], p[2]); } : null;
+    const skipWall = wallSkip ? (i) => { const p = at(i, side * wall); return wallSkip(p[0], p[2]); } : null;
+    const skip = inGap || skipWall ? (i) => (inGap && inGap(i)) || (skipWall && skipWall(i)) : null;
     add(ribbon(track, (i) => at(i, side * wall, BARRIER_HEIGHT), (i) => at(i, side * wall), { vLength: 3.4, swapUV: true, skip }), mats.barrier);
     add(
       ribbon(track, (i) => at(i, side * wall), (i) => {
@@ -90,7 +100,7 @@ function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roa
   }
 
   // Yellow chevrons on each kicker so jumps read from a distance.
-  for (const j of track.jumps || []) {
+  for (const j of [...(track.jumps || []), ...gaps.flatMap((g) => [{ s: g.s0 - g.len, len: g.len }, { s: g.s1, len: g.len }])]) {
     const i0 = track.indexAtDistance(j.s);
     const i1 = track.indexAtDistance(j.s + j.len);
     const skip = (i) => (i0 <= i1 ? i < i0 || i > i1 : i < i0 && i > i1);
@@ -173,11 +183,21 @@ function buildStartLine(track, tex, at, i0 = 0) {
   return group;
 }
 
+// A district's street surface (shared with districtView): its road texture
+// tinted to the district, or a concrete deck up on the rooftops.
+export function streetRoadMaterial(tex, look = {}) {
+  if (look.roof) return litMaterial({ map: tex.lot, color: look.roof, side: THREE.DoubleSide });
+  return standardMaterial({
+    map: tex.road, roughnessMap: tex.roadRough ?? null, roughness: tex.roadRough ? 1 : 0.45, metalness: 0,
+    color: look.road || '#ffffff', envMap: tex.env, envMapIntensity: look.roadGloss ?? 0.5, side: THREE.DoubleSide,
+  });
+}
+
 // Shortcut surfaces: dirt through construction sites, tiles across plazas,
 // painted tarmac through car parks, plain road down side streets and alleys.
 function branchMaterial(kind, tex, mats) {
-  if (kind === 'construction' && tex.dirt) return litMaterial({ map: tex.dirt, side: THREE.DoubleSide });
-  if (kind === 'plaza' && tex.tiles) return litMaterial({ map: tex.tiles, side: THREE.DoubleSide });
+  if ((kind === 'construction' || kind === 'railyard') && tex.dirt) return litMaterial({ map: tex.dirt, side: THREE.DoubleSide });
+  if ((kind === 'plaza' || kind === 'park' || kind === 'quad' || kind === 'market') && tex.tiles) return litMaterial({ map: tex.tiles, side: THREE.DoubleSide });
   if (kind === 'parking' && tex.parking) return litMaterial({ map: tex.parking, side: THREE.DoubleSide });
   return mats.road;
 }

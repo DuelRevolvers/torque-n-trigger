@@ -280,6 +280,8 @@ function physicsSubstep(car, p, ctl, track, h) {
     if (ctl.handbrake && !w.front) brakeF += p.handbrakeForce * 0.5;
     if (brakeF > 0) fx -= Math.sign(vLong) * Math.min(brakeF, (Math.abs(vLong) * massShare) / h);
     fx -= Math.sign(vLong) * Math.min(p.rollingResistance, (Math.abs(vLong) * massShare) / h);
+    // Off the throttle: engine braking and drag slow the car down quickly.
+    if (p.coastDecel && !(ctl.throttle > 0.05)) fx -= Math.sign(vLong) * Math.min(p.coastDecel * massShare, (Math.abs(vLong) * massShare) / h);
     fx -= vLong * SURFACE_DRAG[hit.g.surface];
 
     // Friction circle: a wheel using its grip to drive or brake has less to turn.

@@ -108,7 +108,7 @@ const ARCADE = {
   latG: 1.5, // cornering the yaw assist may ask for, in g
   yawGain: 6, // how firmly the car follows the steering
   align: 2.6, // per second: how fast sideways motion turns into forward motion
-  driftAlign: 0.6, // ...while drifting, on street tyres (scaled by wheel grip: better wheels slide less)
+  driftAlign: 0.75, // ...while drifting, on street tyres (scaled by wheel grip: better wheels slide less)
   regrip: 1.6, // align boost just after a drift (also scaled by wheel grip)
   driftKick: 1.1, // rad/s of yaw added when a drift starts
   driftAngleMin: 0.28, // drift angle (rad) with light steering...
@@ -174,6 +174,7 @@ function deriveParams(eff, mass, overweight, powerSupply, powerDraw) {
     brakeBias: 0.62,
     handbrakeForce: 5000 * scaleMass,
     rollingResistance: 45 * scaleMass,
+    coastDecel: 3.2, // m/s^2 of extra slowing with the throttle released
     drag: (ch.drag * (1 - (eff.bodyKit?.aero || 0)) + (eff.spoiler?.drag || 0)) * DRAG_SCALE,
     downforce: 0.5 + (eff.spoiler?.downforce || 0) * 0.35,
     angularDamping: 0.3,

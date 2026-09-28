@@ -1,112 +1,146 @@
-// Neon Sprawl's districts. Each is a city district designed first (`city`: its
-// street grid, hills, special lots, buildings and look), then its events are
-// laid over those streets (`route`). Beating a district's boss opens the next.
+// Neon Sprawl's districts. Each is planned as a real piece of city first
+// (`city`): a street grid with its own block sizes, hills and closed streets;
+// big sites laid out before anything else (event grounds, parks, a rail yard, a
+// casino, a night market...); then ordinary lots (building blocks, courtyard
+// quads, housing, construction sites, plazas, car parks, alleys, container
+// yards, tank farms) and landmarks. Events are then set up in that district:
+// circuits are closed off round a landmark (route.around), sprints run between
+// places (route.from / route.to), arenas take over one of the district's event
+// grounds (route.site) and drags use the main avenue. Beating a district's boss
+// opens the next.
 //
-// city.lots: special lots per district (construction sites, plazas, car parks,
-// alleys through building quads, container yards).
+// city.sites: [{ kind, name, sizes: [[w, h] in blocks, smallest first], min?: m (event grounds), where?: 'centre' | 'north' | 'south' | 'avenue' }]
+// city.lots: single-block lots by kind: construction, plaza, parking, alley, park, quad (ways through) and yard, tanks, housing (filler).
 // city.buildings: 'warehouse' | 'dense' | 'block' | 'tower' | 'mega'.
-// city.features: 'waterfront' | 'arches' | 'skybridges' | 'overpass' | 'spire'.
+// city.features: 'waterfront' | 'piers' | 'arches' | 'skybridges' | 'overpass' | 'tunnels' | 'spire'. city.streetTrees: tree-lined sidewalks.
+
+const GROUND = [[2, 2], [3, 2], [2, 3], [3, 3]]; // event ground sizes, smallest first
 
 export const DISTRICTS = [
   {
     id: 'rustline', name: 'Rustline Docks', tier: 0, faction: 'Dock Rats', color: '#ff7a1a',
-    blurb: 'Warehouses, container yards and cranes on the waterfront. Everyone starts here.',
+    blurb: 'A working port: piers over the water, a rail yard, tank farms, container stacks and cranes. Everyone starts here.',
     theme: { haze: '#20140f', fog: 0.0042 },
     map: [[6, 58], [36, 58], [40, 94], [4, 94]],
     city: {
-      id: 'rustline', name: 'Rustline', seed: 1101, cols: 7, rows: 6,
-      spacingX: [135, 190], spacingZ: [110, 160], removeEdges: 0.1, elevation: 0.3, hillScale: 400, arenaMin: 150,
-      lots: { construction: 2, parking: 1, alley: 1, yard: 4 },
-      buildings: 'warehouse', heights: [8, 20], features: ['waterfront'],
-      look: { building: '#b09a88', buildingTex: 'corrugated', lamp: '#ffae50', barrier: '#ffd0a0', signs: 0.12, lot: '#8a8078', neon: ['#ff7a1a', '#ffb000'] },
+      id: 'rustline', name: 'Rustline', seed: 1101, cols: 9, rows: 7,
+      spacingX: [140, 210], spacingZ: [115, 165], removeEdges: 0.12, elevation: 0.3, hillScale: 400,
+      sites: [
+        { kind: 'arena', name: 'Dry Dock Yard', sizes: GROUND, min: 150, where: 'south' },
+        { kind: 'arena', name: 'Warehouse Row', sizes: GROUND, min: 150 },
+        { kind: 'railyard', name: 'Rail Yard', sizes: [[3, 1], [2, 1]], where: 'north' },
+      ],
+      lots: { construction: 1, parking: 2, alley: 2, yard: 6, tanks: 3 },
+      buildings: 'warehouse', heights: [8, 20], features: ['waterfront', 'piers'], piers: 3,
+      look: { building: '#b09a88', buildingTex: 'corrugated', lamp: '#ffae50', barrier: '#ffd0a0', signs: 0.12, lot: '#8a8078', neon: ['#ff7a1a', '#ffb000'], road: '#c8b8a8', walk: '#c8bcb0' },
     },
     events: [
-      { key: 'sprint', type: 'sprint', name: 'Dockside Dash', route: { kind: 'sprint', seed: 1, length: 2600 }, cars: 5, purse: 900 },
-      { key: 'circuit', type: 'circuit', name: 'Crane Yard Loop', route: { kind: 'circuit', seed: 2, cells: 5 }, cars: 5, laps: 3, purse: 1100 },
-      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Warehouse Brawl', route: { kind: 'arena' }, cars: 5, timeLimit: 120, purse: 1000 },
-      { key: 'rival', type: 'sprint', name: 'Rival: Pier Run', route: { kind: 'sprint', seed: 4, length: 3000 }, cars: 4, purse: 1300, rival: true },
+      { key: 'sprint', type: 'sprint', name: 'Dockside Dash', desc: 'From the end of a pier, through the docks, to the rail yard gates.', route: { kind: 'sprint', seed: 1, length: 2800, from: 'pier', to: 'railyard' }, cars: 5, purse: 900 },
+      { key: 'circuit', type: 'circuit', name: 'Rail Yard Loop', desc: 'The streets round the rail yard and the warehouses, closed off with barriers.', route: { kind: 'circuit', seed: 2, cells: 5, around: 'railyard' }, cars: 5, laps: 3, purse: 1100 },
+      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Dry Dock Brawl', desc: 'The dry dock yard on the waterfront, fenced off for the night.', route: { kind: 'arena', site: 0 }, cars: 5, timeLimit: 120, purse: 1000 },
+      { key: 'rival', type: 'sprint', name: 'Rival: Pier Run', desc: 'Across the docks and out to the end of a pier.', route: { kind: 'sprint', seed: 4, length: 3200, to: 'pier' }, cars: 4, purse: 1300, rival: true },
     ],
-    boss: { key: 'boss', type: 'arena', mode: 'lastStanding', name: 'Boss: Brick', route: { kind: 'arena' }, cars: 4, timeLimit: 240, purse: 2000, driver: 'brick' },
+    boss: { key: 'boss', type: 'arena', mode: 'lastStanding', name: 'Boss: Brick', desc: 'Brick holds court in the yard behind Warehouse Row.', route: { kind: 'arena', site: 1 }, cars: 4, timeLimit: 240, purse: 2000, driver: 'brick' },
   },
   {
     id: 'strip', name: 'Neon Strip', tier: 1, faction: 'Glow Syndicate', color: '#ff2a6d',
-    blurb: 'Tight blocks of casinos and clubs under neon arches. Acid rain most nights.',
+    blurb: 'The Glow Palace casino, a night market and clubs packed into tight blocks under neon arches. Acid rain most nights.',
     theme: { haze: '#1e0d30', fog: 0.0045 },
     map: [[38, 40], [64, 40], [66, 76], [40, 76]],
     city: {
-      id: 'strip', name: 'Neon Strip', seed: 2202, cols: 10, rows: 8,
-      spacingX: [80, 120], spacingZ: [72, 105], removeEdges: 0.06, elevation: 0.5, hillScale: 350, arenaMin: 150,
-      lots: { plaza: 2, parking: 2, alley: 3, construction: 1 },
+      id: 'strip', name: 'Neon Strip', seed: 2202, cols: 12, rows: 9,
+      spacingX: [80, 122], spacingZ: [72, 108], removeEdges: 0.07, elevation: 0.5, hillScale: 350,
+      sites: [
+        { kind: 'arena', name: 'Casino Car Park', sizes: GROUND, min: 150 },
+        { kind: 'casino', name: 'The Glow Palace', sizes: [[2, 1], [3, 1]], where: 'avenue' },
+        { kind: 'market', name: 'Night Market', sizes: [[2, 1], [1, 2]] },
+      ],
+      lots: { plaza: 2, parking: 2, alley: 6, construction: 1, park: 1 },
       buildings: 'dense', heights: [14, 48], features: ['arches'],
-      look: { building: '#8070a8', buildingTex: 'building', lamp: '#ff9ad0', barrier: '#ffffff', signs: 0.85, lot: '#5a5068', neon: ['#ff2a6d', '#05d9e8', '#b04dff'] },
+      look: { building: '#8070a8', buildingTex: 'building', lamp: '#ff9ad0', barrier: '#ffffff', signs: 0.85, lot: '#5a5068', neon: ['#ff2a6d', '#05d9e8', '#b04dff'], road: '#c8b0d0', roadGloss: 1, walk: '#c0b0c8' },
     },
     events: [
-      { key: 'sprint', type: 'sprint', name: 'Neon Strip Sprint', route: { kind: 'sprint', seed: 1, length: 3000 }, cars: 6, purse: 1500, modifiers: ['acidRain'] },
-      { key: 'circuit', type: 'circuit', name: 'Casino Circuit', route: { kind: 'circuit', seed: 2, cells: 7 }, cars: 6, laps: 3, purse: 1700 },
-      { key: 'drag', type: 'drag', name: 'Strip Quarter Mile', route: { kind: 'drag' }, cars: 4, purse: 1100, finishS: 414 },
-      { key: 'rival', type: 'circuit', name: 'Rival: Glow Laps', route: { kind: 'circuit', seed: 4, cells: 6 }, cars: 5, laps: 2, purse: 1900, rival: true, modifiers: ['noNitro'] },
+      { key: 'sprint', type: 'sprint', name: 'Neon Strip Sprint', desc: 'From the Glow Palace forecourt out through the back streets.', route: { kind: 'sprint', seed: 1, length: 3000, from: 'casino' }, cars: 6, purse: 1500, modifiers: ['acidRain'] },
+      { key: 'circuit', type: 'circuit', name: 'Casino Circuit', desc: 'Round the Glow Palace and down the Strip under the arches.', route: { kind: 'circuit', seed: 2, cells: 7, around: 'casino' }, cars: 6, laps: 3, purse: 1700 },
+      { key: 'drag', type: 'drag', name: 'Strip Quarter Mile', desc: 'A quarter mile down the Strip itself.', route: { kind: 'drag' }, cars: 4, purse: 1100, finishS: 414 },
+      { key: 'rival', type: 'circuit', name: 'Rival: Glow Laps', desc: 'Laps round the night market. Mind the stalls.', route: { kind: 'circuit', seed: 4, cells: 6, around: 'market' }, cars: 5, laps: 2, purse: 1900, rival: true, modifiers: ['noNitro'] },
     ],
-    boss: { key: 'boss', type: 'sprint', name: 'Boss: Vixen', route: { kind: 'sprint', seed: 5, length: 3300 }, cars: 5, purse: 3000, driver: 'vixen' },
+    boss: { key: 'boss', type: 'sprint', name: 'Boss: Vixen', desc: 'Vixen: from the night market to the casino car park.', route: { kind: 'sprint', seed: 5, length: 3300, from: 'market', to: 'arena' }, cars: 5, purse: 3000, driver: 'vixen' },
   },
   {
     id: 'chrome', name: 'Chrome Heights', tier: 2, faction: 'Kessler Motors', color: '#05d9e8',
-    blurb: 'Glass towers on rolling hills, skybridges overhead. Sponsors pay well, rivals hit hard.',
+    blurb: 'Uptown, up top: every race runs across the skyscraper rooftops. Jump the gaps between buildings, cut across roof gardens and drive straight through a tower. Sponsors pay well, rivals hit hard.',
     theme: { haze: '#0d1530', fog: 0.0038 },
     map: [[62, 8], [94, 8], [96, 44], [66, 44]],
     city: {
-      id: 'chrome', name: 'Chrome Heights', seed: 3303, cols: 7, rows: 7,
-      spacingX: [120, 165], spacingZ: [120, 160], removeEdges: 0.06, elevation: 8, hillScale: 220, arenaMin: 150,
-      lots: { plaza: 3, construction: 1, parking: 1, alley: 1 },
+      id: 'chrome', name: 'Chrome Heights', seed: 3303, cols: 9, rows: 8,
+      spacingX: [115, 170], spacingZ: [115, 165], removeEdges: 0.08, elevation: 2, hillScale: 240, rooftop: 60, gapShare: 0.4,
+      sites: [
+        { kind: 'arena', name: 'Tower Plaza', sizes: GROUND, min: 150 },
+        { kind: 'park', name: 'Heights Park', sizes: [[2, 2], [2, 1]], where: 'centre' },
+        { kind: 'construction', name: 'Kessler Tower Site', sizes: [[2, 1], [1, 2]] },
+      ],
+      lots: { quad: 4, plaza: 2, park: 2, housing: 3, alley: 1, parking: 1 },
       buildings: 'tower', heights: [45, 140], features: ['skybridges'],
-      look: { building: '#9ec0e0', buildingTex: 'glass', lamp: '#d0f0ff', barrier: '#c8f0ff', signs: 0.2, lot: '#6a7888', neon: ['#05d9e8', '#ffffff'] },
+      look: { building: '#9ec0e0', buildingTex: 'glass', lamp: '#d0f0ff', barrier: '#c8d0d8', signs: 0.2, lot: '#6a7888', neon: ['#05d9e8', '#ffffff'], roof: '#9aa2ac', walk: '#7a828c' },
     },
     events: [
-      { key: 'circuit', type: 'circuit', name: 'Hilltop Grand Prix', route: { kind: 'circuit', seed: 1, cells: 6 }, cars: 6, laps: 3, purse: 2400 },
-      { key: 'sprint', type: 'sprint', name: 'Skybridge Sprint', route: { kind: 'sprint', seed: 2, length: 3200 }, cars: 6, purse: 2200, modifiers: ['weaponsLate'] },
-      { key: 'arena', type: 'arena', mode: 'lastStanding', name: 'Tower Plaza Showdown', route: { kind: 'arena' }, cars: 5, timeLimit: 240, purse: 2300 },
-      { key: 'rival', type: 'sprint', name: 'Rival: Tower Run', route: { kind: 'sprint', seed: 4, length: 3400 }, cars: 5, purse: 2700, rival: true },
+      { key: 'circuit', type: 'circuit', name: 'Hilltop Grand Prix', desc: 'Round the Heights Park roof garden, jumping the gaps between buildings.', route: { kind: 'circuit', seed: 1, cells: 7, around: 'park' }, cars: 6, laps: 3, purse: 2400 },
+      { key: 'sprint', type: 'sprint', name: 'Skybridge Sprint', desc: 'From the Kessler Tower site across the rooftops. Mind the drops.', route: { kind: 'sprint', seed: 2, length: 3200, from: 'construction' }, cars: 6, purse: 2200, modifiers: ['weaponsLate'] },
+      { key: 'arena', type: 'arena', mode: 'lastStanding', name: 'Tower Plaza Showdown', desc: 'Tower Plaza: a podium roof between the glass towers.', route: { kind: 'arena', site: 0 }, cars: 5, timeLimit: 240, purse: 2300 },
+      { key: 'rival', type: 'sprint', name: 'Rival: Tower Run', desc: 'Roof garden to tower site, any way across the rooftops.', route: { kind: 'sprint', seed: 4, length: 3400, from: 'park', to: 'construction' }, cars: 5, purse: 2700, rival: true },
     ],
-    boss: { key: 'boss', type: 'circuit', name: 'Boss: Static', route: { kind: 'circuit', seed: 5, cells: 7 }, cars: 6, laps: 3, purse: 4200, driver: 'static' },
+    boss: { key: 'boss', type: 'circuit', name: 'Boss: Static', desc: 'Static races the long rooftop loop round the Kessler Tower site.', route: { kind: 'circuit', seed: 5, cells: 8, around: 'construction' }, cars: 6, laps: 3, purse: 4200, driver: 'static' },
   },
   {
     id: 'undercity', name: 'The Undercity', tier: 3, faction: 'Low Road Crew', color: '#39ff14',
-    blurb: 'Streets under the elevated city deck. Pillars, pipes and flooded asphalt. The lights go out down here.',
+    blurb: 'Streets under the elevated city deck: ramshackle towers of shacks and tin, tunnels, pillars, tank farms, a black market and flooded asphalt. The lights go out down here.',
     theme: { haze: '#081a12', fog: 0.0058 },
     map: [[69, 50], [96, 50], [96, 94], [69, 94]],
     city: {
-      id: 'undercity', name: 'Undercity', seed: 4404, cols: 10, rows: 8,
-      spacingX: [85, 125], spacingZ: [80, 115], removeEdges: 0.14, elevation: 1.5, hillScale: 260, arenaMin: 150,
-      lots: { alley: 4, construction: 2, parking: 1 },
-      buildings: 'block', heights: [10, 26], features: ['overpass'],
-      look: { building: '#6a7a6a', buildingTex: 'building', lamp: '#7aff9a', barrier: '#a0ffb0', signs: 0.35, lot: '#3a443a', neon: ['#39ff14', '#05d9e8'] },
+      id: 'undercity', name: 'Undercity', seed: 4404, cols: 12, rows: 9,
+      spacingX: [85, 128], spacingZ: [80, 118], removeEdges: 0.15, elevation: 1.5, hillScale: 260,
+      sites: [
+        { kind: 'arena', name: 'The Sump', sizes: GROUND, min: 150 },
+        { kind: 'arena', name: 'Pillar Hall', sizes: GROUND, min: 150 },
+        { kind: 'market', name: 'Black Market', sizes: [[2, 1], [1, 2]] },
+      ],
+      lots: { alley: 6, construction: 2, parking: 1, tanks: 3, yard: 3 },
+      buildings: 'block', heights: [10, 26], features: ['overpass', 'tunnels'], ramshackle: true,
+      look: { building: '#6a7a6a', buildingTex: 'building', lamp: '#7aff9a', barrier: '#a0ffb0', signs: 0.7, lot: '#3a443a', neon: ['#39ff14', '#05d9e8', '#ff2a6d'], road: '#7a8a72', roadGloss: 1.3, walk: '#6a7666' },
     },
     events: [
-      { key: 'sprint', type: 'sprint', name: 'Tunnel Blackout', route: { kind: 'sprint', seed: 1, length: 3200 }, cars: 6, purse: 3200, modifiers: ['blackout'] },
-      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Sump Brawl', route: { kind: 'arena' }, cars: 6, timeLimit: 120, purse: 3000, modifiers: ['oneHit'] },
-      { key: 'circuit', type: 'circuit', name: 'Underpass Loop', route: { kind: 'circuit', seed: 3, cells: 7 }, cars: 6, laps: 3, purse: 3400, modifiers: ['acidRain'] },
-      { key: 'rival', type: 'circuit', name: 'Rival: Low Road', route: { kind: 'circuit', seed: 4, cells: 6 }, cars: 5, laps: 3, purse: 3800, rival: true },
+      { key: 'sprint', type: 'sprint', name: 'Tunnel Blackout', desc: 'From the black market through the tunnels, lights out.', route: { kind: 'sprint', seed: 1, length: 3200, from: 'market' }, cars: 6, purse: 3200, modifiers: ['blackout'] },
+      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Sump Brawl', desc: 'The Sump: a drained lot under the deck.', route: { kind: 'arena', site: 0 }, cars: 6, timeLimit: 120, purse: 3000, modifiers: ['oneHit'] },
+      { key: 'circuit', type: 'circuit', name: 'Underpass Loop', desc: 'Round the black market, under the deck and back.', route: { kind: 'circuit', seed: 3, cells: 7, around: 'market' }, cars: 6, laps: 3, purse: 3400, modifiers: ['acidRain'] },
+      { key: 'rival', type: 'circuit', name: 'Rival: Low Road', desc: 'A tight loop through the tunnels and alleys.', route: { kind: 'circuit', seed: 4, cells: 6 }, cars: 5, laps: 3, purse: 3800, rival: true },
     ],
-    boss: { key: 'boss', type: 'arena', mode: 'lastStanding', name: 'Boss: Hammer', route: { kind: 'arena' }, cars: 5, timeLimit: 240, purse: 5500, driver: 'hammer' },
+    boss: { key: 'boss', type: 'arena', mode: 'lastStanding', name: 'Boss: Hammer', desc: 'Hammer waits in Pillar Hall.', route: { kind: 'arena', site: 1 }, cars: 5, timeLimit: 240, purse: 5500, driver: 'hammer' },
   },
   {
     id: 'spire', name: 'Corporate Spire', tier: 4, faction: 'Syncorp', color: '#b04dff',
-    blurb: 'Mega-towers and corporate plazas around the Spire itself. Win here and the championship is yours.',
-    theme: { haze: '#180a2e', fog: 0.0033 },
+    blurb: 'Downtown: pale stone monoliths trimmed in gold, grand plazas, boulevards, Central Park and the Spire itself. Win here and the championship is yours.',
+    theme: { haze: '#1c160c', fog: 0.0033 },
     map: [[26, 6], [58, 6], [60, 36], [30, 36]],
     city: {
-      id: 'spire', name: 'Corporate Spire', seed: 5505, cols: 7, rows: 6,
-      spacingX: [150, 200], spacingZ: [140, 185], removeEdges: 0.04, elevation: 3, hillScale: 320, arenaMin: 160,
+      id: 'spire', name: 'Corporate Spire', seed: 5505, cols: 9, rows: 7,
+      spacingX: [150, 210], spacingZ: [140, 190], removeEdges: 0.04, elevation: 3, hillScale: 320,
+      sites: [
+        { kind: 'arena', name: 'Syncorp Forecourt', sizes: [[2, 1], [1, 2], [2, 2]], min: 160 },
+        { kind: 'park', name: 'Central Park', sizes: [[3, 2], [2, 2]], where: 'centre' },
+        { kind: 'plaza', name: 'Spire Plaza', sizes: [[2, 1], [1, 2]], where: 'centre' },
+      ],
       lots: { plaza: 4, construction: 1, parking: 1, alley: 1 },
-      buildings: 'mega', heights: [70, 220], features: ['spire'],
-      look: { building: '#8a7ab8', buildingTex: 'glass', lamp: '#e0c8ff', barrier: '#e8d0ff', signs: 0.25, lot: '#5a5070', neon: ['#b04dff', '#ff2a6d'] },
+      buildings: 'monolith', heights: [60, 200], features: ['spire'], streetTrees: true,
+      look: { building: '#d8d0c0', buildingTex: 'building', lamp: '#ffe0a0', barrier: '#fff0d8', signs: 0.1, lot: '#8a8478', neon: ['#ffcc55', '#fff4d0'], road: '#d8d4d0', roadGloss: 0.3, walk: '#e8e2d8' },
     },
     events: [
-      { key: 'circuit', type: 'circuit', name: 'Spire Grand Prix', route: { kind: 'circuit', seed: 1, cells: 6 }, cars: 8, laps: 3, purse: 5200 },
-      { key: 'sprint', type: 'sprint', name: 'Executive Sprint', route: { kind: 'sprint', seed: 2, length: 3600 }, cars: 8, purse: 4800 },
-      { key: 'arena', type: 'arena', mode: 'takedowns', name: 'Boardroom Brawl', route: { kind: 'arena' }, cars: 6, timeLimit: 150, purse: 5000, modifiers: ['weaponsLate'] },
-      { key: 'rival', type: 'sprint', name: 'Rival: Final Run', route: { kind: 'sprint', seed: 4, length: 3600 }, cars: 6, purse: 6000, rival: true },
+      { key: 'circuit', type: 'circuit', name: 'Spire Grand Prix', desc: 'Round Spire Plaza between the mega-towers.', route: { kind: 'circuit', seed: 1, cells: 6, around: 'plaza' }, cars: 8, laps: 3, purse: 5200 },
+      { key: 'sprint', type: 'sprint', name: 'Executive Sprint', desc: 'From the Central Park gates across downtown.', route: { kind: 'sprint', seed: 2, length: 3600, from: 'park' }, cars: 8, purse: 4800 },
+      { key: 'arena', type: 'arena', mode: 'takedowns', name: 'Boardroom Brawl', desc: 'The Syncorp forecourt, closed to the public.', route: { kind: 'arena', site: 0 }, cars: 6, timeLimit: 150, purse: 5000, modifiers: ['weaponsLate'] },
+      { key: 'rival', type: 'sprint', name: 'Rival: Final Run', desc: 'Across downtown to Spire Plaza.', route: { kind: 'sprint', seed: 4, length: 3600, to: 'plaza' }, cars: 6, purse: 6000, rival: true },
     ],
-    boss: { key: 'boss', type: 'circuit', name: 'Championship: Nova', route: { kind: 'circuit', seed: 5, cells: 8 }, cars: 8, laps: 3, purse: 12000, driver: 'nova' },
+    boss: { key: 'boss', type: 'circuit', name: 'Championship: Nova', desc: 'The championship: the long loop round Central Park.', route: { kind: 'circuit', seed: 5, cells: 9, around: 'park' }, cars: 8, laps: 3, purse: 12000, driver: 'nova' },
   },
 ];
 
@@ -121,7 +155,7 @@ export const MODIFIER_LABELS = {
   blackout: 'Blackout: lights matter',
 };
 
-const routeKey = (r) => (r.kind === 'arena' || r.kind === 'drag' || r.kind === 'roam' ? r.kind : `${r.kind}-${r.seed}`);
+const routeKey = (r) => (r.kind === 'arena' ? `arena-${r.site || 0}` : r.kind === 'drag' || r.kind === 'roam' ? r.kind : `${r.kind}-${r.seed}`);
 const venueFor = (district, route) => `city:${district.id}:${routeKey(route)}`;
 
 // Full event definitions for a district (what RaceScreen runs).
@@ -147,16 +181,18 @@ export function districtEvents(district) {
 const RUST = DISTRICTS[0];
 export const HOME_EVENTS = [
   {
-    id: 'free-drive', type: 'free', name: 'Free Drive', cars: 1, purse: 0, entryFee: 0, district: 'rustline',
-    route: { kind: 'roam' }, venue: venueFor(RUST, { kind: 'roam' }), city: RUST.city,
-    desc: 'The whole of Rustline to yourself. No barriers, no clock.',
-  },
-  {
     id: 'back-alley', type: 'sprint', name: 'Back-alley Sprint', cars: 4, purse: 350, entryFee: 0, tier: 0, district: 'rustline',
     route: { kind: 'sprint', seed: 7, length: 2400 }, venue: venueFor(RUST, { kind: 'sprint', seed: 7 }), city: RUST.city,
     desc: 'Free entry, small purse. Always open.',
   },
 ];
+
+// Free roam in a district: all of it to yourself, no barriers, no clock.
+export const roamEvent = (d) => ({
+  id: `roam-${d.id}`, type: 'free', name: `Free Roam: ${d.name}`, cars: 1, purse: 0, entryFee: 0, district: d.id,
+  route: { kind: 'roam' }, venue: venueFor(d, { kind: 'roam' }), city: d.city,
+  desc: 'The whole district to yourself. No barriers, no clock.',
+});
 
 export const districtUnlocked = (career, i) => i <= (career.district || 0);
 

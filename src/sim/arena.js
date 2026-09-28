@@ -13,6 +13,7 @@
 import { yawFromDirection } from './math.js';
 
 const WALL_DIST = 1000;
+const GRID = 16; // obstacle grid cell size (m)
 
 export function buildArena(def) {
   return new Arena(def);
@@ -38,6 +39,19 @@ class Arena {
     this.wallDist = WALL_DIST;
     this.minY = def.minY ?? this.y0;
     this.heightAt = def.heightAt || null; // free roam: follows the district's hills (world y)
+    this.holes = def.holes || [];
+    if (def.obstacles.length > 64) {
+      this.grid = new Map();
+      for (const o of def.obstacles) {
+        for (let a = Math.floor((o.x - o.hw) / GRID); a <= Math.floor((o.x + o.hw) / GRID); a++) {
+          for (let b = Math.floor((o.z - o.hd) / GRID); b <= Math.floor((o.z + o.hd) / GRID); b++) {
+            const k = a * 100003 + b;
+            if (!this.grid.has(k)) this.grid.set(k, []);
+            this.grid.get(k).push(o);
+          }
+        }
+      }
+    }
     this.count = 1;
     this.length = 1;
     this.step = 1;
@@ -64,8 +78,15 @@ class Arena {
     return 0;
   }
 
-  // Ramp height and surface normal at arena-local (x, z).
+  // Ground height and normal at arena-local (x, z): holes (water, the gaps
+  // between rooftops), then ramps, then the floor (flat, or the district's
+  // hills in free roam).
   ground(x, z) {
+    const base = this.heightAt ? this.heightAt(x + this.cx, z + this.cz) - this.y0 : 0;
+    for (const hl of this.holes) {
+      const r = hl.r;
+      if (x > r[0] && x < r[1] && z > r[2] && z < r[3]) return { h: base - hl.drop, nx: 0, ny: 1, nz: 0 };
+    }
     for (const r of this.def.ramps) {
       const dx = x - r.x;
       const dz = z - r.z;
@@ -74,19 +95,34 @@ class Arena {
       if (u >= 0 && u <= r.len && Math.abs(v) <= r.width / 2) {
         const slope = r.height / r.len;
         const n = Math.hypot(slope, 1);
-        return { h: (r.base || 0) + slope * u, nx: (-r.dirX * slope) / n, ny: 1 / n, nz: (-r.dirZ * slope) / n };
+        return { h: base + (r.base || 0) + slope * u, nx: (-r.dirX * slope) / n, ny: 1 / n, nz: (-r.dirZ * slope) / n };
       }
     }
     if (this.heightAt) {
       const wx = x + this.cx;
       const wz = z + this.cz;
-      const h = this.heightAt(wx, wz);
       const gx = (this.heightAt(wx + 1, wz) - this.heightAt(wx - 1, wz)) / 2;
       const gz = (this.heightAt(wx, wz + 1) - this.heightAt(wx, wz - 1)) / 2;
       const n = Math.hypot(gx, 1, gz);
-      return { h: h - this.y0, nx: -gx / n, ny: 1 / n, nz: -gz / n };
+      return { h: base, nx: -gx / n, ny: 1 / n, nz: -gz / n };
     }
     return { h: 0, nx: 0, ny: 1, nz: 0 };
+  }
+
+  // Obstacles near arena-local (x, z): all of them, or (free roam has
+  // thousands) the ones in the grid cells around the point.
+  nearObstacles(x, z) {
+    if (!this.grid) return this.def.obstacles;
+    const i = Math.floor(x / GRID);
+    const j = Math.floor(z / GRID);
+    const out = [];
+    for (let a = i - 1; a <= i + 1; a++) {
+      for (let b = j - 1; b <= j + 1; b++) {
+        const list = this.grid.get(a * 100003 + b);
+        if (list) for (const o of list) out.push(o);
+      }
+    }
+    return out;
   }
 
   query(wx, wz, hint, y) {
@@ -124,7 +160,7 @@ class Arena {
         }
       }
     };
-    for (const o of this.def.obstacles) {
+    for (const o of this.nearObstacles(x, z)) {
       if (ly !== undefined && o.h && ly > (o.y || 0) + o.h + 0.3) continue; // flying over it
       boxWall(o.x, o.z, o.hw, o.hd);
     }

@@ -13,9 +13,12 @@ export const DEFAULT_SETTINGS = {
   autoAccelerate: false,
   touchControls: 'auto', // 'auto' | 'on' | 'off'
   showFps: true,
+  hudSize: 1, // HUD scale multiplier
   units: 'kmh', // 'kmh' | 'mph'
   speedFx: true, // speed blur, streaks, FOV and shake
   godMode: false, // the player's car takes no damage
+  unlockAll: false, // every part at every quality in the spares (undone when turned off)
+  roamAll: false, // free roam in every district, not just the unlocked ones
 };
 
 export function loadSettings() {

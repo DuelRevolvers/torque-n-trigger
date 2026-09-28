@@ -36,7 +36,7 @@ export function shopStock(career, district, kind) {
 
 export const buyPrice = (part, kind) => Math.round(partValue(part) * SHOP_KINDS[kind].priceMul * (0.5 + part.condition / 200));
 export const sellPrice = (part) => Math.round(partValue(part) * 0.4 * (0.4 + (0.6 * part.condition) / 100));
-export const repairCost = (part) => Math.round(partValue(part) * 0.5 * ((100 - part.condition) / 100));
+export const repairCost = (part) => Math.round(partValue(part) * 0.38 * ((100 - part.condition) / 100));
 
 export function buyPart(career, district, kind, uid) {
   const part = shopStock(career, district, kind).find((p) => p.uid === uid);

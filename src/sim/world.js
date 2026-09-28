@@ -119,7 +119,10 @@ export function respawnCar(world, id, { back = 0, index = null } = {}) {
     return;
   }
   const from = index ?? (car.trackIndex >= 0 ? car.trackIndex : 0);
-  const i = back ? track.indexAtDistance(Math.max(0, track.s[from] - back)) : from;
+  let i = back ? track.indexAtDistance(Math.max(0, track.s[from] - back)) : from;
+  // Never put a car back in (or right before) a gap between rooftops.
+  const gap = track.gaps?.find((g) => track.s[i] > g.s0 - g.len - 5 && track.s[i] < g.s1 + 5);
+  if (gap) i = track.indexAtDistance(Math.max(0, gap.s0 - gap.len - 60));
   placeCar(car, params, poseAt(track, i));
   car.trackIndex = i;
   car.trackS = track.s[i];

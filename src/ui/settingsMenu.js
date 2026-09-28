@@ -14,8 +14,11 @@ const OPTIONS = [
   { key: 'touchControls', label: 'Touch controls', values: [['auto', 'Auto'], ['on', 'On'], ['off', 'Off']] },
   { key: 'autoAccelerate', label: 'Auto-accelerate', values: [[false, 'Off'], [true, 'On']] },
   { key: 'showFps', label: 'Show FPS', values: [[true, 'On'], [false, 'Off']] },
+  { key: 'hudSize', label: 'HUD size', values: [[1, '100%'], [1.25, '125%'], [1.5, '150%'], [0.75, '75%']] },
   { key: 'units', label: 'Speed units', values: [['kmh', 'KM/H'], ['mph', 'MPH']] },
   { key: 'godMode', label: 'God mode', values: [[false, 'Off'], [true, 'On']] },
+  { key: 'unlockAll', label: 'Unlock everything', values: [[false, 'Off'], [true, 'On']] },
+  { key: 'roamAll', label: 'Free roam: all districts', values: [[false, 'Off'], [true, 'On']] },
 ];
 
 export class SettingsMenu {

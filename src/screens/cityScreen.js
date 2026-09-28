@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DISTRICTS, HOME_EVENTS, MODIFIER_LABELS, districtEvents, districtUnlocked, bossProgress } from '../career/districts.js';
+import { DISTRICTS, HOME_EVENTS, MODIFIER_LABELS, districtEvents, districtUnlocked, bossProgress, roamEvent } from '../career/districts.js';
 import { SHOP_KINDS, shopStock, buyPrice, sellPrice, buyPart, sellPart } from '../career/shop.js';
 import { saveCareer, activeCar } from '../career/career.js';
 import { computeBuild, resolvePart } from '../parts/build.js';
@@ -101,7 +101,7 @@ export class CityScreen {
   }
 
   allEvents() {
-    return [...HOME_EVENTS, ...DISTRICTS.flatMap((d) => districtEvents(d))];
+    return [...HOME_EVENTS, ...DISTRICTS.map(roamEvent), ...DISTRICTS.flatMap((d) => districtEvents(d))];
   }
 
   enterEvent(id) {
@@ -146,7 +146,8 @@ export class CityScreen {
     if (this.selected === 'home') {
       return `<h2>Home</h2><div class="hint">Your garage and the back streets. These are always open.</div>
         <button class="btn primary wide garage-alt">GARAGE</button>
-        <h3>Back alley</h3>${HOME_EVENTS.map((e, k) => this.eventCard(e, computed.ok, k + 1)).join('')}`;
+        <h3>Back alley</h3>${HOME_EVENTS.map((e, k) => this.eventCard(e, computed.ok, k + 1)).join('')}
+        <h3>Free roam</h3>${DISTRICTS.filter((d, i) => this.app.settings.roamAll || districtUnlocked(career, i)).map((d) => this.eventCard(roamEvent(d), computed.ok)).join('')}`;
     }
     const d = DISTRICTS[this.selected];
     if (this.view.startsWith('shop:')) return this.shopHtml(d, this.view.slice(5));
@@ -296,7 +297,7 @@ export class CityScreen {
     const open = districtUnlocked(career, i);
     const poly = d.map.map(([x, y]) => P(x, y));
     const map = districtMap(d.city);
-    const b = map.bounds;
+    const b = map.drawBounds || map.bounds;
     const pad = SETBACK + 14;
     const at = (x, z) => bilinear(poly, (x - b.minX + pad) / (b.maxX - b.minX + 2 * pad), (z - b.minZ + pad) / (b.maxZ - b.minZ + 2 * pad));
     const outline = () => {
@@ -319,6 +320,8 @@ export class CityScreen {
     const lotColor = {
       buildings: mix(d.color, '#1c1828', 0.78), alley: mix(d.color, '#1c1828', 0.72), yard: '#4a3028',
       construction: '#5c3e1e', plaza: '#4a4660', parking: '#2a2832', arena: mix(d.color, '#0b0814', 0.45),
+      park: '#1f5a2a', housing: '#2e4030', quad: mix(d.color, '#1c1828', 0.68), market: '#6a2a58', casino: mix(d.color, '#1c1828', 0.35),
+      railyard: '#3e3630', tanks: '#44444c',
     };
     for (const c of map.cells) {
       const [x0, x1, z0, z1] = c.lot;
