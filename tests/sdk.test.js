@@ -100,6 +100,35 @@ test('sdk: an edited district is played as edited, and the built-in one stays as
   assert.equal(strip.city.edits, undefined, 'the built-in district is untouched');
 });
 
+test('sdk: sculpted ground, painted dirt and water are what free roam drives on', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { brush } = await import('../src/sdk/brush.js');
+  const strip = byId('strip');
+  const own = districtMap(strip.city);
+  const s = new Session(docFromDistrict(strip));
+  // A hill raised for a second on The Strip; dirt painted across it; water beside.
+  const st = s.stroke();
+  for (let k = 0; k < 60; k++) brush(st, 'raise', 20, 60, { radius: 12, strength: 1, dt: 1 / 60 });
+  brush(st, 'paint', 20, 60, { radius: 6, kind: 'dirt' });
+  brush(st, 'paint', 80, 60, { radius: 5, kind: 'water' });
+  assert.ok(st.commit());
+  const rise = s.map.heightAt(20, 60) - own.heightAt(20, 60);
+  assert.ok(rise > 3 && rise < 4.5, `raised ${rise}`);
+  assert.ok(near(s.map.heightAt(40, 60), own.heightAt(40, 60)), 'nothing beyond the brush');
+  // Played as the game plays it: the saved document, in free roam.
+  const d = districtFromDoc(parseDoc(serializeDoc(s.doc)));
+  const map = districtMap(d.city);
+  assert.ok(near(map.heightAt(20, 60), s.map.heightAt(20, 60)));
+  const arena = buildArena(cityVenue(d.city, { kind: 'roam' }).def);
+  assert.equal(arena.surfaceAt(20 - arena.cx, 60 - arena.cz), 2, 'dirt is off-road');
+  assert.equal(arena.surfaceAt(20 - arena.cx, 30 - arena.cz), 0, 'the street is still road');
+  assert.ok(arena.isHole(80, 60), 'water to fall into');
+  assert.ok(!arena.isHole(20, 60));
+  // Undone: the ground is the district's own again.
+  assert.ok(s.undo());
+  assert.ok(near(s.map.heightAt(20, 60), own.heightAt(20, 60)));
+});
+
 test('sdk: street and ground pieces stay put, and edits that lost their object are reported', () => {
   const strip = byId('strip');
   const map = districtMap(strip.city);

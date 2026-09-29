@@ -17,6 +17,7 @@
 import * as G from './geom2d.js';
 import { roofTerrain, densify, helix, roofCrossings } from './planRoofMap.js';
 import { underTerrain, underStreets } from './planUnderMap.js';
+import { sculptTerrain } from './ground.js';
 
 export const WIDTHS = { lane: 7, court: 10, street: 12, avenue: 20 };
 export const SIDEWALK = 4;
@@ -174,7 +175,8 @@ export function planMap(style) {
   const P = style.plan;
   const nb = G.polyBounds(P.boundary);
   // A rooftop district (decks at heights) has its own ground.
-  const terrain = P.decks ? roofTerrain(P) : P.pit || P.drain ? underTerrain(P) : planTerrain(P);
+  // (Sculpted in the T&T SDK: its edits add heights to the ground, sim/ground.js.)
+  const terrain = sculptTerrain(P.decks ? roofTerrain(P) : P.pit || P.drain ? underTerrain(P) : planTerrain(P), style.edits?.terrain);
   const { heightAt } = terrain;
 
   const nodes = [];

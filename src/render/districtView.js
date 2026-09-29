@@ -11,6 +11,7 @@ import { buildAuthoredStructures } from './arenaView.js';
 import { buildPlanDistrictView } from './planView.js';
 import { distantSpire } from './spireLandmark.js';
 import { itemDrawer } from './itemCapture.js';
+import { paintView } from './groundPaint.js';
 
 // A whole city district, built once and shared by every event held there:
 // streets and sidewalks in the district's own surface (roof decks with gaps to
@@ -72,6 +73,8 @@ const SHACK_COLORS = ['#6a5a48', '#4a6a6a', '#7a4a3a', '#5a5a62', '#6a6a3a', '#3
 // A district, and the Spire on its skyline (every district but the Spire's own).
 export function buildDistrictView(map, tex) {
   const group = districtViewOf(map, tex);
+  const paint = paintView(map, tex); // ground painted in the T&T SDK
+  if (paint) group.add(paint);
   const far = distantSpire(map.style);
   if (far) {
     group.add(far);

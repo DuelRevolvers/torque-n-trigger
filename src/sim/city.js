@@ -16,6 +16,7 @@ import { yawFromDirection } from './math.js';
 import { districtLayout } from './cityLayout.js';
 import { authoredGridMap } from './authoredMap.js';
 import { planMap } from './planMap.js';
+import { sculptMap, paintOf } from './ground.js';
 import { planTrack, planRoam } from './planRoute.js';
 
 export const STREET = { halfWidth: 8, curbWidth: 1.2, shoulderWidth: 4 };
@@ -36,10 +37,13 @@ export function districtMap(style) {
   return maps.get(style);
 }
 
+// The ground paint from the T&T SDK (sim/ground.js), if any.
+const painted = (map, style) => Object.assign(map, { paint: style.edits?.paint || null });
+
 function generateMap(style) {
   // Authored districts (docs/districts) are built from their data, not generated.
-  if (style.plan) return planMap(style);
-  if (style.authored) return authoredGridMap(style);
+  if (style.plan) return painted(planMap(style), style);
+  if (style.authored) return painted(sculptMap(authoredGridMap(style), style.edits?.terrain), style);
   const rng = makeRng(style.seed);
   const span = ([a, b]) => a + rng() * (b - a);
   const { cols, rows } = style;
@@ -1373,7 +1377,13 @@ function authoredRoute(map, style, route) {
 //   around? (circuit: site kind), from?/to? (sprint: site kind or 'pier'), site? (arena: event ground index) }
 export function cityVenue(style, route) {
   const map = districtMap(style);
-  if (route.kind === 'roam') return { kind: 'arena', def: map.plan ? planRoam(map) : map.authored ? authoredRoam(map) : cityRoam(map) };
+  if (route.kind === 'roam') {
+    const def = map.plan ? planRoam(map) : map.authored ? authoredRoam(map) : cityRoam(map);
+    // Painted ground: its grip, and water to fall into.
+    const paint = paintOf(map.paint);
+    if (paint) Object.assign(def, { paintAt: paint.paintAt, waterAt: paint.waterAt });
+    return { kind: 'arena', def };
+  }
   if (route.kind === 'arena') {
     const site = route.site || 0;
     const spec = style.arenas?.[map.arenas[site]?.name];

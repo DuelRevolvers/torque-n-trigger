@@ -40,6 +40,12 @@
       #left, #right { background: var(--panel); overflow-y: auto; padding: 8px; }
       #left { grid-area: left; border-right: 1px solid var(--line); }
       #right { grid-area: right; border-left: 1px solid var(--line); }
+      #tools { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-bottom: 8px; }
+      #tools button { padding: 3px 4px; }
+      #brush-opts { display: grid; gap: 6px; margin-bottom: 10px; padding: 6px; border: 1px solid var(--line); border-radius: 3px; }
+      #brush-opts label { display: grid; grid-template-columns: 62px 1fr 34px; gap: 6px; }
+      #brush-opts select { grid-column: 2 / 4; }
+      #brush-opts input[type=range] { width: 100%; }
       #search { width: 100%; margin-bottom: 6px; }
       #cat h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
       .entry { display: flex; justify-content: space-between; gap: 6px; padding: 3px 6px; border-radius: 3px; cursor: grab; }
@@ -103,6 +109,20 @@
       <span id="title"></span>
     </div>
     <div id="left">
+      <div id="tools">
+        <button data-tool="select" class="on" title="Select, move and place objects (1)">Select</button>
+        <button data-tool="raise" title="Raise the ground (2)">Raise</button>
+        <button data-tool="lower" title="Lower the ground (3)">Lower</button>
+        <button data-tool="smooth" title="Smooth the ground (4)">Smooth</button>
+        <button data-tool="flatten" title="Flatten to the height where you start (5)">Flatten</button>
+        <button data-tool="paint" title="Paint the ground: grip in free roam (6)">Paint</button>
+        <button data-tool="erase" title="Erase paint (7)">Erase</button>
+      </div>
+      <div id="brush-opts" hidden>
+        <label>Size <input type="range" id="radius" min="2" max="60" value="12" /><span id="radius-v"></span></label>
+        <label>Strength <input type="range" id="strength" min="0.1" max="2" step="0.1" value="0.6" /><span id="strength-v"></span></label>
+        <label id="kind-row">Paint <select id="kind"><option value="dirt">Dirt (off-road)</option><option value="grass">Grass (off-road)</option><option value="sand">Sand</option><option value="road">Road (full grip)</option><option value="water">Water (fall in)</option></select></label>
+      </div>
       <input id="search" placeholder="Search objects" />
       <div id="cat"></div>
     </div>

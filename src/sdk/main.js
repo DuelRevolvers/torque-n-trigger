@@ -9,6 +9,7 @@ import { docFromDistrict, serializeDoc, parseDoc, baseChanged } from '../content
 import { canMove } from '../sim/layoutEdits.js';
 import { Session, footBox } from './session.js';
 import { catalogue, CATEGORIES } from './catalogue.js';
+import { brush } from './brush.js';
 import { saveOverride, listOverrides, removeOverride, setOverrideOn, shippedMap } from '../content/store.js';
 
 // The T&T SDK (Studio): opens a district as a map document; select, move,
@@ -40,6 +41,13 @@ scene.add(sun);
 const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 9000);
 const overlay = new THREE.Group(); // selection, hover and ghost boxes
 scene.add(overlay);
+const preview = new THREE.Group(); // the ground as a brush stroke has it so far
+scene.add(preview);
+const ring = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x05d9e8, depthTest: false, transparent: true, fog: false }));
+ring.renderOrder = 11;
+ring.visible = false;
+scene.add(ring);
+const PAINT_COLOR = { dirt: 0x9a7a58, grass: 0x4a9a58, sand: 0xe0cc98, road: 0x9894a8, water: 0x2a6ab8 };
 
 let session = null;
 let view = null; // the district as drawn
@@ -52,6 +60,9 @@ let ghostAt = null; // where it would go: { x, z }
 let drag = null; // { key, sx, sy, ox, oz, x, z, yaw, moved }
 let flying = false;
 let panning = null;
+let tool = 'select';
+let stroke = null; // a ground brush stroke under way (Session.stroke())
+let brushAt = null; // where the brush is on the ground
 let rebuildTimer = 0;
 const cam = { x: 0, y: 300, z: 400, yaw: Math.PI, pitch: -0.6, top: null };
 const keys = new Set();
@@ -74,7 +85,8 @@ function open(doc) {
   setBusy(`Opening ${doc.name}…`);
   setTimeout(() => {
     session = new Session(doc);
-    selected = hovered = placing = drag = ghostAt = null;
+    selected = hovered = placing = drag = ghostAt = stroke = null;
+    clearGroup(preview);
     cat = catalogue([...session.base.values()]);
     $('district').value = doc.base || '';
     const b = session.map.bounds || { minX: -500, maxX: 500, minZ: -500, maxZ: 500 };
@@ -320,6 +332,117 @@ function showOverlay() {
   }
 }
 
+// --- Ground tools -----------------------------------------------------------------
+
+const TOOL_NAMES = { raise: 'Raise', lower: 'Lower', smooth: 'Smooth', flatten: 'Flatten', paint: 'Paint', erase: 'Erase paint' };
+const brushOpts = (dt) => ({ radius: Number($('radius').value), strength: Number($('strength').value), kind: $('kind').value, target: stroke?.target, dt });
+
+function setTool(t) {
+  tool = t;
+  for (const b of document.querySelectorAll('#tools button')) b.classList.toggle('on', b.dataset.tool === t);
+  $('brush-opts').hidden = t === 'select';
+  $('kind-row').hidden = t !== 'paint';
+  if (t !== 'select') {
+    placing = null;
+    ghostAt = null;
+    drag = null;
+    hovered = null;
+    renderCatalogue();
+  }
+  showBrush();
+  showOverlay();
+  hint();
+}
+
+function clearGroup(g) {
+  for (const o of [...g.children]) {
+    g.remove(o);
+    dispose(o);
+  }
+}
+
+// The brush's edge on the ground.
+function showBrush() {
+  if (tool === 'select' || !brushAt || !session) {
+    ring.visible = false;
+    return;
+  }
+  const R = Number($('radius').value);
+  const hAt = stroke ? stroke.heightAt : H;
+  const pts = [];
+  for (let k = 0; k < 48; k++) {
+    const a = (k / 48) * Math.PI * 2;
+    const x = brushAt.x + Math.cos(a) * R;
+    const z = brushAt.z + Math.sin(a) * R;
+    pts.push(x, hAt(x, z) + 0.3, z);
+  }
+  ring.geometry.dispose();
+  ring.geometry = new THREE.BufferGeometry();
+  ring.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  ring.material.color.set(tool === 'paint' ? PAINT_COLOR[$('kind').value] : tool === 'erase' ? 0xff2a6d : 0x05d9e8);
+  ring.visible = true;
+}
+
+// The stroke so far: reshaped ground as a wire grid, paint as coloured cells.
+function showPreview() {
+  clearGroup(preview);
+  if (!stroke) return;
+  const [x0, x1, z0, z1] = stroke.box;
+  if (tool === 'paint') {
+    const c = stroke.paint.cell;
+    const by = {};
+    for (const [k, kind] of Object.entries(stroke.paint.s)) {
+      const [i, j] = k.split(',').map(Number);
+      if ((i + 1) * c < x0 || i * c > x1 || (j + 1) * c < z0 || j * c > z1) continue;
+      (by[kind] ??= []).push(i * c, j * c);
+    }
+    for (const [kind, list] of Object.entries(by)) {
+      const pos = [];
+      for (let q = 0; q < list.length; q += 2) {
+        const [x, z] = [list[q], list[q + 1]];
+        const y = (px, pz) => H(px, pz) + 0.2;
+        pos.push(x, y(x, z), z, x + c, y(x + c, z + c), z + c, x + c, y(x + c, z), z, x, y(x, z), z, x, y(x, z + c), z + c, x + c, y(x + c, z + c), z + c);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      preview.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: PAINT_COLOR[kind], transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide, fog: false })));
+    }
+    return;
+  }
+  if (tool === 'erase') return;
+  const step = Math.max(stroke.terrain.cell, Math.max(x1 - x0, z1 - z0) / 80);
+  const nx = Math.max(1, Math.ceil((x1 - x0) / step));
+  const nz = Math.max(1, Math.ceil((z1 - z0) / step));
+  const pos = [];
+  const idx = [];
+  for (let j = 0; j <= nz; j++) {
+    for (let i = 0; i <= nx; i++) {
+      const x = x0 + i * step;
+      const z = z0 + j * step;
+      pos.push(x, stroke.heightAt(x, z) + 0.2, z);
+      if (i < nx && j < nz) {
+        const k = j * (nx + 1) + i;
+        idx.push(k, k + nx + 1, k + 1, k + 1, k + nx + 1, k + nx + 2);
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  preview.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x05d9e8, wireframe: true, transparent: true, opacity: 0.45, fog: false })));
+}
+
+function endStroke() {
+  const s = stroke;
+  stroke = null;
+  clearGroup(preview);
+  setBusy('Reshaping the ground…');
+  setTimeout(() => {
+    if (s.commit()) changed();
+    else setBusy(null);
+  }, 30);
+}
+
 // --- Selection and editing ---------------------------------------------------
 
 function select(key) {
@@ -464,7 +587,9 @@ function refresh() {
 function hint() {
   $('hint').textContent = !session
     ? 'Open a built-in district or a .ttmap file to start'
-    : placing
+    : tool !== 'select'
+      ? `${TOOL_NAMES[tool]}: hold the left button and move · [ ] size · 1 back to Select · Ctrl+Z undo`
+      : placing
     ? `Placing ${placing.name}: click to place (Shift: keep placing) · wheel or Q/E to turn · Alt: no snap · Esc to stop`
     : drag
       ? 'Wheel or Q/E to turn · Alt: no snap'
@@ -488,10 +613,24 @@ function renderCatalogue() {
 // --- Input ------------------------------------------------------------------------
 
 $('search').addEventListener('input', renderCatalogue);
+$('tools').addEventListener('click', (e) => {
+  const t = e.target.closest('button')?.dataset.tool;
+  if (t && session) setTool(t);
+});
+for (const id of ['radius', 'strength']) {
+  const show = () => ($(`${id}-v`).textContent = id === 'radius' ? `${$(id).value} m` : $(id).value);
+  $(id).addEventListener('input', () => {
+    show();
+    showBrush();
+  });
+  show();
+}
+$('kind').addEventListener('change', showBrush);
 $('cat').addEventListener('click', (e) => {
   const el = e.target.closest('.entry');
   if (!el || !session) return;
   const entry = cat.find((c) => c.id === el.dataset.id);
+  if (tool !== 'select') setTool('select');
   placing = placing === entry ? null : entry;
   placeYaw = 0;
   ghostAt = null;
@@ -502,6 +641,7 @@ $('cat').addEventListener('dragstart', (e) => {
   const el = e.target.closest('.entry');
   if (!el) return;
   e.dataTransfer.setData('text/plain', el.dataset.id);
+  if (tool !== 'select') setTool('select');
   placing = cat.find((c) => c.id === el.dataset.id);
   placeYaw = 0;
 });
@@ -537,6 +677,15 @@ canvas.addEventListener('mousedown', (e) => {
   }
   if (e.button !== 0) return;
   setRay(e);
+  if (tool !== 'select') {
+    const g = groundHit();
+    if (!g) return;
+    stroke = session.stroke();
+    stroke.target = stroke.heightAt(g.x, g.z); // (flatten: to here)
+    stroke.box = [g.x, g.x, g.z, g.z];
+    brushAt = g;
+    return;
+  }
   if (placing) {
     const g = groundHit();
     if (g) placeEntry(placing, g, e, false);
@@ -574,6 +723,11 @@ window.addEventListener('mousemove', (e) => {
   setRay(e);
   const g = groundHit();
   $('coords').textContent = g ? `x ${g.x.toFixed(1)}   z ${g.z.toFixed(1)}   ground ${g.y.toFixed(1)} m` : '';
+  if (tool !== 'select') {
+    brushAt = g;
+    showBrush();
+    return;
+  }
   if (drag) {
     if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
     drag.moved = true;
@@ -609,6 +763,10 @@ window.addEventListener('mouseup', (e) => {
   }
   if (e.button === 1) {
     panning = null;
+    return;
+  }
+  if (e.button === 0 && stroke) {
+    endStroke();
     return;
   }
   if (e.button === 0 && drag) {
@@ -666,6 +824,20 @@ window.addEventListener('keydown', (e) => {
   const [fx, fz] = flat();
   const [rx, rz] = right();
   switch (e.code) {
+    case 'Digit1':
+    case 'Digit2':
+    case 'Digit3':
+    case 'Digit4':
+    case 'Digit5':
+    case 'Digit6':
+    case 'Digit7':
+      setTool(['select', 'raise', 'lower', 'smooth', 'flatten', 'paint', 'erase'][Number(e.code.slice(5)) - 1]);
+      break;
+    case 'BracketLeft':
+    case 'BracketRight':
+      $('radius').value = Number($('radius').value) + (e.code === 'BracketLeft' ? -2 : 2);
+      $('radius').dispatchEvent(new Event('input'));
+      break;
     case 'Delete':
     case 'Backspace':
       removeSelected();
@@ -768,6 +940,14 @@ function frame(now) {
     cam.x += (f.x * az + rx * ax) * speed;
     cam.y += (f.y * az + ay) * speed;
     cam.z += (f.z * az + rz * ax) * speed;
+  }
+  if (stroke && brushAt) {
+    const o = brushOpts(dt);
+    brush(stroke, tool, brushAt.x, brushAt.z, o);
+    const b = stroke.box;
+    stroke.box = [Math.min(b[0], brushAt.x - o.radius), Math.max(b[1], brushAt.x + o.radius), Math.min(b[2], brushAt.z - o.radius), Math.max(b[3], brushAt.z + o.radius)];
+    showPreview();
+    showBrush();
   }
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;

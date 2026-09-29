@@ -63,7 +63,8 @@ export function docFromDistrict(d, now = new Date().toISOString()) {
 export const baseChanged = (doc, d) => !!doc.base && hashOf(districtData(d)) !== doc.baseHash;
 
 // Is there anything edited?
-export const hasEdits = (e) => !!e && ((e.remove?.length || 0) + Object.keys(e.move || {}).length + (e.add?.length || 0) > 0);
+export const hasEdits = (e) =>
+  !!e && ((e.remove?.length || 0) + Object.keys(e.move || {}).length + (e.add?.length || 0) + Object.keys(e.terrain?.dh || {}).length + Object.keys(e.paint?.s || {}).length > 0);
 
 // Problems with a document (an empty list if it's fine to open).
 export function validateDoc(doc) {

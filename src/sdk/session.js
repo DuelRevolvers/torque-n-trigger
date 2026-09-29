@@ -5,23 +5,31 @@ import { districtMap } from '../sim/city.js';
 import { baseLayout, setEdits } from '../sim/cityLayout.js';
 import { itemCentre } from '../sim/layoutEdits.js';
 import { districtFromDoc, emptyEdits, hasEdits } from '../content/mapDoc.js';
+import { CELL, sculptAt } from '../sim/ground.js';
 
 const r3 = (v) => Math.round(v * 1000) / 1000;
 
 export class Session {
   constructor(doc) {
     this.doc = doc;
-    // The district's own copy, built once without edits; edits are made on it.
-    this.district = districtFromDoc({ ...doc, edits: emptyEdits() });
-    this.map = districtMap(this.district.city);
-    this.base = new Map(baseLayout(this.map).items.map((it) => [it.key, it]));
     this.past = [];
     this.future = [];
     this.dirty = false;
+    this.groundKey = null;
     this.apply();
   }
 
   apply() {
+    // The district's own copy, built on its sculpted ground (again only when
+    // the ground changes: 0.1-2 s); object edits are made on it.
+    const e = this.doc.edits;
+    const ground = JSON.stringify([e.terrain || null, e.paint || null]);
+    if (ground !== this.groundKey) {
+      this.groundKey = ground;
+      this.district = districtFromDoc({ ...this.doc, edits: { ...emptyEdits(), terrain: e.terrain, paint: e.paint } });
+      this.map = districtMap(this.district.city);
+      this.base = new Map(baseLayout(this.map).items.map((it) => [it.key, it]));
+    }
     this.layout = setEdits(this.map, hasEdits(this.doc.edits) ? this.doc.edits : null);
     this.byKey = new Map(this.layout.items.map((it) => [it.key, it]));
   }
@@ -140,6 +148,38 @@ export class Session {
       if (!best || a < best.a) best = { a, it };
     }
     return best?.it.key ?? null;
+  }
+
+  // A ground brush stroke: works on copies of the sculpt and paint layers,
+  // then commit() makes it one step.
+  stroke() {
+    const e = this.doc.edits;
+    const copy = (layer, key) => ({ cell: layer?.cell || CELL, [key]: { ...(layer?.[key] || {}) } });
+    const s = { terrain: copy(e.terrain, 'dh'), paint: copy(e.paint, 's') };
+    const committed = sculptAt(e.terrain);
+    // The district's ground without any sculpting.
+    s.baseAt = (x, z) => this.map.heightAt(x, z) - (committed ? committed(x, z) : 0);
+    // The ground as the stroke has it so far (touch() after changing s.terrain).
+    let at = null;
+    s.touch = () => (at = null);
+    s.heightAt = (x, z) => {
+      at ??= sculptAt(s.terrain) || (() => 0);
+      return s.baseAt(x, z) + at(x, z);
+    };
+    s.commit = () =>
+      this.change((ed) => {
+        // (To the centimetre; what rounds to nothing is dropped.)
+        for (const [k, v] of Object.entries(s.terrain.dh)) {
+          const r = Math.round(v * 100) / 100;
+          if (r) s.terrain.dh[k] = r;
+          else delete s.terrain.dh[k];
+        }
+        if (Object.keys(s.terrain.dh).length) ed.terrain = s.terrain;
+        else delete ed.terrain;
+        if (Object.keys(s.paint.s).length) ed.paint = s.paint;
+        else delete ed.paint;
+      });
+    return s;
   }
 
   // An item's base height (world): its own, or the ground under its middle.

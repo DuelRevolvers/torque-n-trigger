@@ -16,8 +16,10 @@
 import { yawFromDirection } from './math.js';
 import { wetAt } from './sprinklers.js';
 import { floodAt, inSurge, sumpWetAt } from './flood.js';
+import { WATER_DROP } from './ground.js';
 
 const WALL_DIST = 1000;
+const WATER = { drop: WATER_DROP, respawn: true }; // painted water (def.waterAt)
 const GRID = 16; // obstacle grid cell size (m)
 
 export function buildArena(def) {
@@ -159,7 +161,7 @@ class Arena {
   holeAt(wx, wz) {
     const x = wx - this.cx;
     const z = wz - this.cz;
-    return this.holes.find((hl) => (hl.poly ? inPoly(x, z, hl.poly) : x > hl.r[0] && x < hl.r[1] && z > hl.r[2] && z < hl.r[3])) || null;
+    return this.holes.find((hl) => (hl.poly ? inPoly(x, z, hl.poly) : x > hl.r[0] && x < hl.r[1] && z > hl.r[2] && z < hl.r[3])) || (this.def.waterAt?.(wx, wz) ? WATER : null);
   }
 
   isHole(wx, wz) {
@@ -186,6 +188,7 @@ class Arena {
   // car at height ly), then the floor (flat, or the district's hills in free roam).
   ground(x, z, ly) {
     const base = this.heightAt ? this.heightAt(x + this.cx, z + this.cz) - this.y0 : 0;
+    if (this.def.waterAt?.(x + this.cx, z + this.cz)) return { h: base - WATER.drop, nx: 0, ny: 1, nz: 0 };
     for (const hl of this.holes) {
       const r = hl.r;
       if (hl.poly ? inPoly(x, z, hl.poly) : x > r[0] && x < r[1] && z > r[2] && z < r[3]) return { h: base - hl.drop, nx: 0, ny: 1, nz: 0 };
@@ -414,6 +417,8 @@ class Arena {
         break;
       }
     }
+    const painted = this.def.paintAt?.(x + this.cx, z + this.cz);
+    if (painted !== null && painted !== undefined) s = painted;
     if (s === 2 && this.sprinklers && this.wetAt(x + this.cx, z + this.cz)) return 4;
     if (this.flood) {
       const at = floodAt(this.flood, Math.round(this.time * 60));
