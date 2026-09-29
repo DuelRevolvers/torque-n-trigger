@@ -14,7 +14,11 @@ import { Hud } from './ui/hud.js';
 import { SettingsMenu } from './ui/settingsMenu.js';
 import { setCrtWarp } from './ui/crtWarp.js';
 import { PadNav } from './ui/padNav.js';
-import { loadCareer, clearCareer, saveCareer, unlockAll, relockAll } from './career/career.js';
+import { loadCareer, clearCareer, saveCareer, unlockAll, relockAll, activeCar } from './career/career.js';
+import { roamEvent } from './career/districts.js';
+import { districtFromDoc, migrateDoc } from './content/mapDoc.js';
+import { getVenue } from './sim/tracks/venues.js';
+import { generateStarters } from './parts/starters.js';
 import { StarterScreen } from './screens/starterScreen.js';
 import { GarageScreen } from './screens/garageScreen.js';
 import { RaceScreen } from './screens/raceScreen.js';
@@ -201,7 +205,25 @@ app.go = (...args) => {
   return goTo(...args);
 };
 syncUnlockAll();
-app.go('menu');
+
+// A test drive from the T&T SDK (sdk.html): free roam in the map it has open,
+// starting where its camera was looking, in the active car (or a starter).
+function testDrive() {
+  if (!new URLSearchParams(window.location.search).has('testdrive')) return null;
+  try {
+    const { doc, spawn } = JSON.parse(localStorage.getItem('tt-sdk:testdrive'));
+    const event = { ...roamEvent(districtFromDoc(migrateDoc(doc))), name: `Test drive: ${doc.name}` };
+    if (spawn) getVenue(event.venue, event).def.spawnAt = spawn;
+    const build = app.career ? activeCar(app.career).build : generateStarters(1)[0].build;
+    return { build, car: null, event };
+  } catch (err) {
+    console.error('T&T SDK test drive:', err);
+    return null;
+  }
+}
+const drive = testDrive();
+if (drive) app.go('race', drive);
+else app.go('menu');
 
 // Handy for poking at the game from the browser console.
 window.tt = app;

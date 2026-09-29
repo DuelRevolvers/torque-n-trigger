@@ -147,8 +147,10 @@ and nothing to drift.
 4. **Surfaces: already there.** `patch` items and the plan's surfaces map
    onto the grip classes.
 5. **Editing speed.** A district view takes 0.3–3 s to build: fine for
-   opening a map, too slow while dragging. In E1 the dragged object is drawn
-   on its own as a preview. While a view is built, `itemCapture` sees exactly
+   opening a map, too slow while dragging. E1 shows the dragged object as a
+   box and rebuilds the view a moment after each change (0.3 s for Rustline,
+   the Strip and Chrome Heights; 1.5–3 s for Maple Hollow, the Undercity and
+   Corporate Spire). Next: while a view is built, `itemCapture` sees exactly
    what each item adds, so it can record each item's vertex ranges in the
    merged meshes. Moving or hiding an object then updates those vertices in
    place, with a full rebuild only on save or test drive.
@@ -577,7 +579,7 @@ Each milestone ends in something the owner can try.
 | # | Milestone | Done when |
 |---|---|---|
 | **E0** ✓ | Foundation: object keys; the edit layer (remove, move, turn, copy) in the sim and the renderer; map documents; venues per edited copy; tests | Done 2026-09-29: every district opens as a document unchanged, and edits are what's drawn and what collides (§10) |
-| **E1** | The SDK's first version: `sdk.html`, open a district, fly camera, top-down view, select any object, move/turn with a gizmo, delete, copy, drag objects from a catalogue, snapping, undo/redo, save/load `.ttmap`, test drive | Owner opens Neon Strip, rearranges a block and drives through it |
+| **E1** ✓ | The SDK's first version: `sdk.html` (`src/sdk/`), open a district, fly camera, top-down view, select any object, drag to move, Q/E to turn, delete, copy, place from the catalogue (click or drag in), grid and angle snapping, inspector, undo/redo, autosave, save/open `.ttmap`, test drive (`index.html?testdrive`: free roam in the edited map) | Owner opens Neon Strip, rearranges a block and drives through it |
 | **E2** | Overrides: the store (built-in, override, custom); the game plays overrides in free roam, custom events and multiplayer (never the career); Studio's "save as built-in" to `src/content/maps/`; the "base changed" notice | Moving a building in the SDK shows up in the game's free roam; Revert works |
 | **E3** | Terrain: brushes, paint/surfaces, water, gaps, conform | Owner reshapes a hill and paints a dirt shortcut that drives as off-road |
 | **E4** | Roads and lots: draw/edit roads, junctions, road types, auto dressing, street names, lot fills, sites, line tool, scatter, prefabs | Owner adds a new street with a junction and fills its blocks |
