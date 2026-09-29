@@ -180,7 +180,7 @@ export function districtEvents(district) {
     pit: e.type === 'circuit' ? { s0: -110, s1: -15, lateral: 3 } : undefined,
     career: true,
   });
-  return [...district.events.map(make), make({ ...district.boss, boss: true })];
+  return [...district.events.map(make), ...(district.boss ? [make({ ...district.boss, boss: true })] : [])];
 }
 
 // Free events from home, on the Rustline streets: never stuck broke.

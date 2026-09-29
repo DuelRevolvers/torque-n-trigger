@@ -3,6 +3,7 @@
 
 import { EVENTS } from './events.js';
 import { DISTRICTS, HOME_EVENTS, districtEvents, districtUnlocked } from './districts.js';
+import { listMaps, sharedMaps, customEvents } from '../content/library.js';
 
 const VENUE_NAMES = { testLoop: 'Test Loop', neonStrip: 'Neon Strip', dataCentre: 'Data Centre', dragStrip: 'Drag Strip' };
 // Refs are 'mapId/eventId' (ids can repeat between a district and a classic venue);
@@ -26,6 +27,8 @@ export function maps({ solo = false } = {}) {
     if (list.length) out.push({ id, name, events: list });
   };
   for (const d of DISTRICTS) add(d.id, d.name, districtEvents(d));
+  // The players' own maps (T&T Creator), and one an online host is racing on.
+  for (const doc of [...listMaps(), ...sharedMaps()]) add(`custom:${doc.meta.id}`, `${doc.name} (custom)`, customEvents(doc));
   const byVenue = {};
   for (const e of [...EVENTS, ...HOME_EVENTS].filter((x) => !x.district)) (byVenue[e.venue] ||= []).push(e);
   for (const [v, list] of Object.entries(byVenue)) add(`venue:${v}`, VENUE_NAMES[v] || v, list);

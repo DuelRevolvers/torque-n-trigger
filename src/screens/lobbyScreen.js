@@ -1,3 +1,4 @@
+import { mapForRef, shareMap } from '../content/library.js';
 import * as THREE from 'three';
 import { computeBuild } from '../parts/build.js';
 import { DRIVERS, buildDriver, rankForPr } from '../parts/drivers.js';
@@ -175,6 +176,7 @@ export class LobbyScreen {
             this.refresh();
           } else if (msg.t === 'start') {
             net.ready = false;
+            if (msg.map) shareMap(msg.map);
             this.app.go('race', {
               event: eventByRef(msg.eventRef),
               multiplayer: { players: msg.players, bots: msg.bots, seed: msg.seed, online: { session: s, role: 'client', slot: msg.slot } },
@@ -214,7 +216,8 @@ export class LobbyScreen {
       entrants.forEach((p, i) => {
         if (p.local) return;
         slots[p.id] = i;
-        net.session.send({ t: 'start', eventRef: s.ref, players: players.map(({ device, ...p2 }) => p2), bots, seed, slot: i }, p.id);
+        // (A custom map goes with it: the other players may not have it.)
+        net.session.send({ t: 'start', eventRef: s.ref, map: mapForRef(s.ref), players: players.map(({ device, ...p2 }) => p2), bots, seed, slot: i }, p.id);
       });
       online = { session: net.session, role: 'host', viewers: s.seats.map((_, i) => i), slots };
     }

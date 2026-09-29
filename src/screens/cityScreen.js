@@ -9,6 +9,7 @@ import { districtMap, SETBACK } from '../sim/city.js';
 import { getVenue } from '../sim/tracks/venues.js';
 import { makeRng } from '../parts/generate.js';
 import { keepScroll } from '../ui/keepScroll.js';
+import { listMaps, customEvents } from '../content/library.js';
 
 const MAP_W = 400;
 const MAP_H = 300;
@@ -117,7 +118,7 @@ export class CityScreen {
   }
 
   allEvents() {
-    return [...HOME_EVENTS, ...DISTRICTS.map(playedRoamEvent), ...DISTRICTS.flatMap((d) => districtEvents(d))];
+    return [...HOME_EVENTS, ...DISTRICTS.map(playedRoamEvent), ...DISTRICTS.flatMap((d) => districtEvents(d)), ...listMaps().flatMap(customEvents)];
   }
 
   enterEvent(id) {
@@ -166,7 +167,8 @@ export class CityScreen {
       return `<h2>Home</h2><div class="hint">Your garage and the back streets. These are always open.</div>
         <button class="btn primary wide garage-alt">GARAGE</button>
         <h3>Back alley</h3>${HOME_EVENTS.map((e, k) => this.eventCard(e, computed.ok, k + 1)).join('')}
-        <h3>Free roam</h3>${DISTRICTS.filter((d, i) => this.app.settings.roamAll || districtUnlocked(career, i)).map((d) => this.eventCard(playedRoamEvent(d), computed.ok)).join('')}`;
+        <h3>Free roam</h3>${DISTRICTS.filter((d, i) => this.app.settings.roamAll || districtUnlocked(career, i)).map((d) => this.eventCard(playedRoamEvent(d), computed.ok)).join('')}
+        ${listMaps().length ? `<h3>Your maps <span class="hint">made in the Creator: no prizes</span></h3>${listMaps().flatMap(customEvents).map((e) => this.eventCard(e, computed.ok)).join('')}` : ''}`;
     }
     const d = DISTRICTS[this.selected];
     if (this.view.startsWith('shop:')) return this.shopHtml(d, this.view.slice(5));

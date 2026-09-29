@@ -40,6 +40,8 @@ export class MenuScreen {
       main: ['TORQUE &amp; TRIGGER', '', [
         ['SOLO', () => this.show('solo')],
         ['MULTIPLAYER', () => this.show('multi')],
+        // The T&T Creator: the map editor, on this page (src/boot.js).
+        ['CREATOR', () => (window.location.href = `${window.location.pathname}?creator`)],
         ['SETTINGS', () => app.openSettings()],
         ['LOAD', () => this.show('load')],
         ['EXIT', () => this.exitGame()],

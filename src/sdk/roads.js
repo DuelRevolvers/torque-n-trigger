@@ -6,6 +6,7 @@
 import * as G from '../sim/geom2d.js';
 import { streetKeys, siteKeys } from '../sim/planEdits.js';
 import { ekey } from '../sim/city.js';
+import { RULES } from '../sim/planLayout.js';
 
 const SNAP_NODE = 14; // metres: a click this close to a junction is at it
 const NEAR_END = 3; // a crossing this close to a junction is at that junction
@@ -128,9 +129,12 @@ export function lotEdit(session, x, z, kind) {
   return pe;
 }
 
-// The kinds of block the district's plan uses (its rules know how to fill them).
+// The kinds of block the district's plan uses (its rules know how to fill
+// them); a plain street district (no suburb, rooftops, pit or rings) can have
+// any of the ordinary kinds.
 export function lotKinds(P) {
-  return [...new Set([P.defaultLot || 'buildings', ...(P.lots || []).filter((L) => L.at && !L.along).map((L) => L.kind)])].sort();
+  const plain = !(P.suburb || P.decks || P.pit || P.drain || P.rings);
+  return [...new Set([P.defaultLot || 'buildings', ...(P.lots || []).filter((L) => L.at && !L.along).map((L) => L.kind), ...(plain && P.boundary ? Object.keys(RULES) : [])])].sort();
 }
 
 // Points every `spacing` metres from a to b, and the heading along the line.

@@ -15,12 +15,19 @@ import { brush } from './brush.js';
 import { roadEdit, gridRoadEdit, lotEdit, gridLotEdit, lotAt, lotKinds, linePoints, featureAt, deleteStreet, setStreet, moveNode, removeNode, deleteSite, gridRemove, gridMoveLine } from './roads.js';
 import * as G from '../sim/geom2d.js';
 import { saveOverride, listOverrides, removeOverride, setOverrideOn, shippedMap } from '../content/store.js';
+import { listMaps, saveMap, deleteMap } from '../content/library.js';
+import { loadCareer } from '../career/career.js';
+import { districtUnlocked } from '../career/districts.js';
+import { blankDistrict } from './templates.js';
 
 // The T&T SDK (Studio): opens a district as a map document; select, move,
 // turn, delete and copy its objects, place new ones from the catalogue; undo,
 // save and open .ttmap files, and test drive the map in the game.
 
-const AUTOSAVE = 'tt-sdk:autosave';
+// Studio (sdk.html: the owner's, publishes into the game) or the Creator (the
+// game's page: the players', maps of their own, districts as they unlock them).
+const CREATOR = globalThis.TT_EDITION === 'creator';
+const AUTOSAVE = CREATOR ? 'tt-creator:autosave' : 'tt-sdk:autosave';
 const DRIVE = 'tt-sdk:testdrive'; // read by the game (src/main.js)
 const TURN = Math.PI / 12; // 15°
 const FINE = Math.PI / 180;
@@ -156,14 +163,27 @@ function changed(rebuild = true) {
   if (rebuild) scheduleBuild();
 }
 
-function save() {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([serializeDoc(session.doc)], { type: 'application/json' }));
-  a.download = `${session.doc.id}.ttmap`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+// Studio: a .ttmap file. The Creator: My maps (this browser), where the game finds it.
+async function save() {
+  if (CREATOR) {
+    try {
+      await saveMap(session.doc);
+    } catch (err) {
+      window.alert(`Couldn't save it: ${err.message}`);
+      return;
+    }
+    toast(`${session.doc.name} saved to My maps: race it from the game's event list (Your maps).`);
+  } else exportDoc(session.doc);
   session.dirty = false;
   refresh();
+}
+
+function exportDoc(doc) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([serializeDoc(doc)], { type: 'application/json' }));
+  a.download = `${doc.name.replace(/[^\w -]+/g, '').trim() || doc.id}.ttmap`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 let toastTimer = 0;
@@ -236,7 +256,19 @@ function renderStart() {
       </div>
       ${o.baseChanged ? `<div class="note warn">${esc(o.name)} has changed in the game since these edits were made. Keep them (leave them on), Revert, or Open them to check: edits whose object has gone are listed as lost.</div>` : ''}`)
     .join('');
-  $('start-published-box').hidden = !published.size;
+  const mine = listMaps();
+  $('start-mine-box').hidden = !mine.length;
+  $('start-mine').innerHTML = mine
+    .map((d) => `<div class="orow" data-mine="${esc(d.meta.id)}"><label>${esc(d.name)}</label><button data-act="open-mine">Open</button><button data-act="export-mine" title="Save it as a .ttmap file">Export</button><button data-act="delete-mine" class="danger">Delete</button></div>`)
+    .join('');
+  $('start-published-box').hidden = CREATOR || !published.size;
+  // (The Creator opens the districts the career has reached.)
+  const career = CREATOR ? loadCareer() : null;
+  $('start-districts').querySelectorAll('button').forEach((b) => {
+    const i = DISTRICTS.findIndex((d) => d.id === b.dataset.id);
+    b.disabled = CREATOR && !districtUnlocked(career || { district: 0 }, i);
+    b.title = b.disabled ? 'Reach it in the campaign to open it here' : '';
+  });
   $('start-published').innerHTML = [...published]
     .map((id) => `<div class="orow" data-id="${esc(id)}"><label>${esc(DISTRICTS.find((d) => d.id === id)?.name || id)}</label><button data-act="unpublish" class="danger">Unpublish</button></div>`)
     .join('');
@@ -728,7 +760,7 @@ scene.add(stuckMarks);
 
 const allEvents = () => {
   const { events, boss } = session.events();
-  return [...events, ...(boss ? [boss] : [])];
+  return [...events, ...(boss && !CREATOR ? [boss] : [])];
 };
 const savedEvent = (key) => allEvents().find((e) => e.key === key) || null;
 const isBoss = () => evKey === 'boss';
@@ -813,7 +845,7 @@ function renderEvents() {
       <div class="grid">
         ${field('ev-name', 'name', d.name, 'text')}
         ${field('ev-cars', 'cars', d.cars)}
-        ${field('ev-purse', 'purse ($)', d.purse, 'number', 50)}
+        ${CREATOR ? '' : field('ev-purse', 'purse ($)', d.purse, 'number', 50)}
         ${d.type === 'circuit' ? field('ev-laps', 'laps', d.laps) + field('ev-start', 'start (m)', r.start ?? 0, 'number', 10) : ''}
         ${d.type === 'drag' ? field('ev-finish', 'length (m)', d.finishS ?? 414, 'number', 10) : ''}
         ${d.type === 'arena' ? `<label for="ev-mode">mode</label><select id="ev-mode">${Object.entries(MODES).map(([k, n]) => `<option value="${k}"${d.mode === k ? ' selected' : ''}>${n}</option>`).join('')}</select>${field('ev-time', 'time (s)', d.timeLimit, 'number', 10)}<label for="ev-site">ground</label><select id="ev-site">${arenaSites(session).map((a) => `<option value="${a.site}"${r.site === a.site ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
@@ -821,7 +853,7 @@ function renderEvents() {
       </div>
       <textarea id="ev-desc" placeholder="What the event is, for the event list">${esc(d.desc || '')}</textarea>
       <div class="checks">
-        ${isBoss() ? '' : `<label><input type="checkbox" id="ev-rival"${d.rival ? ' checked' : ''} /> Rival race (the district's rival drives it)</label>`}
+        ${isBoss() || CREATOR ? '' : `<label><input type="checkbox" id="ev-rival"${d.rival ? ' checked' : ''} /> Rival race (the district's rival drives it)</label>`}
         ${Object.entries(MODIFIER_LABELS).map(([k, n]) => `<label><input type="checkbox" data-mod="${k}"${(d.modifiers || []).includes(k) ? ' checked' : ''} /> ${esc(n)}</label>`).join('')}
       </div>
       <h4>Route</h4>
@@ -1520,7 +1552,7 @@ window.addEventListener('blur', () => keys.clear());
 
 // --- Top bar ---------------------------------------------------------------------
 
-$('district').innerHTML = `<option value="" disabled selected>Open a district…</option>${DISTRICTS.map((d) => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}`;
+$('district').innerHTML = `<option value="" disabled selected>Open a district…</option>${DISTRICTS.map((d, i) => `<option value="${d.id}"${CREATOR && !districtUnlocked(loadCareer() || { district: 0 }, i) ? ' disabled' : ''}>${esc(d.name)}</option>`).join('')}`;
 $('district').addEventListener('change', () => {
   const d = DISTRICTS.find((q) => q.id === $('district').value);
   if (session?.dirty && !window.confirm(`Open ${d.name}? Unsaved changes to ${session.doc.name} will be lost.`)) {
@@ -1605,13 +1637,31 @@ $('start-districts').addEventListener('click', (e) => {
   if (d) open(docFromDistrict(d));
 });
 $('start-file').addEventListener('click', () => $('file').click());
+$('start-blank').addEventListener('click', () => {
+  if (session?.dirty && !window.confirm(`Start a new district? Unsaved changes to ${session.doc.name} will be lost.`)) return;
+  const n = 1 + listMaps().filter((d) => d.id.startsWith('custom-')).length;
+  open(blankDistrict(DISTRICTS.find((d) => d.id === 'strip'), n));
+});
 $('start-back').addEventListener('click', () => ($('start').hidden = true));
 $('start').addEventListener('change', (e) => {
   const id = e.target.closest('.orow')?.dataset.id;
   if (id && e.target.dataset.act === 'on') setOverrideOn(id, e.target.checked);
 });
-$('start').addEventListener('click', (e) => {
+$('start').addEventListener('click', async (e) => {
   const act = e.target.dataset?.act;
+  const mineId = e.target.closest('[data-mine]')?.dataset.mine;
+  if (mineId) {
+    const doc = listMaps().find((d) => d.meta.id === mineId);
+    if (!doc) return;
+    if (act === 'export-mine') return exportDoc(doc);
+    if (act === 'delete-mine') {
+      if (!window.confirm(`Delete ${doc.name} from My maps? (Export it first to keep a copy.)`)) return;
+      await deleteMap(mineId);
+      return renderStart();
+    }
+    if (session?.dirty && !window.confirm(`Open ${doc.name}? Unsaved changes to ${session.doc.name} will be lost.`)) return;
+    return open(parseDoc(JSON.stringify(doc)));
+  }
   const id = e.target.closest('.orow')?.dataset.id;
   if (!id || !act || act === 'on') return;
   if (act === 'unpublish') return unpublish(id);
@@ -1645,3 +1695,43 @@ try {
   // (No readable autosave: nothing to resume.)
 }
 hint();
+
+// --- The Creator ---------------------------------------------------------------------
+
+if (CREATOR) {
+  document.querySelector('#top b').textContent = 'T&T Creator';
+  $('publish').hidden = true;
+  $('top').insertAdjacentHTML('afterbegin', '<button id="to-game" title="Back to Torque &amp; Trigger">◀ Game</button>');
+  $('to-game').addEventListener('click', () => {
+    if (session?.dirty && !window.confirm('Back to the game? Unsaved changes will be lost (Save puts the map in My maps).')) return;
+    window.location.href = window.location.pathname;
+  });
+  $('save').title = 'Save to My maps (Ctrl+S): race it from the game';
+  let seen = false;
+  try {
+    seen = !!localStorage.getItem('tt-creator:tips');
+  } catch {
+    seen = false;
+  }
+  if (!seen) {
+    document.body.insertAdjacentHTML('beforeend', `<div id="tutorial">
+      <h2>The T&amp;T Creator</h2>
+      <ol>
+        <li><b>Open a map</b>: a district you've reached in the campaign, or a blank one.</li>
+        <li><b>Look around</b>: hold the right mouse button and use W A S D (Q/E down and up); the wheel zooms; Tab looks straight down.</li>
+        <li><b>Change anything</b>: click it, drag it to move it, Q/E turn it, Delete removes it. Streets and junctions too.</li>
+        <li><b>Add things</b>: pick one on the left and click to place it (or drag it in). The tools reshape and paint the ground (2-7), draw streets (8), fill blocks (9) and make events (0).</li>
+        <li><b>Try it</b>: P drives it. Save puts it in My maps: race it from the game's events (Your maps), or online with a friend.</li>
+      </ol>
+      <div class="row"><button id="tips-ok">Got it</button></div>
+    </div>`);
+    $('tips-ok').addEventListener('click', () => {
+      $('tutorial').remove();
+      try {
+        localStorage.setItem('tt-creator:tips', '1');
+      } catch {
+        // (Shown again next time.)
+      }
+    });
+  }
+}
