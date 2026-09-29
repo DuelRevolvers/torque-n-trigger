@@ -116,7 +116,9 @@ export function routeLine(map, names) {
             if (!best || len < best.len) best = { run, len, st: pa.st };
           }
         }
+        const open = !best && (map.opens || []).find((o) => [at, seq[0]].every((p) => Math.hypot(p[0] - o.c[0], p[1] - o.c[1]) <= o.r + 3));
         if (best) pieces.push({ pts: best.run, st: best.st });
+        else if (open) pieces.push({ pts: [[...at], [...seq[0]]], open });
         else {
           const path = netPath(map, at, seq[0]);
           if (!path) throw new Error(`${map.style.id}: no street from ${at} to ${seq[0]} (${name})`);
@@ -161,6 +163,8 @@ export function planTrack(map, style, route) {
     const a = G.nearestOnLine(st.pts, ...pt(route.from)).s;
     const b = G.nearestOnLine(st.pts, ...pt(route.to)).s;
     line = streetRun(st, a, b);
+    // (Moved across the street: the drain's drag runs beside the low-flow trench.)
+    if (route.shift) line = line.map(([x, z]) => [x + route.shift[0], z + route.shift[1]]);
     pieces = [{ pts: line, st, from: 0, to: line.length - 1 }];
   } else ({ line, pieces } = routeLine(map, circuit ? [...route.path, route.path[0]] : route.path));
   // Each piece as a range of arc length along the line.
@@ -186,8 +190,9 @@ export function planTrack(map, style, route) {
       .sort((p, q) => p.a - q.a);
   }
   const list = line.map(([x, z]) => ({ x, z }));
-  // (On the rooftops a route's height follows the decks and crossings, gaps included.)
-  const HL = map.lineHeightAt || H;
+  // (On the rooftops a route's height follows the decks and crossings, gaps included;
+  // in the Undercity each street's own heights: its cuts, the tunnel, the drain's bed.)
+  const HL = map.lineHeightAt || (map.under ? underLineHeights(map, line, pieces) : H);
   const def = { name: `${style.name} ${route.kind}`, closed: circuit, ...STREET, points: roundedPoints(list, circuit, CORNER_R, HL) };
   if (map.roof) def.points = densifyPoints(def.points, circuit, 4, HL);
   const probe = buildTrack(def);
@@ -201,7 +206,7 @@ export function planTrack(map, style, route) {
   const sections = [];
   const push = (s0, s1, half, wall, extra = {}) => {
     const last = sections[sections.length - 1];
-    const same = last && Math.abs(last.half - half) < 0.01 && Math.abs(last.wall - wall) < 0.01 && last.surface === extra.surface && last.walk === extra.walk;
+    const same = last && Math.abs(last.half - half) < 0.01 && Math.abs(last.wall - wall) < 0.01 && last.surface === extra.surface && last.walk === extra.walk && JSON.stringify(last.bank) === JSON.stringify(extra.bank) && last.tunnel === extra.tunnel && last.open === extra.open && last.cut === extra.cut;
     if (same) last.s1 = s1;
     else if (s1 > s0 + 0.01) sections.push({ s0, s1, half, wall, ...extra });
   };
@@ -214,6 +219,18 @@ export function planTrack(map, style, route) {
       const half = pc.way.halfWidth ?? 4;
       const surface = waySurface(pc.way);
       push(s0, s1, half, pc.way.wallDist ?? half + 2, surface !== undefined ? { surface } : {});
+      continue;
+    }
+    if (pc.open) {
+      push(s0, s1, 12, 20, { open: true });
+      continue;
+    }
+    if (map.under && (pc.st.tunnel || pc.st.descends || pc.st.drain)) {
+      if (pc.st.drain) {
+        // (Its walls are the fences along both tops.)
+        const prof = drainProfile(map, probe, (s0 + s1) / 2);
+        push(s0, s1, pc.st.half, prof.bank.flat + prof.bank.rise / prof.bank.slope + 1.5 + Math.abs(prof.bank.c), prof);
+      } else push(s0, s1, pc.st.half, pc.st.half + (pc.st.tunnel ? 0.5 : 1), pc.st.tunnel ? { tunnel: true } : { cut: true });
       continue;
     }
     const aisle = map.sites.find((q) => q.through === pc.st.name);
@@ -313,6 +330,7 @@ export function planTrack(map, style, route) {
   if (map.truck) def.truck = map.truck;
   if (map.rv) def.rv = map.rv;
   if (suburb) suburbRace(map, def, layout);
+  if (map.under) underRace(map, style, def, layout);
   return def;
 }
 
@@ -541,6 +559,85 @@ function roofTrack(map, style, def, probe, ranges) {
   return def;
 }
 
+// The Undercity's route heights: each line point's from its street's own
+// profile (a cut, the tunnel, the drain's bed) or the floor it crosses; any
+// point between them takes its nearest line point's.
+function underLineHeights(map, line, pieces) {
+  const hs = line.map(([x, z]) => map.heightAt(x, z));
+  for (const pc of pieces) {
+    for (let k = pc.from; k <= pc.to; k++) {
+      const [x, z] = line[k];
+      if (pc.open) hs[k] = pc.open.y;
+      else if (pc.st?.hAt) hs[k] = pc.st.hAt(G.nearestOnLine(pc.st.pts, x, z).s);
+    }
+  }
+  const CELL = 20;
+  const grid = new Map();
+  line.forEach(([x, z], k) => {
+    const key = Math.floor(x / CELL) * 100003 + Math.floor(z / CELL);
+    if (!grid.has(key)) grid.set(key, []);
+    grid.get(key).push(k);
+  });
+  return (x, z) => {
+    let best = -1;
+    let bd = Infinity;
+    for (let a = Math.floor(x / CELL) - 1; a <= Math.floor(x / CELL) + 1; a++) {
+      for (let b = Math.floor(z / CELL) - 1; b <= Math.floor(z / CELL) + 1; b++) {
+        for (const k of grid.get(a * 100003 + b) || []) {
+          const d = Math.hypot(line[k][0] - x, line[k][1] - z);
+          if (d < bd) {
+            bd = d;
+            best = k;
+          }
+        }
+      }
+    }
+    return best >= 0 ? hs[best] : map.heightAt(x, z);
+  };
+}
+
+// The storm drain's cross-section where a route runs down it: a flat bed, the
+// low-flow trench, 45° walls up to the banks (c: the drain's middle, as a
+// lateral offset from the route's line).
+function drainProfile(map, probe, s) {
+  const d = map.drain;
+  const i = probe.indexAtDistance(s);
+  const c = (d.z - probe.z[i]) * probe.rz[i];
+  const run = d.depth / Math.tan((d.walls * Math.PI) / 180);
+  return { bank: { c: Math.round(c * 10) / 10, flat: d.bed / 2, rise: d.depth, slope: d.depth / run }, trench: { c: Math.round(c * 10) / 10, half: (d.trench || 0) / 2, depth: 0.6 }, off: SURFACE.ROAD };
+}
+
+// An Undercity race: what stands inside the walls is solid (the deck's
+// pillars along the kerbs, stalls, a shack at a corner); the flood and what's
+// overhead (for the chase camera).
+function underRace(map, style, def, layout) {
+  const track = buildTrack(def);
+  const tracks = [track, ...(track.branches || []).map((b) => b.track)];
+  const inside = (x, z) => tracks.some((t) => {
+    const q = t.queryMain(x, z);
+    return q.overrun < 0.5 && Math.abs(q.trueLateral ?? q.lateral) < (t.sections || t.narrows ? t.localWall(q.s) : t.wallDist) - 0.1;
+  });
+  const CELL = 40;
+  const grid = new Set();
+  for (const t of tracks) for (let i = 0; i < t.count; i += 3) grid.add(Math.floor(t.x[i] / CELL) * 100003 + Math.floor(t.z[i] / CELL));
+  const nearRoute = ([x0, x1, z0, z1]) => {
+    for (let a = Math.floor(x0 / CELL) - 1; a <= Math.floor(x1 / CELL) + 1; a++) {
+      for (let b = Math.floor(z0 / CELL) - 1; b <= Math.floor(z1 / CELL) + 1; b++) if (grid.has(a * 100003 + b)) return true;
+    }
+    return false;
+  };
+  const obstacles = [];
+  for (const it of layout.items) {
+    if (!it.solid || !Array.isArray(it.r) || !nearRoute(it.r)) continue;
+    const o = layoutObstacle(it, 0, 0);
+    const pts = it.obb ? G.obbCorners(it.obb) : it.poly || [[it.r[0], it.r[2]], [it.r[1], it.r[2]], [it.r[1], it.r[3]], [it.r[0], it.r[3]]];
+    if ([...pts, [o.x, o.z]].some(([x, z]) => inside(x, z))) obstacles.push(o);
+  }
+  def.obstacles = obstacles;
+  if (map.flood) def.flood = map.flood;
+  if (map.ceilingAt) def.ceilingAt = map.ceilingAt;
+}
+
 // Every street leaving the route is closed off: limos (buses across the wide
 // ones) parked across it just beyond the route's lot line.
 function planClosures(map, line, pieces, circuit, branches, probe, sections) {
@@ -626,6 +723,19 @@ function dragClosures(map, probe, line, route) {
       const z = n.z + dir[1] * back;
       out.push({ x, z, y: map.heightAt(x, z), yaw: Math.atan2(dir[0], dir[1]), width: 2 * e.street.edge, bus: e.street.width >= 20 });
     }
+  }
+  return out;
+}
+
+// The Undercity's free roam: the Low Road runs under the ground (level by
+// level: a car below the surface in its line is in the tunnel), the flood,
+// what's overhead.
+function underRoam(map, cx, cz) {
+  const st = map.streets.find((q) => q.tunnel);
+  const out = { flood: map.flood, ceilingAt: map.ceilingAt };
+  if (st) {
+    const { k0, k1 } = st.descent;
+    out.tunnels = [{ pts: st.pts.slice(k0, k1 + 1).map(([x, z]) => [x - cx, z - cz]), heights: st.heights.slice(k0, k1 + 1), half: st.half + 0.5 }];
   }
   return out;
 }
@@ -755,6 +865,7 @@ export function planRoam(map) {
     obstacles, holes, ramps, hazards: [], platforms, lifts, movers, sweepers: [],
     truck: map.truck || undefined,
     ...(roof || {}),
+    ...(map.under ? underRoam(map, cx, cz) : {}),
     ...(P.suburb
       ? {
         rv: map.rv,

@@ -370,3 +370,108 @@ the lengths above were measured from it. The ASCII map comes from the same data.
 - **Hazard:** the flash flood.
 
 All of these can change after playtesting.
+
+## Build spec
+
+What the game builds, with the numbers it uses. The data is in
+`src/districts/undercity.js`:
+- **The plan:** the boundary, the deck, the pit, the drain, nodes, streets, sites
+  and the shop exactly as above.
+- **The rest of the file:** the market's stall pitch, the terraces' radii, the
+  scrapyard's stacks, the tanks and pipe racks, the Sump's props, Pillar Hall's
+  cabins and barrels, the siren spacing, the light wells, the flood, and both
+  arenas.
+
+The code that builds it:
+- `src/sim/planUnderMap.js`: the ground (the pit, the drain, the road cuts, the
+  tunnel) and the deck overhead (called by `src/sim/planMap.js`);
+- `src/sim/planUnder.js`: pillars, terraces of shacks, the market, the
+  scrapyard, the tank farm, the Sump, the drain's Culvert and Outfall, the Low
+  Road's walls, fences and shore walls, by fixed rules (called by
+  `src/sim/planLayout.js`);
+- `src/sim/planRoute.js`: the event routes and free roam;
+- `src/sim/flood.js`: the flash flood;
+- `src/render/underView.js`: draws it all.
+
+Metres: x east, z south, origin mid-district. The streets are at 0.
+Nothing is random: the same plan always builds the same district.
+
+**The ground**
+- **The pit:** centre (0, 130), a flat floor 85 m in radius, 30 m down; its walls
+  rise as a smooth bowl to the rim at 170 m.
+- **The drain:** along z 500 from x -540 to x 590. A 30 m bed 8 m down, the
+  low-flow trench 3 m wide and 0.6 m deep down its middle, 45° walls.
+- **Descending streets** (the Spiral, the Throat, the Low Road, the Drain ramp)
+  run level to their last junction, then straight down the grade to the bottom,
+  cut into the ground or built out on a ledge.
+- **The Low Road** is a tunnel with a 5 m roof. It's open to the sky only where
+  the ground over it is thin (its portal and its mouth in the pit wall); it
+  passes under Lip Road.
+- **The deck:** 25 m up over everything north of its edge, open at six light
+  wells.
+
+**What stands**
+- **Pillars:** 1.5 m square on a 45 m grid under the deck, never in a
+  carriageway, plus a row along both kerbs of every street under it. Pillar
+  Hall's are 2.4 m on a 26 m grid.
+- **Shacks and container homes:** in three terraces round the pit walls (radii
+  118, 136 and 154 m), clear of the roads, with washing lines between them.
+  Along the streets: shacks at the kerb (1.5 m sidewalks). The Old Town is brick.
+- **The Black Market:** stalls either side of Market lane every 4.6 m, a gap
+  every seventh, generators and parts cages, strings of lamps, a gate on Lip
+  Road.
+- **The drain:** the Culvert's headwall and mouth at the east end, the Outfall's
+  gates at the west, chain-link fence along both tops, a siren and strobe every
+  90 m on both walls.
+- **The shores:** a low wall along the river (north) and the bay (south), open
+  where the roads leave.
+
+**Races**
+- **Walls:** a street's lot line; a cut's foot (1 m past the road); the tunnel's
+  walls; the drain's fences along its tops; on the Sump floor, 20 m out, marked
+  with burning drums.
+- **Solid:** everything the layout stands inside a race's walls (the pillars at
+  the kerbs, a stall).
+- **Closed side streets:** burnt-out wrecks across them, a burning drum each end.
+- **The start:** the Crew on the nearest wrecks, flares down both sides of the
+  grid, the sound-system truck behind the wall.
+- **The drag:** 402 m on the bed from x 400 to x 0, four abreast 9 m north of the
+  trench. The crowd stands behind both fences.
+- **The flood:** in about one minute in five, at a moment set by a hash of the
+  minute. Sirens and strobes for 4 s, then the surge runs west at 25 m/s and
+  drains away over 8 s. On the bed behind its front, a car is slowed, pushed west
+  (7 m/s² at full height) and takes 6 damage a second. The Sump's floor is wet
+  for 30 s. It affects every route on the drain and the Sump Brawl.
+
+**Arenas**
+- **The Sump:** the pit floor and walls. The Spiral, the Throat and the Low Road
+  are closed with wrecks. The magnet, 2.6 m across, loops the floor at 3.2 m/s.
+- **Pillar Hall:** its pillars, seven site cabins, eight burning barrels.
+
+## Built vs this doc
+
+The Undercity was rebuilt from the ground up to this doc on 2026-09-29, with
+every part authored. It was checked against the doc point by point.
+`tests/undercity.test.js` checks that:
+- the build uses no randomness;
+- the pit floor, the drain bed and trench, the deck and the Low Road under Lip
+  Road match;
+- the only roads out go to the Neon Strip and Chrome Heights;
+- the route lengths match, and the sprint runs through the tunnel, across the
+  floor and down the drain;
+- the drag is 402 m with the trench to the side;
+- the flood is rare, warns first and pushes cars west;
+- the Sump's magnet and flood, Pillar Hall's pieces, and free roam's tunnel work.
+
+**Decisions made while building, all open to change after playtesting:**
+- **Crossing the Sump floor** is a straight line between two roads' ends, with
+  its edges marked by burning drums.
+- **The drag's lanes** are 9 m north of the drain's middle, so the trench runs
+  beside them rather than under a car.
+- **A road on a ledge** gets a guard rail where the ground beyond falls away.
+- **The Spiral, the Throat and the Low Road** descend over their last stretch
+  only (from their last junction), so the pit wall round them is cut or built up
+  to match.
+- **Where the doc gives no numbers:** the pillar spacing along the kerbs, the
+  terraces' radii, the shack sizes, the stalls, the tanks, the light wells, the
+  flood's strength and the arenas' layouts are this build's choices.

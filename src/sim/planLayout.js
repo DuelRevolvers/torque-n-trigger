@@ -11,6 +11,7 @@
 import * as G from './geom2d.js';
 import { suburbLayout } from './planSuburb.js';
 import { roofLayout } from './planRoof.js';
+import { underLayout } from './planUnder.js';
 
 // Building kinds: frontage widths, depth, heights (fixed cycles), setback from
 // the lot edge, gap between buildings, and a second row behind the first.
@@ -22,6 +23,10 @@ export const RULES = {
   chapels: { widths: [18, 22, 16, 20], depth: 26, heights: [9, 10, 8], setback: 8, gap: 10, back: 22 },
   pawn: { widths: [16, 20, 14, 18, 22], depth: 20, heights: [7, 9, 6, 8], setback: 2, gap: 2, back: 18 },
   flats: { widths: [34, 30, 38], depth: 14, heights: [10, 12, 11], setback: 6, gap: 8, back: 14 },
+  // The Undercity: shacks and container homes right up to the kerb, a second row
+  // behind; the Old Town's tilted, half-sunk blocks.
+  shacks: { widths: [9, 12, 7, 10, 8, 14, 11], depth: 11, heights: [7, 11, 15, 9, 18, 12, 8], setback: 0.5, gap: 1, back: 10 },
+  oldtown: { widths: [22, 18, 26, 20], depth: 18, heights: [14, 18, 12, 16], setback: 2, gap: 6 },
 };
 const STREET_ORDER = (st) => (!st ? 9 : st.name === 'The Strip' ? 0 : st.width >= 20 ? 1 : st.width >= 12 ? 2 : 3);
 const CAR_COLORS = 7;
@@ -117,6 +122,7 @@ export function planLayout(map) {
 
   if (P.suburb) suburbLayout({ map, P, H, items, obbItem, polyItem, deco, clear, take, reserve, inLot, box, along, baseUnder });
   if (P.decks) roofLayout({ map, P, H, items, obbItem, polyItem, deco, clear, take, reserve });
+  if (P.under) underLayout({ map, P, H, items, obbItem, polyItem, deco, clear, take, reserve });
 
   // --- Ordinary buildings along every block's frontages ---
   for (const b of map.blocks) {
@@ -165,7 +171,7 @@ export function planLayout(map) {
     for (let s = margin, guard = 0; s < L - margin - 8 && guard < 400; guard++) {
       let w = R.widths[k % R.widths.length];
       if (s + w > L - margin) w = L - margin - s;
-      if (w < 10) break;
+      if (w < Math.min(10, ...R.widths)) break; // (narrow shacks are narrower than 10 m)
       const a = along(pts, s);
       const e = along(pts, s + w);
       const cl = Math.hypot(e.x - a.x, e.z - a.z);
@@ -198,7 +204,7 @@ export function planLayout(map) {
 
   // Casinos front the Strip; the rest take the block's kind (singular names on items).
   function kindOf(kind, fr) {
-    return { casinos: 'casino', clubs: 'club', hotels: 'hotel', motels: 'motel', chapels: 'chapel', pawn: 'pawn', flats: 'flats' }[kind] || kind;
+    return { casinos: 'casino', clubs: 'club', hotels: 'hotel', motels: 'motel', chapels: 'chapel', pawn: 'pawn', flats: 'flats', shacks: 'shack', oldtown: 'oldtown' }[kind] || kind;
   }
 
   // A motel's forecourt: its pole sign by the street and cars in the bays.
@@ -290,7 +296,7 @@ export function planLayout(map) {
   // --- The Night Market: stalls along the lane (solid: slow and tight), food
   // trucks, the gate on the Strip, strings of lights and tarps. ---
   function nightMarket(s) {
-    if (!s) return;
+    if (!s?.market) return;
     const m = s.market;
     const lane = s.way;
     const L = G.lineLength(lane);
@@ -494,7 +500,7 @@ export function planLayout(map) {
     if (!F) return;
     const bnd = P.boundary;
     const sea = P.seawall?.pts || [];
-    const river = P.river?.bank || [];
+    const river = [...(P.river?.bank || []), ...Object.values(P.under?.shores || {}).flat()];
     const onLine = (line, a, b) => line.some((p, k) => k + 1 < line.length && ((G.len2(p, a) < 1 && G.len2(line[k + 1], b) < 1) || (G.len2(p, b) < 1 && G.len2(line[k + 1], a) < 1)));
     const onSea = (a, b) => onLine(sea, a, b) || onLine(river, a, b);
     const exitsAt = map.nodes.filter((n) => n.exit);

@@ -23,6 +23,7 @@ import { RUSTLINE_CITY } from '../districts/rustline.js';
 import { STRIP_CITY } from '../districts/neonStrip.js';
 import { MAPLE_CITY } from '../districts/mapleHollow.js';
 import { CHROME_CITY } from '../districts/chromeHeights.js';
+import { UNDERCITY_CITY } from '../districts/undercity.js';
 
 // A plan district's outline on the city map: its boundary, scaled into place
 // (centre and metres per map unit), so the map and the district always match.
@@ -107,28 +108,19 @@ export const DISTRICTS = [
     id: 'undercity', name: 'The Undercity', tier: 3, faction: 'Low Road Crew', color: '#39ff14',
     blurb: 'Streets under the elevated city deck: ramshackle towers of shacks and tin, tunnels, pillars, tank farms, a black market and flooded asphalt. The lights go out down here.',
     theme: { haze: '#081a12', fog: 0.0058 },
-    // Ragged and sprawling, under the river's south bank.
-    map: [[72, 60], [77.5, 57.3], [82.5, 59.3], [88, 56.7], [93.5, 58.7], [98, 57.3], [98.5, 66.7], [96.5, 75.3], [98.5, 84], [95, 91.3], [88, 89.3], [82.5, 91.3], [76, 90], [71.5, 85.3], [73, 77.3], [70.5, 70], [72.5, 64]],
+    // Between the river and the bay, under the deck's south edge.
+    map: planOutline(UNDERCITY_CITY.plan.boundary, [84.5, 74], [50, 37.5]),
     label: [85, 61.5],
-    city: {
-      id: 'undercity', name: 'Undercity', seed: 4404, cols: 12, rows: 9,
-      spacingX: [85, 128], spacingZ: [80, 118], removeEdges: 0.15, elevation: 1.5, hillScale: 260,
-      sites: [
-        { kind: 'arena', name: 'The Sump', sizes: GROUND, min: 150 },
-        { kind: 'arena', name: 'Pillar Hall', sizes: GROUND, min: 150 },
-        { kind: 'market', name: 'Black Market', sizes: [[2, 1], [1, 2]] },
-      ],
-      lots: { alley: 6, construction: 2, parking: 1, tanks: 3, yard: 3 },
-      buildings: 'block', heights: [10, 26], features: ['overpass', 'tunnels'], ramshackle: true,
-      look: { building: '#6a7a6a', buildingTex: 'building', lamp: '#7aff9a', barrier: '#a0ffb0', signs: 0.7, lot: '#3a443a', neon: ['#39ff14', '#05d9e8', '#ff2a6d'], road: '#7a8a72', roadGloss: 1.3, walk: '#6a7666' },
-    },
+    // Authored to docs/districts/05-the-undercity.md (src/districts/undercity.js).
+    city: UNDERCITY_CITY,
     events: [
-      { key: 'sprint', type: 'sprint', name: 'Tunnel Blackout', desc: 'From the black market through the tunnels, lights out.', route: { kind: 'sprint', seed: 1, length: 3200, from: 'market' }, cars: 6, purse: 3200, modifiers: ['blackout'] },
-      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Sump Brawl', desc: 'The Sump: a drained lot under the deck.', route: { kind: 'arena', site: 0 }, cars: 6, timeLimit: 120, purse: 3000, modifiers: ['oneHit'] },
-      { key: 'circuit', type: 'circuit', name: 'Underpass Loop', desc: 'Round the black market, under the deck and back.', route: { kind: 'circuit', seed: 3, cells: 7, around: 'market' }, cars: 6, laps: 3, purse: 3400 },
-      { key: 'rival', type: 'circuit', name: 'Rival: Low Road', desc: 'A tight loop through the tunnels and alleys.', route: { kind: 'circuit', seed: 4, cells: 6 }, cars: 5, laps: 3, purse: 3800, rival: true },
+      { key: 'sprint', type: 'sprint', name: 'Tunnel Blackout', desc: 'From the Black Market through the stalls and down the Low Road tunnel, lights out; across the Sump floor and up the Spiral, east and down the ramp into the storm drain, then the full kilometre west to the Outfall gates.', route: { kind: 'sprint', path: ['lip-market', 'portal', 'sump-w', 'sump-sw', 'pump-rim', 'ring-pump', 'ring-tank', 'drain-e', 'drain-ramp', 'outfall'] }, cars: 6, purse: 3200, modifiers: ['blackout'] },
+      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Sump Brawl', desc: 'The pit floor, its walls rising all round: drive up them and come down on someone. The magnet from the scrapyard crane drags slowly across the floor.', route: { kind: 'arena', site: 0 }, cars: 6, timeLimit: 120, purse: 3000, modifiers: ['oneHit'] },
+      { key: 'circuit', type: 'circuit', name: 'Underpass Loop', desc: 'North up the Ring under the deck, round the north-west bend and along the top, down Bridge Road past Pillar Hall and back along Lip Road. Shortcut through the Black Market stalls, slow among them.', route: { kind: 'circuit', path: ['ring-lip-w', 'ring-top-w', 'ring-bridge', 'lip-pit-e', 'lip-crooked', 'lip-market'], shortcuts: ['market-cut'], start: 30 }, cars: 6, laps: 3, purse: 3400 },
+      { key: 'drag', type: 'drag', name: 'Storm Drain Drag', desc: 'Westbound on the drain bed from below the ramp, four abreast beside the low-flow trench. The crowd lines the walls of the drain.', route: { kind: 'drag', along: 'The Drain', from: [412, 500], to: [-150, 500], shift: [0, -9] }, cars: 4, purse: 3100, finishS: 414 },
+      { key: 'rival', type: 'circuit', name: 'Rival: Low Road', desc: 'West on Drain Road from the Throat, north up the Ring through the shacks, through the Black Market and down the Low Road tunnel, across the Sump floor and up the Throat.', route: { kind: 'circuit', path: ['drain-throat', 'drain-w', 'ring-tin', 'ring-scrap', 'ring-lip-w', 'lip-market', 'portal', 'sump-w', 'throat-floor'], start: 20 }, cars: 5, laps: 2, purse: 3800, rival: true },
     ],
-    boss: { key: 'boss', type: 'arena', mode: 'lastStanding', name: 'Boss: Hammer', desc: 'Hammer waits in Pillar Hall.', route: { kind: 'arena', site: 1 }, cars: 5, timeLimit: 240, purse: 5500, driver: 'hammer' },
+    boss: { key: 'boss', type: 'arena', mode: 'lastStanding', name: 'Boss: Hammer', desc: 'Hammer waits in Pillar Hall, in the dark: the pillars as cover, container cabins to ram through, burning barrels.', route: { kind: 'arena', site: 1 }, cars: 5, timeLimit: 240, purse: 5500, driver: 'hammer' },
   },
   {
     id: 'spire', name: 'Corporate Spire', tier: 4, faction: 'Syncorp', color: '#b04dff',

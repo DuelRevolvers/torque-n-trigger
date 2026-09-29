@@ -15,6 +15,7 @@
 
 import { yawFromDirection } from './math.js';
 import { wetAt } from './sprinklers.js';
+import { floodAt, inSurge, sumpWetAt } from './flood.js';
 
 const WALL_DIST = 1000;
 const GRID = 16; // obstacle grid cell size (m)
@@ -106,6 +107,8 @@ class Arena {
     this.breakables = def.breakables?.length ? def.breakables : null; // world coordinates
     this.sprinklers = def.sprinklers?.length ? def.sprinklers : null; // world coordinates
     this.gusts = def.gusts || null; // the river gusts (Chrome Heights)
+    this.flood = def.flood || null; // the flash flood (the Undercity)
+    this.ceilingAt = def.ceilingAt || null; // what's overhead, for the camera
     if (def.gustExposure) this.gustExposure = (car) => def.gustExposure(car.pos.x, car.pos.z);
     if (def.obstacles.length > 64) {
       this.grid = new Map();
@@ -199,6 +202,23 @@ class Arena {
         const from = r.abs !== undefined ? r.abs - this.y0 : base + (r.base || 0);
         return { h: from + slope * u, nx: (-r.dirX * slope) / n, ny: 1 / n, nz: (-r.dirZ * slope) / n, top: true, surface: r.surface };
       }
+    }
+    // A tunnel under the ground: a car below the surface in its line is on its road.
+    for (const tu of this.def.tunnels || []) {
+      if (ly === undefined) break;
+      let best = null;
+      for (let k = 0; k + 1 < tu.pts.length; k++) {
+        const a = tu.pts[k];
+        const b = tu.pts[k + 1];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        const t = Math.max(0, Math.min(1, ((x - a[0]) * (b[0] - a[0]) + (z - a[1]) * (b[1] - a[1])) / (L * L || 1)));
+        const d = Math.hypot(x - a[0] - (b[0] - a[0]) * t, z - a[1] - (b[1] - a[1]) * t);
+        if (d <= tu.half && (!best || d < best.d)) best = { d, y: tu.heights[k] + (tu.heights[k + 1] - tu.heights[k]) * t };
+      }
+      if (!best) continue;
+      const top = (this.heightAt ? this.heightAt(x + this.cx, z + this.cz) : 0) - this.y0;
+      const y = best.y - this.y0;
+      if (top - y > 2.5 && ly < top - 1) return { h: y, nx: 0, ny: 1, nz: 0, top: true, surface: 0 };
     }
     for (const sp of this.def.spirals || []) {
       const dx = x - sp.cx;
@@ -395,6 +415,10 @@ class Arena {
       }
     }
     if (s === 2 && this.sprinklers && this.wetAt(x + this.cx, z + this.cz)) return 4;
+    if (this.flood) {
+      const at = floodAt(this.flood, Math.round(this.time * 60));
+      if (at && (sumpWetAt(this.flood, at, x + this.cx, z + this.cz) || inSurge(this.flood, at, x + this.cx, z + this.cz, (this.heightAt ? this.heightAt(x + this.cx, z + this.cz) : 0) + 0.5))) return 4;
+    }
     return s;
   }
 

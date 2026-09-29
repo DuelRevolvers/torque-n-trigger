@@ -1069,6 +1069,8 @@ function authoredArena(map, site, spec) {
     obstacles, platforms, ramps: (spec.ramps || []).map((r) => ({ ...L(r), render: true })),
     lifts: (spec.lifts || []).map(L), movers: (spec.movers || []).map(L), sweepers: [], hazards: [], holes, surfaces, breakables,
     fence: spec.fence || null, shell: !!spec.shell,
+    // The Undercity: the flood (the Sump's floor goes wet), what's overhead.
+    ...(map.flood && spec.pit ? { flood: map.flood } : {}), ...(map.ceilingAt ? { ceilingAt: map.ceilingAt } : {}),
     barriers: (spec.barriers || []).map(([ax, az, bx, bz]) => [ax - cx, az - cz, bx - cx, bz - cz]),
     limos: (spec.limos || []).map(([ax, az, bx, bz]) => [ax - cx, az - cz, bx - cx, bz - cz]),
   };

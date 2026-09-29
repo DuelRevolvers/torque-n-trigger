@@ -42,7 +42,8 @@ export function buildTrackView(track, tex, opts = {}) {
   // A suburb's route is its own streets and lawns: no road laid over them, no
   // barriers (the property lines are the walls).
   // (The same on the rooftops: the decks, bridges and kickers are the district's.)
-  const suburb = !!opts.look?.suburb || opts.look?.closures === 'transporters';
+  // (And in the Undercity: its streets, cuts, tunnel and drain are the road.)
+  const suburb = !!opts.look?.suburb || opts.look?.closures === 'transporters' || !!opts.look?.under;
   if (!suburb) buildRoad(group, track, mats, groundY, { wallSkip: branches.length ? inBranch : null });
   for (const br of branches) {
     if (!suburb) buildRoad(group, br.track, mats, groundY, { lift: 0.03, wallSkip: inMain, roadMat: branchMaterial(br.kind, tex, mats) });
@@ -67,9 +68,10 @@ export function buildTrackView(track, tex, opts = {}) {
     let n = 0;
     const limos = opts.look?.closures === 'limos';
     const watch = opts.look?.closures === 'watch';
+    const wrecks = opts.look?.closures === 'wrecks';
     for (const [k, c] of (track.closures || []).entries()) {
-      if (limos || watch) {
-        tops.push({ c, y: c.y + (c.bus ? 3.4 : 1.5), bus: c.bus });
+      if (limos || watch || wrecks) {
+        tops.push({ c, y: c.y + (wrecks ? 1.5 : c.bus ? 3.4 : 1.5), bus: c.bus });
         continue;
       }
       const layers = track.authored ? 1 + (k % 3 === 1 ? 1 : 0) : 1 + (rng() < 0.5 ? 1 : 0);
@@ -91,6 +93,7 @@ export function buildTrackView(track, tex, opts = {}) {
     if (stacks.length) group.add(new THREE.Mesh(mergeGeometries(stacks), litMaterial({ map: tex.container, vertexColors: true })));
     if (limos) group.add(limoClosures(track.closures || []));
     if (watch) group.add(watchCars(track.closures || [], track.watchCars || [], tex));
+    if (wrecks) group.add(wreckClosures(track.closures || []));
     const i0 = track.closed ? 0 : 0;
     const masts = [];
     const heads = [];
@@ -106,6 +109,11 @@ export function buildTrackView(track, tex, opts = {}) {
     if (opts.look?.startDressing === 'docks') group.add(docksDressing(track, tex, at, opts.clear || (() => true), tops));
     if (opts.look?.startDressing === 'maple') {
       const dressing = mapleDressing(track, tex, at, opts);
+      group.add(dressing);
+      group.userData.animate = dressing.userData.animate;
+    }
+    if (opts.look?.startDressing === 'under') {
+      const dressing = underDressing(track, tex, at, opts, tops);
       group.add(dressing);
       group.userData.animate = dressing.userData.animate;
     }
@@ -243,6 +251,173 @@ function limoClosures(closures) {
   group.add(new THREE.Mesh(mergeGeometries(body), litMaterial({ color: '#15121c' })));
   group.add(new THREE.Mesh(mergeGeometries(glass), litMaterial({ color: '#2a2440' })));
   group.add(new THREE.Mesh(mergeGeometries(lit), glowMaterial({ color: '#ff5ab8', intensity: 2.2 })));
+  return group;
+}
+
+// The Undercity's closed streets: burnt-out wrecks nose to tail across them,
+// a burning oil drum at each end.
+function wreckClosures(closures) {
+  const body = [];
+  const drums = [];
+  const fire = [];
+  const COLS = ['#4a2a1e', '#3a3432', '#5a3a24', '#2e2a2c', '#6a4a2a'];
+  const tinted = (g, color) => {
+    const c = new THREE.Color(color);
+    const cols = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < cols.length; k += 3) cols.set([c.r, c.g, c.b], k);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return g;
+  };
+  let n = 0;
+  for (const c of closures) {
+    const k = Math.max(1, Math.ceil(c.width / 4.8));
+    const across = [Math.cos(c.yaw), -Math.sin(c.yaw)];
+    for (let q = 0; q < k; q++) {
+      const off = -c.width / 2 + (c.width * (q + 0.5)) / k;
+      const x = c.x + across[0] * off;
+      const z = c.z + across[1] * off;
+      const yaw = c.yaw + Math.PI / 2 + ((n % 3) - 1) * 0.15;
+      body.push(tinted(new THREE.BoxGeometry(1.9, 0.9, 4.5).rotateY(yaw).translate(x, c.y + 0.55, z), COLS[n % COLS.length]));
+      body.push(tinted(new THREE.BoxGeometry(1.7, 0.5, 2.2).rotateY(yaw).translate(x, c.y + 1.25, z), '#1e1a1a'));
+      n++;
+    }
+    for (const s of [-1, 1]) {
+      const x = c.x + across[0] * s * (c.width / 2 + 0.8);
+      const z = c.z + across[1] * s * (c.width / 2 + 0.8);
+      drums.push(new THREE.CylinderGeometry(0.3, 0.3, 0.9, 10).translate(x, c.y + 0.45, z));
+      fire.push(new THREE.ConeGeometry(0.25, 0.8, 6).translate(x, c.y + 1.3, z));
+    }
+  }
+  const group = new THREE.Group();
+  if (!body.length) return group;
+  group.add(new THREE.Mesh(mergeGeometries(body), litMaterial({ vertexColors: true })));
+  group.add(new THREE.Mesh(mergeGeometries(drums), litMaterial({ color: '#5a3a28' })));
+  group.add(new THREE.Mesh(mergeGeometries(fire), glowMaterial({ color: '#ff7a20', intensity: 3 })));
+  return group;
+}
+
+// The Undercity's start: the Crew up on the wrecks nearest the line, road
+// flares down both sides of the grid, their sound-system truck behind the
+// wall. Along the route: burning drums marking the open floor's edges (its
+// walls), guard rails where a road on a ledge drops away. A drag down the
+// drain: the crowd along both tops, behind the fence.
+function underDressing(track, tex, at, opts, tops) {
+  const group = new THREE.Group();
+  const painted = [];
+  const steel = [];
+  const drums = [];
+  const fire = [];
+  const flares = [];
+  const glows = [];
+  const tinted = (g, color) => {
+    const c = new THREE.Color(color);
+    const cols = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < cols.length; k += 3) cols.set([c.r, c.g, c.b], k);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return g;
+  };
+  const CREW = ['#39ff14', '#2a2a30', '#8a8a90', '#05d9e8', '#5a4a3a'];
+  const figure = (px, top, pz, yaw, color) => {
+    const fx = Math.sin(yaw);
+    const fz = Math.cos(yaw);
+    painted.push(
+      tinted(new THREE.BoxGeometry(0.42, 0.85, 0.25).rotateY(yaw).translate(px, top + 0.43, pz), '#1e1e24'),
+      tinted(new THREE.BoxGeometry(0.5, 0.7, 0.3).rotateY(yaw).translate(px, top + 1.2, pz), color),
+      tinted(new THREE.BoxGeometry(0.28, 0.3, 0.28).rotateY(yaw).translate(px, top + 1.72, pz), '#b88a68'),
+      tinted(new THREE.BoxGeometry(0.14, 0.62, 0.14).translate(px + fz * 0.3, top + 1.85, pz - fx * 0.3), color),
+    );
+  };
+  const P = (s, lat) => at(track.indexAtDistance(Math.max(0, Math.min(track.length, s))), lat);
+  const yawAt = (s) => {
+    const a = P(s - 1, 0);
+    const b = P(s + 1, 0);
+    return Math.atan2(b[0] - a[0], b[2] - a[2]);
+  };
+  const ground = opts.heightAt || null;
+  // The Crew on the nearest wrecks.
+  const [sx, , sz] = at(0, 0);
+  (tops || [])
+    .map((t) => ({ ...t, d: Math.hypot(t.c.x - sx, t.c.z - sz) }))
+    .filter((t) => t.d < 250)
+    .sort((p, q) => p.d - q.d)
+    .slice(0, 2)
+    .forEach(({ c, y: top }, k) => {
+      [-3, 0.5, 3.5].forEach((lx, q) => figure(c.x + lx * Math.cos(c.yaw), top, c.z - lx * Math.sin(c.yaw), c.yaw + Math.PI / 2, CREW[(k * 3 + q) % CREW.length]));
+    });
+  // Flares down both sides of the grid.
+  const half = track.localHalf ? track.localHalf(0) : track.halfWidth;
+  for (let s = 0; s <= 60; s += 6) {
+    for (const side of [-1, 1]) {
+      const [x, y, z] = P(s, side * (half + 0.5));
+      flares.push(new THREE.BoxGeometry(0.12, 0.35, 0.12).translate(x, y + 0.18, z));
+      glows.push(new THREE.PlaneGeometry(4, 4).rotateX(-Math.PI / 2).translate(x, y + 0.06, z));
+    }
+  }
+  // The sound-system truck, behind the wall on the first side with room.
+  const W0 = track.localWall ? track.localWall(20) : track.wallDist;
+  for (const side of [-1, 1]) {
+    const [x, y, z] = P(20, side * (W0 + 4));
+    if (opts.clear && !opts.clear(x, z)) continue;
+    const yaw = yawAt(20);
+    painted.push(tinted(new THREE.BoxGeometry(2.5, 3.2, 8).rotateY(yaw).translate(x, y + 1.9, z), '#2a2a34'));
+    painted.push(tinted(new THREE.BoxGeometry(2.4, 2, 2.4).rotateY(yaw).translate(x + Math.sin(yaw) * 5, y + 1.3, z + Math.cos(yaw) * 5), '#3a3a44'));
+    for (const q of [-2.5, 0, 2.5]) glows.push(new THREE.CircleGeometry(0.6, 12).rotateY(yaw - side * Math.PI / 2).translate(x - Math.cos(yaw) * side * 1.27 + Math.sin(yaw) * q, y + 2.2, z + Math.sin(yaw) * side * 1.27 + Math.cos(yaw) * q));
+    break;
+  }
+  // Drums along the open floor's edges; guard rails along ledges.
+  for (const sec of track.sections || []) {
+    if (sec.open) {
+      for (let s = sec.s0; s < Math.min(sec.s1, track.length); s += 7) {
+        for (const side of [-1, 1]) {
+          const [x, y, z] = P(s, side * (sec.wall + 0.6));
+          drums.push(new THREE.CylinderGeometry(0.3, 0.3, 0.9, 10).translate(x, y + 0.45, z));
+          fire.push(new THREE.ConeGeometry(0.25, 0.8, 6).translate(x, y + 1.3, z));
+        }
+      }
+    }
+    if (sec.cut && ground) {
+      for (let s = sec.s0; s + 3 < Math.min(sec.s1, track.length); s += 3) {
+        for (const side of [-1, 1]) {
+          const a = P(s, side * (sec.wall + 0.15));
+          const b = P(s + 3, side * (sec.wall + 0.15));
+          if (ground(a[0], a[2]) > a[1] - 0.8 && ground(b[0], b[2]) > b[1] - 0.8) continue;
+          steel.push(new THREE.BoxGeometry(0.12, 0.9, 0.12).translate(a[0], a[1] + 0.45, a[2]));
+          const L = Math.hypot(b[0] - a[0], b[2] - a[2]);
+          const rail = new THREE.BoxGeometry(0.1, 0.25, L);
+          rail.rotateX(-Math.atan2(b[1] - a[1], L));
+          rail.rotateY(Math.atan2(b[0] - a[0], b[2] - a[2]));
+          rail.translate((a[0] + b[0]) / 2, (a[1] + b[1]) / 2 + 0.8, (a[2] + b[2]) / 2);
+          steel.push(rail);
+        }
+      }
+    }
+    // A drag down the drain: the crowd along both tops, behind the fence.
+    if (sec.bank && !track.closed) {
+      const b = sec.bank;
+      const top = b.flat + b.rise / b.slope;
+      for (let s = Math.max(sec.s0, 0); s < Math.min(sec.s1, 220); s += 4) {
+        for (const side of [-1, 1]) {
+          const lat = b.c + side * (top + 3);
+          const [x, y0, z] = P(s, lat);
+          const y = ground ? ground(x, z) : y0 + b.rise;
+          const yaw = yawAt(s) - side * Math.PI / 2;
+          for (const q of [0, 1.8]) figure(x + Math.sin(yaw) * -q, y, z + Math.cos(yaw) * -q, yaw, CREW[Math.floor(s / 4 + q + side) % CREW.length]);
+        }
+      }
+    }
+  }
+  const add = (list, mat) => list.length && group.add(new THREE.Mesh(mergeGeometries(list), mat));
+  add(painted, litMaterial({ vertexColors: true }));
+  add(steel, litMaterial({ color: '#6a6878' }));
+  add(drums, litMaterial({ color: '#5a3a28' }));
+  const fireMat = glowMaterial({ color: '#ff7a20', intensity: 3 });
+  add(fire, fireMat);
+  add(flares, glowMaterial({ color: '#ff2a2a', intensity: 4 }));
+  const glowMat = additiveMaterial({ map: tex.glow, color: '#ff3a2a', opacity: 0.45 });
+  add(glows, glowMat);
+  group.userData.animate = (t, real = t) => {
+    glowMat.opacity = 0.38 + Math.sin(real * 11) * 0.06 + Math.sin(real * 17.3) * 0.04;
+  };
   return group;
 }
 

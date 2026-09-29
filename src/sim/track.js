@@ -7,6 +7,13 @@ export const SURFACE = Object.freeze({ ROAD: 0, CURB: 1, OFFROAD: 2, SAND: 3, WE
 
 import { wetAt } from './sprinklers.js';
 import { pointInPoly as inPoly } from './geom2d.js';
+import { floodAt, inSurge, sumpWetAt } from './flood.js';
+
+// Wet from the flood: in the surge on the drain's bed, or on the Sump's floor.
+const floodWet = (f, x, z, y, t) => {
+  const at = floodAt(f, Math.round(t * 60));
+  return !!at && (inSurge(f, at, x, z, y) || sumpWetAt(f, at, x, z));
+};
 
 const SEARCH_WINDOW = 16; // samples either side of the hint index
 const SECTION_RAMP = 8; // metres over which a street's width blends into the next
@@ -55,7 +62,9 @@ export function buildTrack(def) {
   if (def.obstacles?.length) track.setObstacles(def.obstacles);
   track.sprinklers = def.sprinklers?.length ? def.sprinklers : null; // lawn sprinklers: { x, z, id }
   track.breakables = def.breakables?.length ? def.breakables : null; // fences, mailboxes, bins
-  track.gusts = def.gusts || null; // the river gusts (Chrome Heights): exposed on bridges, gaps, the Straight
+  track.gusts = def.gusts || null;
+  track.flood = def.flood || null; // the flash flood (the Undercity)
+  track.ceilingAt = def.ceilingAt || null; // what's overhead (the deck, a tunnel's roof), for the camera // the river gusts (Chrome Heights): exposed on bridges, gaps, the Straight
   // Ground in the run-off that isn't grass: sand bunkers, paved car parks ({ poly, surface }).
   track.patches = def.patches?.length ? def.patches.map((p) => ({ ...p, box: p.box || bounds2(p.poly) })) : null;
   track.jumps = jumps;
@@ -258,7 +267,7 @@ class Track {
   query(x, z, hint = -1, y) {
     const r = this.queryMain(x, z, hint);
     const best = this.branches ? this.queryBranches(x, z, r) : r;
-    return this.obstacles || this.sprinklers || this.patches ? this.solidAt(x, z, y, best) : best;
+    return this.obstacles || this.sprinklers || this.patches || this.flood ? this.solidAt(x, z, y, best) : best;
   }
 
   // The lawns under a sprinkler are wet; an obstacle inside the walls is a wall.
@@ -269,6 +278,7 @@ class Track {
       if (p !== null) out = { ...g, surface: p };
     }
     if (this.sprinklers && out.surface === SURFACE.OFFROAD && this.wetAt(x, z)) out = { ...out, surface: SURFACE.WET };
+    if (this.flood && floodWet(this.flood, x, z, y ?? g.height, this.time || 0)) out = { ...out, surface: SURFACE.WET };
     if (!this.obstacles) return out;
     const list = this.obstacleGrid.get(Math.floor(x / 16) * 100003 + Math.floor(z / 16));
     if (!list) return out;
@@ -383,6 +393,25 @@ class Track {
     // (Off the road: grass, or a roof deck's concrete where the section says so.)
     const surface = abs <= half ? road : abs <= half + Math.max(this.curbWidth, sec?.walk || 0) ? (this.surfaceAll ?? SURFACE.CURB) : sec?.off ?? SURFACE.OFFROAD;
     let reported = squeeze > 0 ? Math.sign(lateral) * (abs + squeeze) : lateral;
+    // A banked cross-section (the storm drain): a flat bed, a trench, sloped walls.
+    let lift = 0;
+    if (sec?.bank) {
+      const b = sec.bank;
+      const d = Math.abs(lateral - b.c);
+      if (d > b.flat) {
+        lift = Math.min(b.rise, (d - b.flat) * b.slope);
+        if (lift < b.rise) {
+          const sg = Math.sign(lateral - b.c);
+          const tx = nx - rx * b.slope * sg;
+          const tz = nz - rz * b.slope * sg;
+          const tl = Math.hypot(tx, ny, tz);
+          nx = tx / tl;
+          ny /= tl;
+          nz = tz / tl;
+        }
+      }
+    }
+    if (sec?.trench && sec.trench.half && Math.abs(lateral - sec.trench.c) < sec.trench.half) lift -= sec.trench.depth;
     // Inside the median: a wall pushing out to the side the point is on.
     const median = this.medians ? this.medianAt(s) : 0;
     if (median && abs < median && median - abs > abs + squeeze - this.wallDist) reported = -(Math.sign(lateral) || 1) * (this.wallDist + median - abs);
@@ -394,7 +423,7 @@ class Track {
       trueLateral: lateral,
       overrun: Math.sqrt(Math.max(0, seg.d - lateral * lateral)), // distance past an open end
 
-      height: this.y[i0] + (this.y[i1] - this.y[i0]) * u - this.gapDrop(this.s[i0] + u * this.step),
+      height: this.y[i0] + (this.y[i1] - this.y[i0]) * u - this.gapDrop(this.s[i0] + u * this.step) + lift,
       nx,
       ny,
       nz,

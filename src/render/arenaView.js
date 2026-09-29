@@ -220,7 +220,7 @@ const RUBBLE = [[-0.4, -0.3, 0.5, 0.5, 1], [0.35, 0.2, 0.5, 0.55, 0.8], [0.1, -0
 
 export function buildAuthoredStructures(style, tex, heightAt = null) {
   const group = new THREE.Group();
-  const geos = { steel: [], yellow: [], dark: [], concrete: [], grating: [], containers: [], painted: [], lamps: [], mesh: [] };
+  const geos = { steel: [], yellow: [], dark: [], concrete: [], grating: [], containers: [], painted: [], lamps: [], mesh: [], fire: [] };
   const signs = [];
   const mesh = (list, mat) => list.length && group.add(new THREE.Mesh(mergeGeometries(list), mat));
   const liftPads = [];
@@ -238,7 +238,7 @@ export function buildAuthoredStructures(style, tex, heightAt = null) {
         for (const [fx, fz, fw, fd, fh] of RUBBLE) geos.concrete.push(box(o.hw * 2 * fw, o.h * fh, o.hd * 2 * fd, o.x + o.hw * fx, gy + (o.h * fh) / 2, o.z + o.hd * fz));
       } else if (o.kind === 'craneLeg') {
         geos.yellow.push(box(o.hw * 2, o.h, o.hd * 2, o.x, gy + o.h / 2, o.z));
-      } else if (stadiumPiece(o, gy, geos, signs)) {
+      } else if (stadiumPiece(o, gy, geos, signs) || underPiece(o, gy, geos)) {
         // (Hollow High's stadium: drawn by stadiumPiece.)
       } else {
         geos.steel.push(box(o.hw * 2, o.h + 1, o.hd * 2, o.x, gy + (o.h - 1) / 2, o.z));
@@ -287,6 +287,7 @@ export function buildAuthoredStructures(style, tex, heightAt = null) {
   mesh(geos.painted, litMaterial({ vertexColors: true }));
   mesh(geos.lamps, glowMaterial({ color: '#fff4dc', intensity: 3 }));
   mesh(geos.mesh, litMaterial({ color: '#3a3a44', transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
+  mesh(geos.fire, glowMaterial({ color: '#ff7a20', intensity: 3 }));
   for (const [str, color, x, y, z, fx, fz, w] of signs) {
     const t = textTexture(str, color, '#141018');
     const h = (w * t.image.height) / t.image.width;
@@ -379,6 +380,25 @@ function stadiumPiece(o, gy, geos, signs) {
   return false;
 }
 
+// The Undercity's pieces: oil drums with fires in them (Pillar Hall), site
+// cabins. Returns false for anything else.
+function underPiece(o, gy, geos) {
+  if (o.kind === 'barrel') {
+    geos.painted.push(tint(new THREE.CylinderGeometry(o.hw, o.hw, o.h, 12).translate(o.x, gy + o.h / 2, o.z), '#5a3a28'));
+    geos.dark.push(new THREE.CylinderGeometry(o.hw + 0.03, o.hw + 0.03, 0.08, 12).translate(o.x, gy + o.h * 0.7, o.z));
+    geos.fire.push(new THREE.ConeGeometry(o.hw * 0.8, 0.9, 6).translate(o.x, gy + o.h + 0.4, o.z));
+    return true;
+  }
+  if (o.kind === 'cabin') {
+    const yaw = o.yaw || 0;
+    geos.painted.push(tint(box(o.hw * 2, o.h, o.hd * 2, o.x, gy + o.h / 2, o.z, yaw), '#6a7a6a'));
+    geos.dark.push(box(o.hw * 2 + 0.2, 0.2, o.hd * 2 + 0.2, o.x, gy + o.h + 0.1, o.z, yaw));
+    for (const f of [-0.5, 0, 0.5]) geos.lamps.push(box(o.hw * 2 + 0.04, 0.8, 1.2, o.x + Math.sin(yaw) * f * o.hd * 2, gy + o.h * 0.6, o.z + Math.cos(yaw) * f * o.hd * 2, yaw));
+    return true;
+  }
+  return false;
+}
+
 // Cranes. The hook: a portal crane over the yard (its legs are obstacles),
 // the trolley running along the girders with the hook hung at car height.
 // The overhead crane: runways along the hall's long walls, the bridge
@@ -432,6 +452,9 @@ function authoredArenaView(group, def, tex, look) {
   // Chrome Heights with Kessler car transporters.)
   const watch = look?.closures === 'watch';
   const transporter = look?.closures === 'transporters';
+  // (The Undercity: burnt-out wrecks.)
+  const wrecks = look?.closures === 'wrecks';
+  const WRECK = ['#4a2a1e', '#3a3432', '#5a3a24', '#2e2a2c', '#6a4a2a'];
   const WATCH = ['#e8e4dc', '#7a8a9a', '#8a2a2a', '#2a4a6a', '#c8b890'];
   const mesh = (list, mat) => list.length && group.add(new THREE.Mesh(mergeGeometries(list), mat));
   const floor = (x, z) => (def.heightAt ? def.heightAt(x + def.cx, z + def.cz) - def.y : 0);
@@ -463,6 +486,12 @@ function authoredArenaView(group, def, tex, look) {
         for (const [q, dy] of [[-0.25, 2.5], [0.25, 2.5], [-0.25, 4.7], [0.25, 4.7]]) geos.watch.push(tint(box(1.8, 1, 4, x + along[0] * q * seg, y + dy, z + along[1] * q * seg, yaw), ['#c8ccd4', '#05d9e8', '#1a1a20', '#e8e8f0'][(q > 0 ? 1 : 0) + (dy > 3 ? 2 : 0)]));
         continue;
       }
+      if (wrecks) {
+        const w = yaw + ((q % 3) - 1) * 0.15;
+        geos.watch.push(tint(box(1.9, 0.9, 4.5, x, y + 0.55, z, w), WRECK[q % WRECK.length]));
+        geos.watch.push(tint(box(1.7, 0.5, 2.2, x, y + 1.25, z, w), '#1e1a1a'));
+        continue;
+      }
       if (watch) {
         geos.watch.push(tint(box(1.95, 1.25, 4.8, x, y + 0.95, z, yaw), WATCH[q % WATCH.length]));
         geos.glass.push(box(1.85, 0.5, 3.6, x, y + 1.8, z, yaw));
@@ -488,6 +517,16 @@ function authoredArenaView(group, def, tex, look) {
       const lamps = [box(0.4, 0.3, 0.4, -m.hw, 1.6, m.hd), box(0.4, 0.3, 0.4, m.hw, 1.6, m.hd), box(0.4, 0.4, 0.4, 0, m.h + 0.5, 0)];
       bus.add(new THREE.Mesh(mergeGeometries(steel), litMaterial({ color: '#c8ccd4' })));
       bus.add(new THREE.Mesh(mergeGeometries(lamps), glowMaterial({ color: '#ffb040', intensity: 2.6 })));
+      group.add(bus);
+      return { m, bus };
+    }
+    if (m.kind === 'magnet') {
+      // The scrap crane's magnet, swung out over the Sump on its cable (the crane
+      // stands at the rim); its face glows when it's live.
+      const steel = [new THREE.CylinderGeometry(m.hw, m.hw, m.h * 0.6, 20).translate(0, m.h * 0.7, 0), box(0.2, 44, 0.2, 0, m.h + 22, 0), box(3, 1.5, 3, 0, m.h + 44, 0)];
+      const glow = [new THREE.CylinderGeometry(m.hw - 0.2, m.hw - 0.2, 0.1, 20).translate(0, m.h * 0.4, 0)];
+      bus.add(new THREE.Mesh(mergeGeometries(steel), STEEL()));
+      bus.add(new THREE.Mesh(mergeGeometries(glow), glowMaterial({ color: '#ff3a20', intensity: 2.6 })));
       group.add(bus);
       return { m, bus };
     }

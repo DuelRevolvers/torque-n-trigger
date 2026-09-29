@@ -43,6 +43,9 @@ export class CameraRig {
     const g = this.track.query(cam.x, cam.z, this.hint);
     this.hint = g.index;
     cam.y = Math.max(cam.y, g.height + 0.8);
+    // Under a ceiling (the Undercity's deck, a tunnel's roof): stay beneath it.
+    const ceil = this.track.ceilingAt?.(cam.x, cam.z, pose.pos.y);
+    if (ceil != null) cam.y = Math.min(cam.y, ceil - 0.9);
 
     _look.set(pose.pos.x + dir.x * 4, pose.pos.y + 0.7, pose.pos.z + dir.z * 4);
     this.camera.lookAt(_look);

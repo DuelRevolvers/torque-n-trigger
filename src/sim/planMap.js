@@ -14,6 +14,7 @@
 
 import * as G from './geom2d.js';
 import { roofTerrain, densify, helix, roofCrossings } from './planRoofMap.js';
+import { underTerrain, underStreets } from './planUnderMap.js';
 
 export const WIDTHS = { lane: 7, court: 10, street: 12, avenue: 20 };
 export const SIDEWALK = 4;
@@ -120,7 +121,7 @@ export function planMap(style) {
   const P = style.plan;
   const nb = G.polyBounds(P.boundary);
   // A rooftop district (decks at heights) has its own ground.
-  const terrain = P.decks ? roofTerrain(P) : planTerrain(P);
+  const terrain = P.decks ? roofTerrain(P) : P.pit || P.drain ? underTerrain(P) : planTerrain(P);
   const { heightAt } = terrain;
 
   const nodes = [];
@@ -138,8 +139,11 @@ export function planMap(style) {
   };
 
   // Streets: widths, and the points their centrelines run through.
-  const sidewalkOf = (s) => (s.width === 'lane' || s.surface === 'dirt' ? 0 : P.sidewalk ?? SIDEWALK);
-  const streets = P.streets.map((s, k) => {
+  // (Tunnels and cuts have walls, not sidewalks; the storm drain's walls and fence stand in for them.)
+  const sidewalkOf = (s) => (s.width === 'lane' || s.surface === 'dirt' || s.tunnel || s.descends ? 0 : s.drain ? 12 : P.sidewalk ?? SIDEWALK);
+  // The storm drain is a street too: its bed, from the Culvert to the Outfall.
+  const specs = [...P.streets, ...(P.drain ? [{ name: 'The Drain', width: P.drain.bed, path: ['culvert', 'drain-ramp', 'outfall'], drain: true }] : [])];
+  const streets = specs.map((s, k) => {
     const width = typeof s.width === 'number' ? s.width : WIDTHS[s.width || 'street'];
     const sidewalk = sidewalkOf(s);
     return { ...s, k, width, half: width / 2, sidewalk, edge: width / 2 + sidewalk, median: s.median || 0 };
@@ -245,6 +249,7 @@ export function planMap(style) {
     for (let j = i + 1; j < edgeList.length; j++) {
       const e = edgeList[i];
       const f = edgeList[j];
+      if (e.street.tunnel || f.street.tunnel) continue; // a tunnel runs under the streets it crosses
       const shared = [e.a, e.b].filter((n) => n === f.a || n === f.b).map((n) => nodes[n]);
       for (let p = 0; p + 1 < e.pts.length; p++) {
         for (let q = 0; q + 1 < f.pts.length; q++) {
@@ -266,8 +271,10 @@ export function planMap(style) {
   // They're snapped onto it, and the boundary joins the network there.
   const bnd = P.boundary;
   const onSeg = bnd.map(() => []);
+  // (Only a road named for the next district leaves it; any other end is a dead end.)
+  const OUT = new Set(['rustline', 'strip', 'maple', 'chrome', 'undercity', 'spire']);
   for (const n of nodes) {
-    if (degree[n.id] !== 1) continue;
+    if (degree[n.id] !== 1 || !OUT.has(n.name)) continue;
     let best = null;
     bnd.forEach((a, k) => {
       const b = bnd[(k + 1) % bnd.length];
@@ -300,11 +307,16 @@ export function planMap(style) {
   // Rooftops: the crossings between decks, and every node at its deck's height.
   const crossings = terrain.roof ? roofCrossings(edgeList, terrain, P, byName) : [];
   if (terrain.roof) for (const n of nodes) n.y = heightAt(n.x, n.z);
+  // The Undercity: every street's heights (its descents cut into the ground), and its nodes on them.
+  if (terrain.under) {
+    underStreets(streets, terrain, P);
+    for (const st of streets) for (const m of st.marks || []) m.node.y = st.heights[m.k];
+  }
 
   // Blocks: trace the faces of the network (streets and boundary). Each edge is
   // two half-edges, twins; a face turns to the next half-edge round each node.
   const outs = nodes.map(() => []);
-  for (const e of terrain.roof ? [] : [...edgeList, ...boundaryEdges]) {
+  for (const e of terrain.roof ? [] : [...edgeList, ...boundaryEdges].filter((q) => !q.street?.tunnel)) {
     const h1 = { e, from: e.a, to: e.b, pts: e.pts };
     const h2 = { e, from: e.b, to: e.a, pts: [...e.pts].reverse() };
     h1.twin = h2;
@@ -367,7 +379,7 @@ export function planMap(style) {
     }
     for (const fr of frontages) fr.len = G.lineLength(fr.pts);
     const c = G.polyCentroid(lot);
-    const kind = ringOf ? (ringOf.green ? 'green' : 'island') : 'buildings';
+    const kind = ringOf ? (ringOf.green ? 'green' : 'island') : P.defaultLot || 'buildings';
     blocks.push({ id: blocks.length, face: f.poly, lot, frontages, x: c[0], z: c[1], kind, lots: [], ring: ringOf });
   }
   const blockAt = (x, z) => blocks.find((b) => G.pointInPoly(x, z, b.lot)) || blocks.find((b) => G.pointInPoly(x, z, b.face)) || null;
@@ -427,7 +439,8 @@ export function planMap(style) {
   const deckPoly = (name) => P.decks.find((d) => d.name === name).poly;
   const sites = P.sites.map((s) => {
     const box = (at, [w, d]) => [[at[0] - w / 2, at[1] - d / 2], [at[0] + w / 2, at[1] - d / 2], [at[0] + w / 2, at[1] + d / 2], [at[0] - w / 2, at[1] + d / 2]];
-    const poly = s.poly || (s.deck && deckPoly(s.deck)) || (s.size && box(s.at, s.size)) || s.path;
+    const pitRing = () => [...Array(32).keys()].map((k) => [P.pit.c[0] + Math.cos((k / 32) * Math.PI * 2) * (P.pit.rim + 4), P.pit.c[1] + Math.sin((k / 32) * Math.PI * 2) * (P.pit.rim + 4)]);
+    const poly = s.poly || (s.deck && deckPoly(s.deck)) || (s.size && box(s.at, s.size)) || (s.pit && pitRing()) || s.path;
     if (!s.poly && poly !== s.path) s = { ...s, poly };
     const c = G.polyCentroid(poly);
     const b = G.polyBounds(poly);
@@ -435,7 +448,7 @@ export function planMap(style) {
       ...s, x: c[0], z: c[1], y: heightAt(c[0], c[1]),
       lot: [b.minX, b.maxX, b.minZ, b.maxZ], sizeX: b.maxX - b.minX, sizeZ: b.maxZ - b.minZ,
     };
-    if (s.path) site.way = joinWay(s.path);
+    if (s.path && typeof s.path !== 'string') site.way = joinWay(s.path); // (a street named as its way is just that street)
     return site;
   });
   const corridors = [];
@@ -477,5 +490,10 @@ export function planMap(style) {
     roof: !!terrain.roof, decks: terrain.decks || null, deckAt: terrain.deckAt || null, lineHeightAt: terrain.lineHeightAt || null, crossings,
     spirals: streets.filter((q) => q.helix).map((q) => ({ ...q.helix, street: q.name })),
     gusts: P.gusts ? { ...P.gusts, seed: style.seed } : null,
+    // The Undercity: the deck overhead, the pit and its floor (driven straight across), the drain, the flood.
+    under: !!terrain.under, deck: P.deck || null, pit: P.pit || null, drain: P.drain || null,
+    underDeck: terrain.underDeck || null, ceilingAt: terrain.ceilingAt || null, tunnelAt: terrain.tunnelAt || null, natural: terrain.natural || null, cutAt: terrain.cutAt || null, deckEdgeZ: terrain.deckEdgeZ || null,
+    opens: P.pit ? [{ kind: 'floor', c: P.pit.c, r: P.pit.floor, y: -P.pit.depth }] : [],
+    flood: P.flood ? { ...P.flood, seed: style.seed, drain: P.drain, pit: P.pit } : null,
   };
 }

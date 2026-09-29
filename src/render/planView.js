@@ -10,6 +10,7 @@ import { deadSignShape } from './deadSigns.js';
 import * as G from '../sim/geom2d.js';
 import { suburbView } from './suburbView.js';
 import { buildRoofDistrictView } from './roofView.js';
+import { underView } from './underView.js';
 
 // A plan district (the Neon Strip on): its ground in layers (sidewalk
 // everywhere, the lots on top, then the site surfaces, the roads along their
@@ -84,8 +85,9 @@ export function buildPlanDistrictView(map, tex) {
     trunk: litMaterial({ color: '#5a4030' }),
   };
   const neonMat = [...Array(neonN).keys()].map((k) => glowMaterial({ color: look.neon[k], intensity: 2.6 }));
-  // A suburb (Maple Hollow) has its own ground and house kit.
-  const suburb = look.suburb ? suburbView({ map, tex, H, group, items: layout.items, text, clipToConvex, merged }) : null;
+  // A suburb (Maple Hollow) has its own ground and house kit; so has the Undercity.
+  const kitArgs = { map, tex, H, group, items: layout.items, text, clipToConvex, merged };
+  const kit = look.suburb ? suburbView(kitArgs) : look.under ? underView(kitArgs) : null;
 
   // Buckets, merged into one mesh per material at the end.
   const B = { building: [], glass: [], painted: [], dark: [], steel: [], concrete: [], containers: [], gold: [], white: [], lamp: [], pool: [], screen: [], plant: [], trunk: [], signs: [], water: [] };
@@ -95,7 +97,7 @@ export function buildPlanDistrictView(map, tex) {
 
   // --- The ground, in layers ---
   // (Layers a few centimetres apart, and pulled forward in depth, so they never fight.)
-  if (suburb) suburb.ground();
+  if (kit) kit.ground();
   else cityGround();
   function cityGround() {
   add(new THREE.Mesh(flatPoly(P.boundary, (x, z) => H(x, z) - 0.16), mats.walk));
@@ -139,6 +141,8 @@ export function buildPlanDistrictView(map, tex) {
   const junctionGeos = [];
   for (const e of map.edgeList) {
     const st = e.street;
+    // (The Undercity's drain is its ground; the Low Road draws its own road.)
+    if (st.drain || st.tunnel) continue;
     const c0 = clearAt.get(`${e.id}:${e.a}`) || 0;
     const c1 = clearAt.get(`${e.id}:${e.b}`) || 0;
     if (e.len - c0 - c1 < 0.5) continue;
@@ -149,7 +153,7 @@ export function buildPlanDistrictView(map, tex) {
     markings(marks, pts, st);
   }
   for (const n of map.nodes) {
-    if (!n.name) continue;
+    if (!n.name || map.edgeList.some((e) => (e.a === n.id || e.b === n.id) && e.street.drain)) continue;
     const poly = junctionPoly(n);
     if (poly) junctionGeos.push(flatPoly(poly, (x, z) => H(x, z) - 0.035));
   }
@@ -192,12 +196,12 @@ export function buildPlanDistrictView(map, tex) {
   const DRAW = makeDrawers({ B, neon, flicker, speakers, sprays, text, sign, frontOf, buildingBox, H, look });
   for (const it of layout.items) {
     if (it.hidden) continue;
-    const own = suburb?.drawers[it.t];
+    const own = kit?.drawers[it.t];
     if (own && own(it) !== false) continue;
     const draw = DRAW[it.t];
     if (draw) draw(it);
   }
-  const sub = suburb?.finish();
+  const sub = kit?.finish();
 
   // --- Merge ---
   const mesh = (list, mat) => list.length && add(new THREE.Mesh(merged(list), mat));
@@ -244,7 +248,7 @@ export function buildPlanDistrictView(map, tex) {
   const minY = Math.min(...P.boundary.map(([x, z]) => H(x, z)));
   tex.ground.repeat.set(500, 500);
   // (A suburb's own ground runs on well beyond its edge, round its hills.)
-  if (!suburb) add(new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000).rotateX(-Math.PI / 2).translate(0, minY - 3, 0), new THREE.MeshLambertMaterial({ map: tex.ground })));
+  if (!kit) add(new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000).rotateX(-Math.PI / 2).translate(0, minY - 3, 0), new THREE.MeshLambertMaterial({ map: tex.ground })));
   tex.skyline.repeat.set(6, 1);
   const sky = new THREE.Mesh(new THREE.CylinderGeometry(1500, 1500, 320, 48, 1, true), new THREE.MeshBasicMaterial({ map: tex.skyline, side: THREE.BackSide, alphaTest: 0.5, fog: false }));
   sky.position.set(0, minY + 130, 0);

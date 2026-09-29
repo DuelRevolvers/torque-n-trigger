@@ -9,6 +9,7 @@ import { hitByTruck } from './truck.js';
 import { hitByRv } from './rv.js';
 import { hitBreakables } from './breakables.js';
 import { applyGusts } from './gusts.js';
+import { applyFlood } from './flood.js';
 import { initCombat, initCombatWorld, updateMods, updateCombat, collideCars, ringOut } from './combat.js';
 import { neutralInput } from './input.js';
 import { initEventCar, eventInput, updateEvent } from './event.js';
@@ -61,6 +62,7 @@ export function stepWorld(world, inputs) {
   if (track.rv) hitByRv(world);
   if (track.breakables) hitBreakables(world);
   if (track.gusts) applyGusts(world);
+  if (track.flood) applyFlood(world);
   updateCombat(world, effective, SIM_DT, respawnCar);
   if (state.event) updateEvent(world, SIM_DT);
   state.tick++;
