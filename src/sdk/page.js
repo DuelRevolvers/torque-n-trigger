@@ -171,7 +171,7 @@ export const SDK_HTML = `
         <div id="start-mine"></div>
       </div>
       <h4>New</h4>
-      <button id="start-blank">A blank district</button>
+      <div class="orow"><label>A blank district in the style of <select id="blank-style"></select></label><button id="start-blank">New</button></div>
       <h4>From a file</h4>
       <button id="start-file">Open a .ttmap file…</button>
       <div id="start-overrides-box" hidden>

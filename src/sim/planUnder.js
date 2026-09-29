@@ -24,7 +24,7 @@ export function underLayout(ctx) {
     return best;
   };
   const pit = P.pit;
-  const rOf = (x, z) => Math.hypot(x - pit.c[0], z - pit.c[1]);
+  const rOf = (x, z) => (pit ? Math.hypot(x - pit.c[0], z - pit.c[1]) : Infinity);
   const hall = map.sites.find((s) => s.name === 'Pillar Hall');
   const lowRoad = map.streets.find((st) => st.tunnel);
 
@@ -61,7 +61,7 @@ export function underLayout(ctx) {
       for (let z = Math.ceil(b.minZ / step) * step; z <= b.maxZ; z += step) {
         if (!map.underDeck(x, z) || !G.pointInPoly(x, z, P.boundary)) continue;
         if (hall && G.pointInPoly(x, z, hall.poly)) continue;
-        if (offRoad(x, z) < 3 || offRoad(x, z, [lowRoad]) < 3) continue;
+        if (offRoad(x, z) < 3 || (lowRoad && offRoad(x, z, [lowRoad]) < 3)) continue;
         pillar(x, z);
       }
     }
@@ -101,6 +101,7 @@ export function underLayout(ctx) {
   // Shacks and container homes in terraces up the pit walls, clear of the
   // Spiral, the Throat and the Low Road's mouth; ladders and washing lines.
   function terraces() {
+    if (!pit) return;
     let k = 0;
     for (const r of U.terraces) {
       const n = Math.floor((2 * Math.PI * r) / 13);
@@ -109,7 +110,7 @@ export function underLayout(ctx) {
         const a = (q / n) * Math.PI * 2;
         const x = pit.c[0] + Math.cos(a) * r;
         const z = pit.c[1] + Math.sin(a) * r;
-        if (offRoad(x, z) < 9 || offRoad(x, z, [lowRoad]) < 9) {
+        if (offRoad(x, z) < 9 || (lowRoad && offRoad(x, z, [lowRoad]) < 9)) {
           prev = null;
           continue;
         }
@@ -131,6 +132,7 @@ export function underLayout(ctx) {
   function market() {
     const m = U.market;
     const site = map.sites.find((s) => s.kind === 'market');
+    if (!m || !site) return;
     const lane = map.streets.find((st) => st.name === m.lane);
     if (!site || !lane) return;
     let k = 0;
@@ -155,6 +157,7 @@ export function underLayout(ctx) {
   // The scrapyard: stacks of crushed cars, the scrap crane and its magnet, a fence.
   function scrapyard() {
     const s = U.scrap;
+    if (!s) return;
     s.stacks.forEach(([x, z], k) => obbItem('scrapStack', { x, z, hw: 2.2, hd: 4.4, yaw: (k % 3) * 0.3 }, 3 + (k % 3), { cycle: k }));
     const [cx, cz] = s.crane;
     obbItem('scrapCrane', { x: cx, z: cz, hw: 2.5, hd: 3.5, yaw: 0 }, 4, { cycle: 0 });
@@ -165,7 +168,7 @@ export function underLayout(ctx) {
 
   // The tank farm: old fuel and water tanks, pipe racks.
   function tankFarm() {
-    U.tanks.forEach(([x, z, r], k) => {
+    (U.tanks || []).forEach(([x, z, r], k) => {
       const poly = [...Array(14).keys()].map((q) => [x + Math.cos((q / 14) * Math.PI * 2) * r, z + Math.sin((q / 14) * Math.PI * 2) * r]);
       polyItem('tank', poly, 10 + (k % 3) * 3, { cycle: k, rad: r });
     });
@@ -180,7 +183,7 @@ export function underLayout(ctx) {
       deco('pipes', { a, b, y: H(a[0], a[1]) + 5 });
     }
     const farm = map.sites.find((q) => q.kind === 'tanks');
-    fenceRound(farm.poly, 3);
+    if (farm) fenceRound(farm.poly, 3);
   }
 
   // A chain-link fence round a polygon, open where streets meet it.
@@ -201,6 +204,7 @@ export function underLayout(ctx) {
   // The Sump: the half-sunk bus, the inlet pipe in the wall, drain grates.
   function sump() {
     const s = U.sump;
+    if (!s || !pit) return;
     obbItem('sunkBus', s.bus, 3.2 - s.bus.sink, { y: H(s.bus.x, s.bus.z) - s.bus.sink, cycle: 0 });
     deco('inlet', { x: s.inlet[0], z: s.inlet[1], y: H(...s.inlet) + 2, toward: [pit.c[0] - s.inlet[0], pit.c[1] - s.inlet[1]] });
     for (const [x, z] of s.grates) deco('grate', { x, z, y: H(x, z) });
@@ -210,6 +214,7 @@ export function underLayout(ctx) {
   // at the west, a chain-link fence along both tops, sirens and strobes.
   function drain() {
     const d = P.drain;
+    if (!d) return;
     const run = d.depth / Math.tan((d.walls * Math.PI) / 180);
     const top = d.bed / 2 + run;
     // The Culvert: a concrete headwall round the tunnel mouth, the tunnel's back wall.
@@ -253,6 +258,7 @@ export function underLayout(ctx) {
 
   // A chain-link fence round the pit's rim, open where the roads go in.
   function rimFence() {
+    if (!pit) return;
     const r = pit.rim + 3;
     const n = Math.floor((2 * Math.PI * r) / 6);
     for (let q = 0; q < n; q++) {

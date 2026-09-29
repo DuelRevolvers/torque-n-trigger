@@ -17,6 +17,7 @@ import { PadNav } from './ui/padNav.js';
 import { loadCareer, clearCareer, saveCareer, unlockAll, relockAll, activeCar } from './career/career.js';
 import { roamEvent, districtEvents } from './career/districts.js';
 import { districtFromDoc, migrateDoc } from './content/mapDoc.js';
+import { sdkGet } from './content/library.js';
 import { getVenue } from './sim/tracks/venues.js';
 import { generateStarters } from './parts/starters.js';
 import { StarterScreen } from './screens/starterScreen.js';
@@ -212,7 +213,7 @@ syncUnlockAll();
 function testDrive() {
   if (!new URLSearchParams(window.location.search).has('testdrive')) return null;
   try {
-    const { doc, spawn, event: key } = JSON.parse(localStorage.getItem('tt-sdk:testdrive'));
+    const { doc, spawn, event: key } = sdkGet('testdrive');
     const district = districtFromDoc(migrateDoc(doc));
     let event;
     if (key) {

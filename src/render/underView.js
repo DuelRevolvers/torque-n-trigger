@@ -25,8 +25,8 @@ export function underView({ map, tex, H, group, items, text, clipToConvex, merge
   const U = P.under;
   const look = map.style.look;
   const add = (m) => m && group.add(m);
-  const pit = P.pit;
-  const drain = P.drain;
+  const pit = P.pit || { c: [0, 0], rim: 0, floor: 0, depth: 0 };
+  const drain = P.drain || { z: 0, x0: 0, x1: 0, bed: 0, depth: 0, walls: 45, trench: 0 };
   const run = drain.depth / Math.tan((drain.walls * Math.PI) / 180);
   const drainTop = drain.bed / 2 + run;
 

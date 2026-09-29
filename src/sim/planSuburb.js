@@ -85,6 +85,7 @@ export function suburbLayout(ctx) {
   // --- Water Tower Hill: four solid legs; the tank (MAPLE HOLLOW, a red beacon) ---
   function waterTower() {
     const w = S.tower;
+    if (!w) return;
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) obbItem('towerLeg', { x: w.x + sx * w.leg, z: w.z + sz * w.leg, hw: 0.6, hd: 0.6, yaw: 0 }, w.tank, { cycle: 0 });
     reserve(G.obbCorners({ x: w.x, z: w.z, hw: w.leg + 6, hd: w.leg + 6, yaw: 0 }));
     deco('waterTower', { ...w, y: H(w.x, w.z) });
@@ -95,6 +96,7 @@ export function suburbLayout(ctx) {
   // car park, and golf carts parked in a row ---
   function golf() {
     const g = S.golf;
+    if (!g) return;
     patch('grass', site('golf').poly, { golf: true });
     for (const h of g.holes) {
       deco('fairway', { poly: G.obbCorners(h.fairway), tee: h.tee, green: h.green });
@@ -111,6 +113,7 @@ export function suburbLayout(ctx) {
   // digger, lumber and pipe stacks, portable toilets. The ground is dirt. ---
   function phase2() {
     const p = S.phase2;
+    if (!p) return;
     patch('dirt', site('construction').poly, { phase2: true });
     const F = p.frames;
     const road = map.streets.find((q) => q.name === F.along);
@@ -148,8 +151,9 @@ export function suburbLayout(ctx) {
   // --- Hollow Pond and Hollow Park: the pond (fall in and respawn) either side
   // of the causeway and its railings, a gazebo, a playground, footpaths, benches ---
   function park() {
-    const s = site('park');
     const pk = S.park;
+    if (!pk) return;
+    const s = site('park');
     patch('grass', s.poly, { park: true });
     const cw = pk.causeway;
     water('pond', G.clipHalf(s.pond, [-1, 0], cw.embank - cw.x), pk.water);
@@ -177,6 +181,7 @@ export function suburbLayout(ctx) {
   // race's shortcut runs between its parked cars), the gates on School Lane ---
   function school() {
     const s = S.school;
+    if (!s) return;
     obbItem('bldg', s.building, s.building.h, { kind: 'school', name: 'HOLLOW HIGH', front: s.building.front, cycle: 0 });
     obbItem('bldg', s.gym, s.gym.h, { kind: 'gym', front: s.gym.front, cycle: 1 });
     carRows(s.parking, 'school');
@@ -188,6 +193,7 @@ export function suburbLayout(ctx) {
   // --- The practice fields: a baseball diamond and its backstop, tennis courts ---
   function practiceFields() {
     const f = S.fields;
+    if (!f) return;
     patch('grass', site('fields').poly, { fields: true });
     deco('diamond', { ...f.diamond, y: H(f.diamond.x, f.diamond.z) });
     for (const b of f.backstop) obbItem('fence', b, 4, { cycle: 0, tall: true });
@@ -216,6 +222,7 @@ export function suburbLayout(ctx) {
   // store, Hollow Hardware & Auto), its car park facing Maple Avenue ---
   function plaza() {
     const p = S.plaza;
+    if (!p) return;
     for (const shop of p.shops) obbItem('bldg', shop, shop.h, { kind: shop.kind, name: shop.name, front: shop.front, cycle: 0 });
     carRows(p.parking, 'plaza');
     for (const [x, z] of p.masts) solid('mast', { x, z, hw: 0.4, hd: 0.4, yaw: 0 }, 12, { cycle: 0 });
@@ -431,10 +438,11 @@ export function suburbLayout(ctx) {
   // Maple trees along both sides of Maple Avenue (on the verges), where no plot put one.
   function mapleTrees() {
     const st = map.streets.find((q) => q.name === S.avenue);
-    const cw = S.park.causeway;
+    if (!st) return;
+    const cw = S.park?.causeway;
     for (let t = 20; t < st.len - 20; t += 15) {
       const p = G.pointAlong(st.pts, t);
-      if (p.z > cw.z0 - 10 && p.z < cw.z1 + 10) continue;
+      if (cw && p.z > cw.z0 - 10 && p.z < cw.z1 + 10) continue;
       for (const sd of [-1, 1]) {
         const lat = st.edge - 1;
         const x = p.x - p.dz * sd * lat;

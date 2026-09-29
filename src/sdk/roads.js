@@ -14,7 +14,7 @@ const NEAR_END = 3; // a crossing this close to a junction is at that junction
 export function roadEdit(session, clicks, { width = 'street', surface = 'asphalt', name }) {
   const map = session.map;
   const P = session.district.city.plan;
-  if (!P || map.roof) throw new Error('New streets can only be drawn in a street district (not the rooftops or Rustline Docks yet).');
+  if (!P) throw new Error('New streets in Rustline Docks run along its grid.');
   const pe = structuredClone(session.doc.edits.plan || {});
   pe.nodes ||= {};
   pe.streets ||= {};

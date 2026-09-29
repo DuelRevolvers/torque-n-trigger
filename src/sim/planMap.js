@@ -176,7 +176,7 @@ export function planMap(style) {
   const nb = G.polyBounds(P.boundary);
   // A rooftop district (decks at heights) has its own ground.
   // (Sculpted in the T&T SDK: its edits add heights to the ground, sim/ground.js.)
-  const terrain = sculptTerrain(P.decks ? roofTerrain(P) : P.pit || P.drain ? underTerrain(P) : planTerrain(P), style.edits?.terrain);
+  const terrain = sculptTerrain(P.decks ? roofTerrain(P) : P.pit || P.drain || P.deck ? underTerrain(P) : planTerrain(P), style.edits?.terrain);
   const { heightAt } = terrain;
 
   const nodes = [];

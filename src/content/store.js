@@ -3,10 +3,12 @@
 // - Official: the district files (src/districts), or in their place a map
 //   published from the T&T SDK's Studio (src/content/maps/<id>.json, shipped
 //   with the game). The career always plays these.
-// - Override: an edited copy of a district saved in this browser (from the
-//   SDK's "Play in game"). Free roam plays it while it's on; the career never
-//   does. Reverting deletes it.
+// - Override: an edited copy of a district saved in this browser (the SDK's
+//   "Play in game"), in IndexedDB (content/idb.js), read into memory before
+//   the game starts (initOverrides). Free roam plays it while it's on; the
+//   career never does. Reverting deletes it.
 import { districtFromDoc, migrateDoc, hasEdits, baseChanged } from './mapDoc.js';
+import { readStore, write, remove } from './idb.js';
 
 // (Under Vite, import.meta.env is set and the glob is filled in at build time;
 // in Node's tests there are no published maps.)
@@ -25,47 +27,36 @@ export function officialDistrict(d) {
   return doc ? { ...d, ...districtFromDoc(doc), published: true } : d;
 }
 
-const KEY = 'tt-maps:overrides'; // { [district id]: { doc, on } }
-const storage = () => {
-  try {
-    return globalThis.localStorage || null;
-  } catch {
-    return null;
-  }
-};
+const overrides = new Map(); // district id -> { doc, on }
+const OLD_KEY = 'tt-maps:overrides'; // (where they were kept before: localStorage)
 
-// Parsed once per change to what's stored, so each override keeps one object
-// (its district's map and venues stay cached).
-let raw = null;
-let all = {};
-function readAll() {
-  let text = null;
+// Reads the overrides into memory (and moves any left in localStorage over).
+export async function initOverrides() {
   try {
-    text = storage()?.getItem(KEY) ?? null;
+    for (const [id, o] of await readStore('overrides')) overrides.set(id, o);
+  } catch (err) {
+    console.warn('overrides: no storage', err);
+  }
+  let old = null;
+  try {
+    old = JSON.parse(globalThis.localStorage?.getItem(OLD_KEY) || 'null');
   } catch {
-    text = null;
+    old = null;
   }
-  if (text !== raw) {
-    raw = text;
-    try {
-      all = text ? JSON.parse(text) : {};
-    } catch {
-      all = {};
-    }
+  if (!old) return;
+  for (const [id, o] of Object.entries(old)) {
+    if (overrides.has(id)) continue;
+    overrides.set(id, o);
+    await write('overrides', id, o);
   }
-  return all;
+  globalThis.localStorage.removeItem(OLD_KEY);
 }
 
-function writeAll(next) {
-  const text = JSON.stringify(next);
-  storage()?.setItem(KEY, text); // may throw (storage full): the caller says so
-}
-
-export const getOverride = (id) => readAll()[id] || null;
+export const getOverride = (id) => overrides.get(id) || null;
 
 // Every override: { id, name, on, doc, edits (count), baseChanged }.
 export function listOverrides(districts) {
-  return Object.entries(readAll()).map(([id, o]) => {
+  return [...overrides].map(([id, o]) => {
     const d = districts.find((q) => q.id === id);
     const e = o.doc.edits || {};
     return {
@@ -77,20 +68,25 @@ export function listOverrides(districts) {
 }
 
 // Saves an edited copy of a built-in district as its override (on).
-export function saveOverride(doc) {
+export async function saveOverride(doc) {
   if (!doc.base) throw new Error('only an edited built-in district can be played in its place');
-  writeAll({ ...readAll(), [doc.base]: { doc, on: true } });
+  const o = { doc: JSON.parse(JSON.stringify(doc)), on: true };
+  overrides.set(doc.base, o);
+  await write('overrides', doc.base, o);
 }
 
-export function setOverrideOn(id, on) {
-  const cur = readAll();
-  if (cur[id]) writeAll({ ...cur, [id]: { ...cur[id], on } });
+export async function setOverrideOn(id, on) {
+  const o = overrides.get(id);
+  if (!o) return;
+  const next = { ...o, on };
+  overrides.set(id, next);
+  await write('overrides', id, next);
 }
 
 // Revert: the district plays as it was made again.
-export function removeOverride(id) {
-  const { [id]: _gone, ...rest } = readAll();
-  writeAll(rest);
+export async function removeOverride(id) {
+  overrides.delete(id);
+  await remove('overrides', id);
 }
 
 // The district free roam plays: its override while that's on, else the

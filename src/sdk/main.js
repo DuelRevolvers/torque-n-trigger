@@ -15,10 +15,10 @@ import { brush } from './brush.js';
 import { roadEdit, gridRoadEdit, lotEdit, gridLotEdit, lotAt, lotKinds, linePoints, featureAt, deleteStreet, setStreet, moveNode, removeNode, deleteSite, gridRemove, gridMoveLine } from './roads.js';
 import * as G from '../sim/geom2d.js';
 import { saveOverride, listOverrides, removeOverride, setOverrideOn, shippedMap } from '../content/store.js';
-import { listMaps, saveMap, deleteMap } from '../content/library.js';
+import { listMaps, saveMap, deleteMap, sdkGet, sdkPut } from '../content/library.js';
 import { loadCareer } from '../career/career.js';
 import { districtUnlocked } from '../career/districts.js';
-import { blankDistrict } from './templates.js';
+import { blankDistrict, BLANK_STYLES } from './templates.js';
 
 // The T&T SDK (Studio): opens a district as a map document; select, move,
 // turn, delete and copy its objects, place new ones from the catalogue; undo,
@@ -27,8 +27,8 @@ import { blankDistrict } from './templates.js';
 // Studio (sdk.html: the owner's, publishes into the game) or the Creator (the
 // game's page: the players', maps of their own, districts as they unlock them).
 const CREATOR = globalThis.TT_EDITION === 'creator';
-const AUTOSAVE = CREATOR ? 'tt-creator:autosave' : 'tt-sdk:autosave';
-const DRIVE = 'tt-sdk:testdrive'; // read by the game (src/main.js)
+const AUTOSAVE = CREATOR ? 'autosave:creator' : 'autosave:studio';
+const DRIVE = 'testdrive'; // read by the game (src/main.js), through IndexedDB
 const TURN = Math.PI / 12; // 15°
 const FINE = Math.PI / 180;
 
@@ -153,14 +153,18 @@ function scheduleBuild() {
 
 function changed(rebuild = true) {
   if (selected && !session.item(selected)) selected = null;
-  try {
-    localStorage.setItem(AUTOSAVE, serializeDoc(session.doc));
-  } catch {
-    // (Storage full or blocked: the map is still open, just not autosaved.)
-  }
+  autosave();
   refresh();
   showOverlay();
   if (rebuild) scheduleBuild();
+}
+
+// The map as it is, kept a moment after each change (the Maps screen's "Last session").
+let autosaveTimer = 0;
+function autosave() {
+  clearTimeout(autosaveTimer);
+  const doc = JSON.parse(serializeDoc(session.doc));
+  autosaveTimer = setTimeout(() => sdkPut(AUTOSAVE, doc).catch((err) => console.warn('autosave:', err)), 400);
 }
 
 // Studio: a .ttmap file. The Creator: My maps (this browser), where the game finds it.
@@ -195,10 +199,10 @@ function toast(text) {
 }
 
 // The game's free roam plays these edits (this browser), until reverted.
-function playInGame() {
+async function playInGame() {
   if (!session.doc.base) return window.alert('Only an edited built-in district can play in the game for now.');
   try {
-    saveOverride(JSON.parse(serializeDoc(session.doc)));
+    await saveOverride(JSON.parse(serializeDoc(session.doc)));
   } catch (err) {
     window.alert(`Couldn't save it for the game: ${err.message}`);
     return;
@@ -274,18 +278,22 @@ function renderStart() {
     .join('');
 }
 
-function testDrive(eventKey = null) {
+async function testDrive(eventKey = null) {
   // From where the middle of the view meets the ground, heading the way the camera looks.
   ray.setFromCamera(new THREE.Vector2(0, 0), camera);
   const g = groundHit();
   const spawn = { x: g ? g.x : cam.x, z: g ? g.z : cam.z, yaw: cam.yaw + Math.PI };
+  // (The tab opens first: a browser only allows it straight after the click.)
+  const tab = window.open('', 'tt-testdrive');
   try {
-    localStorage.setItem(DRIVE, JSON.stringify({ doc: session.doc, spawn, event: eventKey }));
+    await sdkPut(DRIVE, { doc: JSON.parse(serializeDoc(session.doc)), spawn, event: eventKey });
   } catch (err) {
+    tab?.close();
     window.alert(`Couldn't hand the map to the game: ${err.message}`);
     return;
   }
-  window.open('index.html?testdrive', 'tt-testdrive');
+  if (tab) tab.location.href = 'index.html?testdrive';
+  else window.open('index.html?testdrive', 'tt-testdrive');
 }
 
 // --- Picking ----------------------------------------------------------------
@@ -1637,15 +1645,20 @@ $('start-districts').addEventListener('click', (e) => {
   if (d) open(docFromDistrict(d));
 });
 $('start-file').addEventListener('click', () => $('file').click());
+// Blanks in the style of any district (the Creator: those the campaign has reached).
+$('blank-style').innerHTML = DISTRICTS.map((d, i) => [d, i])
+  .filter(([d]) => BLANK_STYLES.includes(d.id))
+  .map(([d, i]) => `<option value="${d.id}"${CREATOR && !districtUnlocked(loadCareer() || { district: 0 }, i) ? ' disabled' : ''}>${esc(d.name)}</option>`)
+  .join('');
 $('start-blank').addEventListener('click', () => {
   if (session?.dirty && !window.confirm(`Start a new district? Unsaved changes to ${session.doc.name} will be lost.`)) return;
   const n = 1 + listMaps().filter((d) => d.id.startsWith('custom-')).length;
-  open(blankDistrict(DISTRICTS.find((d) => d.id === 'strip'), n));
+  open(blankDistrict(DISTRICTS.find((d) => d.id === $('blank-style').value), n));
 });
 $('start-back').addEventListener('click', () => ($('start').hidden = true));
 $('start').addEventListener('change', (e) => {
   const id = e.target.closest('.orow')?.dataset.id;
-  if (id && e.target.dataset.act === 'on') setOverrideOn(id, e.target.checked);
+  if (id && e.target.dataset.act === 'on') setOverrideOn(id, e.target.checked).catch((err) => window.alert(`Couldn't change it: ${err.message}`));
 });
 $('start').addEventListener('click', async (e) => {
   const act = e.target.dataset?.act;
@@ -1671,7 +1684,7 @@ $('start').addEventListener('click', async (e) => {
     if (session?.dirty && !window.confirm(`Open ${o.name}? Unsaved changes to ${session.doc.name} will be lost.`)) return;
     open(parseDoc(JSON.stringify(o.doc)));
   } else if (act === 'revert' && window.confirm(`Revert ${o.name}? Free roam goes back to the game's own ${o.name}, and these edits are deleted (save them as a .ttmap first to keep them).`)) {
-    removeOverride(id);
+    await removeOverride(id);
     renderStart();
   }
 });
@@ -1683,8 +1696,8 @@ $('play').addEventListener('click', () => session && playInGame());
 $('publish').addEventListener('click', () => session && publish());
 renderStart();
 try {
-  const saved = localStorage.getItem(AUTOSAVE);
-  const doc = saved ? parseDoc(saved) : null;
+  const saved = sdkGet(AUTOSAVE);
+  const doc = saved ? parseDoc(JSON.stringify(saved)) : null;
   if (doc) {
     const n = doc.edits.remove.length + Object.keys(doc.edits.move).length + doc.edits.add.length;
     $('start-resume').textContent = `${doc.name} (${n} edit${n === 1 ? '' : 's'}, ${new Date(doc.meta.modified).toLocaleString()})`;
