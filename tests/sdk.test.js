@@ -276,6 +276,27 @@ test('sdk: gadgets: a gate opens while its trigger pad is driven over, and lifts
   assert.ok(near(lift.base, def.heightAt(-60, 60)));
 });
 
+test("sdk: special assets unlock by what's done over the career, in whichever events", async () => {
+  const U = await import('../src/career/unlocks.js');
+  const of = (id) => U.SPECIALS.find((s) => s.id === id).unlock;
+  const career = { bosses: [] };
+  assert.equal(U.progress(career, of('gates')).met, false);
+  for (const type of ['sprint', 'circuit', 'arena']) U.recordFeats(career, { type, district: 'strip', place: 1, takedowns: 2, wrecks: 0, margin: 3 });
+  assert.ok(U.progress(career, of('gates')).met, 'three wins, any events');
+  assert.ok(U.progress(career, of('arches')).met, 'a sprint won in the Neon Strip');
+  assert.deepEqual(U.progress(career, of('sweeper')), { have: 2, need: 10, met: false });
+  U.recordFeats(career, { type: 'sprint', district: 'maple', place: 1, wrecks: 1, margin: 1 });
+  assert.equal(U.progress(career, of('golf')).met, false, 'wrecked on the way: not clean');
+  U.recordFeats(career, { type: 'drag', district: 'maple', place: 1, wrecks: 0, margin: 0.4 });
+  assert.ok(U.progress(career, of('golf')).met);
+  assert.equal(U.progress(career, of('waterTower')).met, false);
+  career.bosses.push('maple');
+  assert.ok(U.progress(career, of('waterTower')).met);
+  assert.equal(U.triggerText(of('golf')), 'Win a race in Maple Hollow without being wrecked');
+  assert.equal(U.triggerText(of('sweeper')), 'Take down 10 cars in arena events');
+  assert.equal(U.triggerText(of('kickers')), 'Win a race in Chrome Heights by 5 s or more');
+});
+
 test('sdk: street and ground pieces move too, and edits that lost their object are reported', () => {
   const strip = byId('strip');
   const map = districtMap(strip.city);

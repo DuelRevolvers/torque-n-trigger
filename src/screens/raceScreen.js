@@ -20,6 +20,7 @@ import { buildTrackView } from '../render/trackView.js';
 import { buildCityView } from '../render/cityView.js';
 import { buildArenaView } from '../render/arenaView.js';
 import { gadgetView } from '../render/gadgetView.js';
+import { recordFeats, unlockedIds, SPECIALS } from '../career/unlocks.js';
 import { buildDistrictView, districtClear } from '../render/districtView.js';
 import { buildTrainView, updateTrainView } from '../render/trainView.js';
 import { buildTruckView, updateTruckView } from '../render/truckView.js';
@@ -662,6 +663,7 @@ export class RaceScreen {
     const player = state.cars[0];
     const rewards = computeRewards(this.def, place, player, this.tier);
     const career = this.app.career;
+    const unlockedBefore = career ? unlockedIds(career) : null;
     // Salvage: normal cars drop worn, downgraded parts; a wrecked rival or boss
     // drops a full-quality part, and beating a boss always pays one.
     const victims = [...this.victims];
@@ -688,6 +690,13 @@ export class RaceScreen {
       career.inventory.push(...salvage);
       career.eventsRun = (career.eventsRun || 0) + 1;
       if (this.def.type !== 'free') recordResult(this.careerCar, { place, of: order.length, takedowns: player.takedowns || 0, cash: rewards.total });
+      // What's done, for the Creator's unlocks (career/unlocks.js): any event
+      // in a district counts, not the players' own maps.
+      if (this.def.type !== 'free' && this.def.district && !this.def.custom) {
+        const second = order[1];
+        const margin = ev.type !== 'arena' && place === 1 ? (second?.finished ? second.time - order[0].time : 30) : 0;
+        recordFeats(career, { type: this.def.type, district: this.def.district, place, takedowns: player.takedowns || 0, wrecks: player.wrecks || 0, margin });
+      }
       career.completed ??= [];
       // Best result per event, shown on its card afterwards.
       if (this.def.career && place > 0) {
@@ -699,6 +708,7 @@ export class RaceScreen {
       saveCareer(career);
     }
     const fee = this.def.entryFee || 0;
+    const fresh = unlockedBefore ? SPECIALS.filter((s) => !unlockedBefore.has(s.id) && unlockedIds(career).has(s.id)) : [];
     const banner = bossBeaten
       ? `<div class="boss-banner">BOSS BEATEN! ${unlocked ? `${unlocked.name} is now open.` : this.def.district === 'spire' ? 'You are the champion of Neon Sprawl!' : ''}</div>`
       : this.def.boss ? '<div class="err">Finish ahead of the boss to open the next district.</div>' : '';
@@ -717,6 +727,7 @@ export class RaceScreen {
       <h1>${esc(this.def.name)}</h1>
       <h2>${ordinal(place)} place</h2>
       ${banner}
+      ${fresh.length ? `<div class="boss-banner">NEW IN THE CREATOR: ${fresh.map((s) => esc(s.name)).join(', ')}</div>` : ''}
       <table class="standings">${rows}</table>
       <h3>Winnings</h3>${lines}<div class="reward-line total"><span>Total</span><b>$${rewards.total}</b></div>
       <h3>Salvage</h3>${salv}

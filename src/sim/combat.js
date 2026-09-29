@@ -163,6 +163,7 @@ export function ringOut(world, j, hz) {
 function wreck(world, j, source) {
   const car = world.state.cars[j];
   car.wrecked = true;
+  car.wrecks = (car.wrecks || 0) + 1; // (the Creator's "without being wrecked" triggers)
   car.hp = 0;
   car.wreckTimer = WRECK_TIME;
   car.wreckIndex = car.trackIndex;

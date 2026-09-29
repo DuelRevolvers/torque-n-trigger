@@ -13,6 +13,7 @@ import { Session, footBox } from './session.js';
 import { catalogue, CATEGORIES } from './catalogue.js';
 import { brush } from './brush.js';
 import { GADGETS, addGadgets } from '../sim/gadgets.js';
+import { SPECIALS, progress, triggerText, specialOfType, specialOfGadget } from '../career/unlocks.js';
 import { buildArena } from '../sim/arena.js';
 import { gadgetView } from '../render/gadgetView.js';
 import { readStore } from '../content/idb.js';
@@ -275,6 +276,15 @@ function renderStart() {
     .map((d) => `<div class="orow" data-mine="${esc(d.meta.id)}"><label>${esc(d.name)}</label><button data-act="open-mine">Open</button><button data-act="export-mine" title="Save it as a .ttmap file">Export</button><button data-act="delete-mine" class="danger">Delete</button></div>`)
     .join('');
   $('start-published-box').hidden = CREATOR || !published.size;
+  // (The Creator: what's unlocked, and how far along the rest are.)
+  $('start-unlocks-box').hidden = !CREATOR;
+  if (CREATOR) {
+    const c = loadCareer();
+    $('start-unlocks').innerHTML = SPECIALS.map((s) => {
+      const p = progress(c, s.unlock);
+      return `<div class="${p.met ? 'ok' : 'note'}">${p.met ? '✓' : '🔒'} ${esc(s.name)}${p.met ? '' : `: ${esc(triggerText(s.unlock))}${p.need > 1 ? ` (${p.have}/${p.need})` : ''}`}</div>`;
+    }).join('');
+  }
   // (The Creator opens the districts the career has reached.)
   const career = CREATOR ? loadCareer() : null;
   $('start-districts').querySelectorAll('button').forEach((b) => {
@@ -1092,6 +1102,8 @@ function removeSelected() {
 
 function duplicate() {
   if (!selected || !canMove(session.item(selected))) return;
+  const lock = lockOf(specialOfType(session.item(selected).t));
+  if (lock) return toast(`Locked: it can be moved or deleted, but not copied yet. To unlock it: ${lock}.`);
   selected = session.duplicate(selected, gridSize() * 4);
   changed();
 }
@@ -1218,17 +1230,33 @@ function hint() {
         : 'Click to select · hold right button + WASD/QE to fly · middle drag to pan · wheel to zoom · Tab top view · P test drive';
 }
 
+// The Creator: a special asset stays locked until its trigger is met
+// (career/unlocks.js). The reason, or null.
+function lockOf(special, career = loadCareer()) {
+  if (!CREATOR || !special) return null;
+  const p = progress(career, special.unlock);
+  return p.met ? null : `${triggerText(special.unlock)}${p.need > 1 ? ` (${p.have}/${p.need})` : ''}`;
+}
+const lockAttrs = (lock) => (lock ? ` data-lock="${esc(lock)}" title="Locked: ${esc(lock)}"` : '');
+
 function renderCatalogue() {
   const q = $('search').value.trim().toLowerCase();
+  const career = CREATOR ? loadCareer() : null;
   const html = CATEGORIES.map((c) => {
     const list = cat.filter((e) => e.category === c && (!q || e.name.toLowerCase().includes(q)));
     if (!list.length) return '';
     return `<h4>${c}</h4>${list
-      .map((e) => `<div class="entry${placing === e ? ' on' : ''}" draggable="true" data-id="${esc(e.id)}" title="${e.count} in this district · ${e.size.map((v) => v.toFixed(1)).join(' × ')} m"><span>${esc(e.name)}</span><i>${e.count}</i></div>`)
+      .map((e) => {
+        const lock = lockOf(specialOfType(e.t), career);
+        return `<div class="entry${placing === e ? ' on' : ''}${lock ? ' locked' : ''}" draggable="${!lock}" data-id="${esc(e.id)}" title="${e.count} in this district · ${e.size.map((v) => v.toFixed(1)).join(' × ')} m"${lockAttrs(lock)}><span>${lock ? '🔒 ' : ''}${esc(e.name)}</span><i>${e.count}</i></div>`;
+      })
       .join('')}`;
   }).join('');
   const gadgets = Object.entries(GADGETS).filter(([, g]) => !q || g.name.toLowerCase().includes(q));
-  const gadgetHtml = gadgets.length ? `<h4>Gadgets</h4>${gadgets.map(([t, g]) => `<div class="entry${placingGadget === t ? ' on' : ''}" data-gadget="${t}" title="${esc(g.about)}"><span>${esc(g.name)}</span></div>`).join('')}` : '';
+  const gadgetHtml = gadgets.length ? `<h4>Gadgets</h4>${gadgets.map(([t, g]) => {
+    const lock = lockOf(specialOfGadget(t), career);
+    return `<div class="entry${placingGadget === t ? ' on' : ''}${lock ? ' locked' : ''}" data-gadget="${t}" title="${esc(g.about)}"${lockAttrs(lock)}><span>${lock ? '🔒 ' : ''}${esc(g.name)}</span></div>`;
+  }).join('')}` : '';
   $('cat').innerHTML = gadgetHtml + (html || '<p class="none">Nothing matches.</p>');
   $('place-opts').hidden = !placing;
 }
@@ -1255,6 +1283,8 @@ $('place-mode').addEventListener('change', () => {
   hint();
 });
 $('cat').addEventListener('click', (e) => {
+  const locked = e.target.closest('[data-lock]');
+  if (locked) return toast(`Locked. To unlock it: ${locked.dataset.lock}.`);
   const gEl = e.target.closest('[data-gadget]');
   if (gEl && session) {
     if (tool !== 'select') setTool('select');
@@ -1279,6 +1309,7 @@ $('cat').addEventListener('click', (e) => {
 $('cat').addEventListener('dragstart', (e) => {
   const el = e.target.closest('.entry');
   if (!el) return;
+  if (el.dataset.lock) return e.preventDefault();
   e.dataTransfer.setData('text/plain', el.dataset.id);
   if (tool !== 'select') setTool('select');
   placing = cat.find((c) => c.id === el.dataset.id);

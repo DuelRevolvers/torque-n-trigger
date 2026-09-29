@@ -253,10 +253,16 @@ used anywhere.
 - **Always available:** the basics (roads, terrain tools, street furniture,
   barriers, ramps, checkpoints, start grid) and the Rustline Docks kit.
 - **A district's kit unlocks when that district opens** in the career.
-- **Special assets unlock from specific wins:** landmarks and gadgets from
-  beating a district's events or boss (e.g. the Spire after the Corporate
-  Spire boss). Each asset lists its unlock in the registry
-  (`unlock: 'district:strip'` or `'event:strip.boss'`).
+- **Special assets unlock from triggers, not particular events**
+  (`src/career/unlocks.js`): gadgets and a district's landmarks, each
+  with something to have done over the career, in whichever events: win N
+  races (of a type, in a district), finish on the podium N times, take down
+  N cars, win without being wrecked, win by N seconds, beat a district's
+  boss. Every race's result is tallied by its type and district, so edited
+  or new events count too. Locked assets show in the Creator's catalogue
+  with what unlocks them and how far along it is (and on its Maps screen);
+  the results screen says when a race unlocks one. Locked objects already
+  in a map can be moved or deleted, not copied.
 - **Built-in districts** can be opened in Creator once they are unlocked.
 - **Maps from other players** that use assets you haven't unlocked always
   play. In the editor, those assets can be moved or deleted but not newly

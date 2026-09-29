@@ -51,6 +51,7 @@ export const SDK_CSS = `
       #cat h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
       .entry { display: flex; justify-content: space-between; gap: 6px; padding: 3px 6px; border-radius: 3px; cursor: grab; }
       .entry:hover { background: #2a1a48; }
+      .entry.locked { opacity: 0.45; cursor: not-allowed; }
       .entry.on { background: #3a1a40; outline: 1px solid var(--pink); }
       .entry i { color: var(--dim); font-style: normal; }
       .none { color: var(--dim); }
@@ -180,6 +181,10 @@ export const SDK_HTML = `
       <div id="start-overrides-box" hidden>
         <h4>Playing in the game (your edits)</h4>
         <div id="start-overrides"></div>
+      </div>
+      <div id="start-unlocks-box" hidden>
+        <h4>Creator unlocks</h4>
+        <div id="start-unlocks" class="checks"></div>
       </div>
       <div id="start-published-box" hidden>
         <h4>Published (ships with the game)</h4>
