@@ -55,6 +55,12 @@
       #start h4 { margin: 14px 0 6px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
       #start-districts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
       #start button { width: 100%; text-align: left; padding: 6px 10px; }
+      #start .orow { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+      #start .orow label { flex: 1; }
+      #start .orow button { width: auto; }
+      #start .note { margin: -2px 0 8px; font-size: 12px; line-height: 1.4; }
+      .warn { color: var(--pink); }
+      #toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); max-width: 70%; padding: 8px 14px; background: var(--panel); border: 1px solid var(--cyan); color: var(--cyan); border-radius: 3px; pointer-events: none; }
       #busy { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); padding: 6px 14px; background: var(--panel); border: 1px solid var(--amber); color: var(--amber); border-radius: 3px; pointer-events: none; }
 
       #right h3 { margin: 0 0 2px; color: var(--amber); font-size: 14px; }
@@ -73,6 +79,7 @@
   <body>
     <div id="top">
       <b>T&amp;T SDK</b>
+      <button id="home" title="Maps: open a map, and what plays in the game">Maps</button>
       <select id="district" title="Open a built-in district"></select>
       <button id="open" title="Open a .ttmap file">Open…</button>
       <input type="file" id="file" accept=".ttmap,.json" hidden />
@@ -91,6 +98,8 @@
       <label title="The district's haze"><input type="checkbox" id="fog" /> Fog</label>
       <button id="top-view" title="Look straight down (Tab)">Top view</button>
       <button id="drive" class="go" title="Drive this map in the game, from where you're looking (P)">▶ Test drive</button>
+      <button id="play" title="Play these edits in the game's free roam (this browser only; the career keeps the official district)">Play in game</button>
+      <button id="publish" title="Studio: ship this map with the game in place of its district, career included (writes src/content/maps)">Publish</button>
       <span id="title"></span>
     </div>
     <div id="left">
@@ -101,10 +110,19 @@
     <div id="start">
       <h2>T&amp;T SDK</h2>
       <p>Open a map to start editing.</p>
+      <button id="start-back" hidden></button>
       <h4>Built-in districts</h4>
       <div id="start-districts"></div>
       <h4>From a file</h4>
       <button id="start-file">Open a .ttmap file…</button>
+      <div id="start-overrides-box" hidden>
+        <h4>Playing in the game (your edits)</h4>
+        <div id="start-overrides"></div>
+      </div>
+      <div id="start-published-box" hidden>
+        <h4>Published (ships with the game)</h4>
+        <div id="start-published"></div>
+      </div>
       <div id="start-resume-box" hidden>
         <h4>Last session</h4>
         <button id="start-resume"></button>
@@ -116,6 +134,7 @@
     </div>
     <div id="status"><span id="coords"></span><span id="hint"></span></div>
     <div id="busy" hidden></div>
+    <div id="toast" hidden></div>
     <script type="module" src="/src/sdk/main.js"></script>
   </body>
 </html>

@@ -40,18 +40,21 @@ const districtData = (d) => json(Object.fromEntries(KEYS.filter((k) => d[k] !== 
 
 export const emptyEdits = () => ({ remove: [], move: {}, add: [] });
 
-// A new document for a built-in district (nothing edited yet).
+// A new document for a built-in district. A district published from the SDK
+// already carries edits (city.edits): they come out as the document's own.
 export function docFromDistrict(d, now = new Date().toISOString()) {
   const district = districtData(d);
+  const edits = { ...emptyEdits(), ...district.city?.edits };
+  if (district.city) delete district.city.edits;
   return {
     format: FORMAT,
     version: VERSION,
     id: d.id,
     name: d.name,
     base: d.id,
-    baseHash: hashOf(district),
+    baseHash: hashOf(districtData(d)),
     district,
-    edits: emptyEdits(),
+    edits,
     meta: { created: now, modified: now, editor: EDITOR },
   };
 }

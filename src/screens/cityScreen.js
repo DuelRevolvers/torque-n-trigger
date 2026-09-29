@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { DISTRICTS, HOME_EVENTS, MODIFIER_LABELS, districtEvents, districtUnlocked, bossProgress, roamEvent } from '../career/districts.js';
+import { DISTRICTS, HOME_EVENTS, MODIFIER_LABELS, districtEvents, districtUnlocked, bossProgress, playedRoamEvent } from '../career/districts.js';
 import { SHOP_KINDS, shopStock, buyPrice, sellPrice, buyPart, sellPart } from '../career/shop.js';
 import { saveCareer, activeCar } from '../career/career.js';
 import { computeBuild, resolvePart } from '../parts/build.js';
@@ -117,7 +117,7 @@ export class CityScreen {
   }
 
   allEvents() {
-    return [...HOME_EVENTS, ...DISTRICTS.map(roamEvent), ...DISTRICTS.flatMap((d) => districtEvents(d))];
+    return [...HOME_EVENTS, ...DISTRICTS.map(playedRoamEvent), ...DISTRICTS.flatMap((d) => districtEvents(d))];
   }
 
   enterEvent(id) {
@@ -166,7 +166,7 @@ export class CityScreen {
       return `<h2>Home</h2><div class="hint">Your garage and the back streets. These are always open.</div>
         <button class="btn primary wide garage-alt">GARAGE</button>
         <h3>Back alley</h3>${HOME_EVENTS.map((e, k) => this.eventCard(e, computed.ok, k + 1)).join('')}
-        <h3>Free roam</h3>${DISTRICTS.filter((d, i) => this.app.settings.roamAll || districtUnlocked(career, i)).map((d) => this.eventCard(roamEvent(d), computed.ok)).join('')}`;
+        <h3>Free roam</h3>${DISTRICTS.filter((d, i) => this.app.settings.roamAll || districtUnlocked(career, i)).map((d) => this.eventCard(playedRoamEvent(d), computed.ok)).join('')}`;
     }
     const d = DISTRICTS[this.selected];
     if (this.view.startsWith('shop:')) return this.shopHtml(d, this.view.slice(5));

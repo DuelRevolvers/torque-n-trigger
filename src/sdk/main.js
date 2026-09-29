@@ -9,6 +9,7 @@ import { docFromDistrict, serializeDoc, parseDoc, baseChanged } from '../content
 import { canMove } from '../sim/layoutEdits.js';
 import { Session, footBox } from './session.js';
 import { catalogue, CATEGORIES } from './catalogue.js';
+import { saveOverride, listOverrides, removeOverride, setOverrideOn, shippedMap } from '../content/store.js';
 
 // The T&T SDK (Studio): opens a district as a map document; select, move,
 // turn, delete and copy its objects, place new ones from the catalogue; undo,
@@ -139,6 +140,78 @@ function save() {
   URL.revokeObjectURL(a.href);
   session.dirty = false;
   refresh();
+}
+
+let toastTimer = 0;
+function toast(text) {
+  $('toast').textContent = text;
+  $('toast').hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => ($('toast').hidden = true), 6000);
+}
+
+// The game's free roam plays these edits (this browser), until reverted.
+function playInGame() {
+  if (!session.doc.base) return window.alert('Only an edited built-in district can play in the game for now.');
+  try {
+    saveOverride(JSON.parse(serializeDoc(session.doc)));
+  } catch (err) {
+    window.alert(`Couldn't save it for the game: ${err.message}`);
+    return;
+  }
+  toast(`Free roam in ${session.doc.name} now plays these edits (reload the game). Revert them under Maps.`);
+}
+
+// Studio: the map ships with the game in place of its district (the dev server writes it).
+const published = new Set(DISTRICTS.filter((d) => shippedMap(d.id)).map((d) => d.id));
+async function publish() {
+  const doc = session.doc;
+  if (!doc.base || doc.base !== doc.id) return window.alert('Only an edited built-in district can be published for now.');
+  if (!window.confirm(`Publish ${doc.name}? It ships with the game in place of its district file, career included.`)) return;
+  try {
+    const res = await fetch(`/__sdk/maps/${encodeURIComponent(doc.id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: serializeDoc(doc) });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error);
+    published.add(doc.id);
+    toast(`Published ${out.file}. Reload the game to play it; commit the file to ship it.`);
+  } catch (err) {
+    window.alert(`Couldn't publish (the SDK has to run from the dev server, npm run dev): ${err.message}`);
+  }
+}
+
+async function unpublish(id) {
+  const d = DISTRICTS.find((q) => q.id === id);
+  if (!window.confirm(`Unpublish ${d?.name || id}? The game goes back to its district file.`)) return;
+  try {
+    const res = await fetch(`/__sdk/maps/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json()).error);
+    published.delete(id);
+    renderStart();
+    toast(`Unpublished. Reload the game (and this SDK) to see ${d?.name || id} as its district file makes it.`);
+  } catch (err) {
+    window.alert(`Couldn't unpublish (the SDK has to run from the dev server): ${err.message}`);
+  }
+}
+
+// The Maps screen: what to open, and what plays in the game.
+function renderStart() {
+  $('start-back').hidden = !session;
+  if (session) $('start-back').textContent = `Back to ${session.doc.name}`;
+  const list = listOverrides(DISTRICTS);
+  $('start-overrides-box').hidden = !list.length;
+  $('start-overrides').innerHTML = list
+    .map((o) => `
+      <div class="orow" data-id="${esc(o.id)}">
+        <label title="Free roam plays these edits while this is on"><input type="checkbox" data-act="on" ${o.on ? 'checked' : ''} /> ${esc(o.name)} (${o.edits} edit${o.edits === 1 ? '' : 's'})</label>
+        <button data-act="open">Open</button>
+        <button data-act="revert" class="danger">Revert</button>
+      </div>
+      ${o.baseChanged ? `<div class="note warn">${esc(o.name)} has changed in the game since these edits were made. Keep them (leave them on), Revert, or Open them to check: edits whose object has gone are listed as lost.</div>` : ''}`)
+    .join('');
+  $('start-published-box').hidden = !published.size;
+  $('start-published').innerHTML = [...published]
+    .map((id) => `<div class="orow" data-id="${esc(id)}"><label>${esc(DISTRICTS.find((d) => d.id === id)?.name || id)}</label><button data-act="unpublish" class="danger">Unpublish</button></div>`)
+    .join('');
 }
 
 function testDrive() {
@@ -719,6 +792,33 @@ $('start-districts').addEventListener('click', (e) => {
   if (d) open(docFromDistrict(d));
 });
 $('start-file').addEventListener('click', () => $('file').click());
+$('start-back').addEventListener('click', () => ($('start').hidden = true));
+$('start').addEventListener('change', (e) => {
+  const id = e.target.closest('.orow')?.dataset.id;
+  if (id && e.target.dataset.act === 'on') setOverrideOn(id, e.target.checked);
+});
+$('start').addEventListener('click', (e) => {
+  const act = e.target.dataset?.act;
+  const id = e.target.closest('.orow')?.dataset.id;
+  if (!id || !act || act === 'on') return;
+  if (act === 'unpublish') return unpublish(id);
+  const o = listOverrides(DISTRICTS).find((q) => q.id === id);
+  if (!o) return;
+  if (act === 'open') {
+    if (session?.dirty && !window.confirm(`Open ${o.name}? Unsaved changes to ${session.doc.name} will be lost.`)) return;
+    open(parseDoc(JSON.stringify(o.doc)));
+  } else if (act === 'revert' && window.confirm(`Revert ${o.name}? Free roam goes back to the game's own ${o.name}, and these edits are deleted (save them as a .ttmap first to keep them).`)) {
+    removeOverride(id);
+    renderStart();
+  }
+});
+$('home').addEventListener('click', () => {
+  renderStart();
+  $('start').hidden = false;
+});
+$('play').addEventListener('click', () => session && playInGame());
+$('publish').addEventListener('click', () => session && publish());
+renderStart();
 try {
   const saved = localStorage.getItem(AUTOSAVE);
   const doc = saved ? parseDoc(saved) : null;

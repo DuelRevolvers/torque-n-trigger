@@ -25,6 +25,7 @@ import { MAPLE_CITY } from '../districts/mapleHollow.js';
 import { CHROME_CITY } from '../districts/chromeHeights.js';
 import { UNDERCITY_CITY } from '../districts/undercity.js';
 import { SPIRE_CITY } from '../districts/corporateSpire.js';
+import { officialDistrict, playedDistrict } from '../content/store.js';
 
 // A plan district's outline on the city map: its boundary, scaled into place
 // (centre and metres per map unit), so the map and the district always match.
@@ -143,6 +144,12 @@ export const DISTRICTS = [
   },
 ];
 
+// A district published from the T&T SDK (src/content/maps) plays in place of
+// its district file, everywhere (it's official: the career plays it too).
+DISTRICTS.forEach((d, i) => {
+  DISTRICTS[i] = officialDistrict(d);
+});
+
 // Recurring rivals: one per district's rival event, in campaign order, getting
 // tougher each district.
 export const RIVALS = ['jackal', 'ghost', 'mule', 'redline', 'vixen', 'static'];
@@ -197,6 +204,14 @@ export const roamEvent = (d) => ({
   route: { kind: 'roam' }, venue: venueFor(d, { kind: 'roam' }), city: d.city,
   desc: 'The whole district to yourself. No barriers, no clock.',
 });
+
+// Free roam as it plays: in a district edited in the T&T SDK while that's on
+// (never the career's events: those always play the official district).
+export function playedRoamEvent(d) {
+  const p = playedDistrict(d);
+  const e = roamEvent(p);
+  return p.edited ? { ...e, name: `${e.name} (edited)`, desc: `Your edits from the T&T SDK. ${e.desc}` } : e;
+}
 
 export const districtUnlocked = (career, i) => i <= (career.district || 0);
 

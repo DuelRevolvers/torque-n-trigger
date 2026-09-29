@@ -54,6 +54,16 @@ function buildingFronts(map) {
     .map((it) => ({ x: it.obb.x + it.front[0] * it.obb.hd, z: it.obb.z + it.front[1] * it.obb.hd, fx: it.front[0], fz: it.front[1], w: it.obb.hw * 2, y: map.heightAt(it.obb.x, it.obb.z) }));
 }
 
+// Each district style (a built-in one, or an edited copy from the T&T SDK) is
+// told apart in the venue cache: the same venue name can be two different maps.
+const styleTags = new WeakMap();
+let nextTag = 1;
+const styleTag = (style) => {
+  if (!style) return '';
+  if (!styleTags.has(style)) styleTags.set(style, nextTag++);
+  return styleTags.get(style);
+};
+
 export class RaceScreen {
   constructor(app) {
     this.app = app;
@@ -82,7 +92,7 @@ export class RaceScreen {
   // Venue geometry is built once and cached (the last few only; they're big).
   venue(def) {
     const id = def.venue;
-    const key = `${id}:${def.finishS || ''}:${def.pit ? 'pit' : ''}`;
+    const key = `${id}:${styleTag(def.city)}:${def.finishS || ''}:${def.pit ? 'pit' : ''}`;
     if (this.venues.has(key)) return this.venues.get(key);
     if (this.venues.size >= 3) {
       const [oldKey, old] = this.venues.entries().next().value;
@@ -145,7 +155,7 @@ export class RaceScreen {
 
   // The whole district around the route (built once per district, last two kept).
   env(style) {
-    if (this.envs.has(style.id)) return this.envs.get(style.id);
+    if (this.envs.has(style)) return this.envs.get(style);
     if (this.envs.size >= 2) {
       const [oldKey, old] = this.envs.entries().next().value;
       this.scene.remove(old);
@@ -154,7 +164,7 @@ export class RaceScreen {
     }
     const group = buildDistrictView(districtMap(style), this.app.tex);
     this.scene.add(group);
-    this.envs.set(style.id, group);
+    this.envs.set(style, group);
     return group;
   }
 
