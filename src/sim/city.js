@@ -1041,6 +1041,8 @@ function authoredArena(map, site, spec) {
   const obstacles = [
     ...(spec.obstacles || []).map((o) => ({ ...L(o), render: true })),
     ...platforms.filter((p) => p.under).flatMap(deckLegs),
+    // What closes it off (limos, minivans, car transporters) is solid.
+    ...(spec.limos || []).map(([ax, az, bx, bz]) => ({ ...L({ x: (ax + bx) / 2, z: (az + bz) / 2 }), hw: 1.3, hd: Math.hypot(bx - ax, bz - az) / 2, yaw: Math.atan2(bx - ax, bz - az), h: 3 })),
   ];
   // A plan district's ground slopes: the arena sits at its middle's height and its floor follows the slope.
   const y0 = map.plan ? map.heightAt(cx, cz) : 0;
@@ -1050,7 +1052,11 @@ function authoredArena(map, site, spec) {
     if (a1 < x0 || a0 > x1 || b1 < z0 || b0 > z1) continue;
     obstacles.push(layoutObstacle(it, cx, cz, y0));
   }
-  const holes = (spec.holes || []).map((h) => ({ ...h, r: [h.r[0] - cx, h.r[1] - cx, h.r[2] - cz, h.r[3] - cz] }));
+  const holes = (spec.holes || []).map((h) => (h.poly ? { ...h, poly: h.poly.map(([x, z]) => [x - cx, z - cz]) } : { ...h, r: [h.r[0] - cx, h.r[1] - cx, h.r[2] - cz, h.r[3] - cz] }));
+  // Breakable props inside it (Tower Plaza's glass balustrade), world coordinates.
+  const breakables = districtLayout(map).items.filter((it) => it.t === 'brk' && it.x >= x0 - 2 && it.x <= x1 + 2 && it.z >= z0 - 2 && it.z <= z1 + 2)
+    .map((it) => ({ id: it.id, kind: it.kind, x: it.obb.x, z: it.obb.z, hw: it.obb.hw, hd: it.obb.hd, yaw: it.obb.yaw, y: it.y, h: it.h }));
+  const surfaces = (spec.surfaces || []).map((q) => ({ surface: q.surface, poly: q.poly.map(([x, z]) => [x - cx, z - cz]) }));
   const spawnPoints = spec.spawns.map((p) => ({ x: p.x - cx, z: p.z - cz, yaw: yawFromDirection(cx - p.x, cz - p.z) }));
   const deckTop = (p) => platforms.find((q) => Math.abs(p.x - q.x) <= q.hw && Math.abs(p.z - q.z) <= q.hd)?.h || 0;
   const pickups = (spec.pickups || []).map((p) => {
@@ -1061,7 +1067,7 @@ function authoredArena(map, site, spec) {
     name: site.name, authored: true, sizeX: x1 - x0, sizeZ: z1 - z0, cx, cz, y: y0, minY: y0 - 20, ...(map.plan ? { heightAt: map.heightAt, plan: true } : {}),
     spawns: spawnPoints.length, spawnRadius: 0, spawnPoints, pickups,
     obstacles, platforms, ramps: (spec.ramps || []).map((r) => ({ ...L(r), render: true })),
-    lifts: (spec.lifts || []).map(L), movers: (spec.movers || []).map(L), sweepers: [], hazards: [], holes,
+    lifts: (spec.lifts || []).map(L), movers: (spec.movers || []).map(L), sweepers: [], hazards: [], holes, surfaces, breakables,
     fence: spec.fence || null, shell: !!spec.shell,
     barriers: (spec.barriers || []).map(([ax, az, bx, bz]) => [ax - cx, az - cz, bx - cx, bz - cz]),
     limos: (spec.limos || []).map(([ax, az, bx, bz]) => [ax - cx, az - cz, bx - cx, bz - cz]),
@@ -1189,10 +1195,20 @@ export function authoredShortcuts(map, track, ids, ground = () => 0) {
     const curbWidth = 0.8;
     const wall = c.wallDist ?? halfWidth + 2.8;
     const flat = !c.heights;
+    const points = flat ? roundedPoints(pts.map(([x, , z]) => ({ x, z })), false, BRANCH_R, ground) : pts;
+    // A dirt road's jumps (fractions along it, from its first point): mounds.
+    let jumps = [];
+    if (c.jumps?.length) {
+      let L = 0;
+      for (let k = 1; k < points.length; k++) L += Math.hypot(points[k][0] - points[k - 1][0], points[k][2] - points[k - 1][2]);
+      const flip = pts[0][0] !== c.points[0][0] || pts[0][2] !== c.points[0][1];
+      jumps = c.jumps.map((f) => ({ s: (flip ? 1 - f : f) * L - 6, len: 6, height: 1.2, mound: true }));
+    }
     out.push({
       s0, s1, kind: c.kind, halfWidth, curbWidth, shoulderWidth: Math.max(0.1, wall - halfWidth - curbWidth),
-      points: flat ? roundedPoints(pts.map(([x, , z]) => ({ x, z })), false, BRANCH_R, ground) : pts,
-      jumps: [],
+      points, jumps,
+      // Across grass or dirt (a golf course, backyards, a dirt road): offroad all the way.
+      ...(c.kind === 'golf' || c.kind === 'backyards' || c.kind === 'dirt' ? { surfaceAll: 2 } : {}),
     });
   }
   return out;

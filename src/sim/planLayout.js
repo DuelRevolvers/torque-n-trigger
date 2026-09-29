@@ -9,6 +9,8 @@
 // bounding box), or poly (a convex polygon, and r its bounding box).
 
 import * as G from './geom2d.js';
+import { suburbLayout } from './planSuburb.js';
+import { roofLayout } from './planRoof.js';
 
 // Building kinds: frontage widths, depth, heights (fixed cycles), setback from
 // the lot edge, gap between buildings, and a second row behind the first.
@@ -28,32 +30,63 @@ export function planLayout(map) {
   const { style, heightAt: H } = map;
   const P = style.plan;
   const items = [];
-  const taken = []; // footprints of everything solid on the ground: { poly, box }
-  const keepOut = []; // areas ordinary buildings stay out of: sites, the promenade, set pieces
+  // Footprints of everything solid on the ground ('taken') and the areas
+  // ordinary buildings stay out of ('keep': sites, the promenade, set pieces;
+  // some let breakable props in), in a grid so a district of houses stays quick.
+  const CELL = 24;
+  const cells = new Map();
   const boxOf = (poly) => G.polyBounds(poly);
   const overlapsBox = (a, b, m) => a.minX - m < b.maxX && b.minX - m < a.maxX && a.minZ - m < b.maxZ && b.minZ - m < a.maxZ;
-  const clear = (poly, margin = 1) => {
+  const file = (entry) => {
+    const b = entry.box;
+    for (let a = Math.floor(b.minX / CELL); a <= Math.floor(b.maxX / CELL); a++) {
+      for (let c = Math.floor(b.minZ / CELL); c <= Math.floor(b.maxZ / CELL); c++) {
+        const k = a * 100003 + c;
+        if (!cells.has(k)) cells.set(k, []);
+        cells.get(k).push(entry);
+      }
+    }
+  };
+  const near = (box, m) => {
+    const out = new Set();
+    for (let a = Math.floor((box.minX - m) / CELL); a <= Math.floor((box.maxX + m) / CELL); a++) {
+      for (let c = Math.floor((box.minZ - m) / CELL); c <= Math.floor((box.maxZ + m) / CELL); c++) {
+        for (const e of cells.get(a * 100003 + c) || []) out.add(e);
+      }
+    }
+    return out;
+  };
+  // Is this footprint clear of everything taken and kept out (a breakable
+  // prop may stand where only solid things are kept out; a site's own things
+  // stand in the site: ignore 'site')?
+  const clear = (poly, margin = 1, { breakable = false, keep = true, ignore = null } = {}) => {
     const box = boxOf(poly);
-    for (const t of [...taken, ...keepOut]) if (overlapsBox(box, t.box, margin) && G.convexOverlap(poly, t.poly, margin)) return false;
+    for (const t of near(box, margin)) {
+      if (t.keep && (!keep || (breakable && t.breakOk) || (ignore && t.tag === ignore))) continue;
+      if (overlapsBox(box, t.box, margin) && G.convexOverlap(poly, t.poly, margin)) return false;
+    }
     return true;
   };
-  const take = (poly) => taken.push({ poly, box: boxOf(poly) });
-  const reserve = (poly) => keepOut.push({ poly, box: boxOf(poly) });
-  const base = (x, z) => H(x, z) - 1;
+  const takenHit = (poly, margin) => !clear(poly, margin, { keep: false });
+  const take = (poly) => file({ poly, box: boxOf(poly) });
+  const reserve = (poly, breakOk = false, tag = null) => file({ poly, box: boxOf(poly), keep: true, breakOk, tag });
+  // An item's base: just under its lowest corner, so nothing floats on a slope.
+  const baseUnder = (pts) => Math.min(...pts.map(([x, z]) => H(x, z))) - 0.6;
 
-  // A solid rotated box, standing on the ground (buried 1 m for the slope).
+  // A solid rotated box standing on the ground; h is its height above the
+  // ground at its middle.
   const obbItem = (t, o, h, extra = {}) => {
     const corners = G.obbCorners(o);
-    const y = extra.y ?? base(o.x, o.z);
-    const it = { t, solid: true, obb: o, r: G.aabbOf(corners), y, h: extra.y !== undefined ? h : h + 1, ...extra, x: o.x, z: o.z };
+    const y = extra.y ?? baseUnder(corners);
+    const it = { t, solid: true, obb: o, r: G.aabbOf(corners), y, h: extra.y !== undefined ? h : h + (H(o.x, o.z) - y), ...extra, x: o.x, z: o.z };
     items.push(it);
     if (it.y < H(o.x, o.z) + 2) take(corners);
     return it;
   };
   const polyItem = (t, poly, h, extra = {}) => {
     const c = G.polyCentroid(poly);
-    const y = extra.y ?? base(c[0], c[1]);
-    const it = { t, solid: true, poly, r: G.aabbOf(poly), y, h: extra.y !== undefined ? h : h + 1, ...extra, x: c[0], z: c[1] };
+    const y = extra.y ?? baseUnder(poly);
+    const it = { t, solid: true, poly, r: G.aabbOf(poly), y, h: extra.y !== undefined ? h : h + (H(c[0], c[1]) - y), ...extra, x: c[0], z: c[1] };
     items.push(it);
     if (it.y < H(c[0], c[1]) + 2) take(poly);
     return it;
@@ -62,7 +95,7 @@ export function planLayout(map) {
   const box = (x0, x1, z0, z1) => [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
   const along = (pts, s) => G.pointAlong(pts, s);
 
-  for (const s of map.sites) reserve(s.poly);
+  for (const s of map.sites) if (s.poly) reserve(s.poly, false, 'site');
   for (const L of P.lots || []) if (L.poly) reserve(L.poly);
   // The service alleys: kept clear, with a metre to spare either side.
   const alleyStrip = ([a, b], half) => {
@@ -81,6 +114,9 @@ export function planLayout(map) {
   boneyard(site('boneyard'));
   busDepot(site('depot'));
   for (const sp of P.specials || []) special(sp);
+
+  if (P.suburb) suburbLayout({ map, P, H, items, obbItem, polyItem, deco, clear, take, reserve, inLot, box, along, baseUnder });
+  if (P.decks) roofLayout({ map, P, H, items, obbItem, polyItem, deco, clear, take, reserve });
 
   // --- Ordinary buildings along every block's frontages ---
   for (const b of map.blocks) {
@@ -228,7 +264,7 @@ export function planLayout(map) {
   // entrances and the shortcut), rows of parked cars, lamp masts, the valet
   // booth and the shuttle shelter. The valet ramp deck is in the arena data. ---
   function carPark(s) {
-    if (!s) return;
+    if (!s?.carpark) return;
     const c = s.carpark;
     for (const w of c.walls) obbItem('lowWall', w, 1, { cycle: 0 });
     let n = 0;
@@ -331,18 +367,20 @@ export function planLayout(map) {
   // (a kerb with neon palms, broken at every junction) and its neon arches.
   function streetFurniture() {
     const F = P.furniture;
+    if (!F) return;
     for (const e of map.edgeList) {
       const st = e.street;
-      if (st.lampless) continue;
+      if (st.lampless || st.surface === 'dirt') continue;
       const clearEnd = (n) => (map.adj[n].length > 1 ? 18 : 6);
       const L = e.len;
       for (let t = clearEnd(e.a); t < L - clearEnd(e.b); t += F.lampPitch) {
         const p = along(e.pts, t);
         for (const sd of [-1, 1]) {
-          const lat = st.edge + 0.6;
+          // Just inside the lots, or on the verge (lampIn < 0).
+          const lat = st.edge + (F.lampIn ?? 0.6);
           const x = p.x - p.dz * sd * lat;
           const z = p.z + p.dx * sd * lat;
-          if (!inLot(x, z) || map.sites.some((q) => G.pointInPoly(x, z, q.poly))) continue;
+          if (((F.lampIn ?? 0.6) > 0 && !inLot(x, z)) || map.sites.some((q) => q.poly && G.pointInPoly(x, z, q.poly))) continue;
           const pole = { x, z, hw: 0.2, hd: 0.2, yaw: 0 };
           if (!clear(G.obbCorners(pole), 0.2)) continue;
           obbItem('lamp', pole, 7, { toward: [p.dz * sd, -p.dx * sd], cycle: 0 });
@@ -402,8 +440,7 @@ export function planLayout(map) {
           const [x, z] = at(t);
           if (!inLot(x, z)) return false;
           const probe = G.obbCorners({ x: x - d[1] * side * 0.8, z: z + d[0] * side * 0.8, hw: 0.3, hd: 0.3, yaw: 0 });
-          const box = G.polyBounds(probe);
-          return !taken.some((t) => overlapsBox(box, t.box, 0.2) && G.convexOverlap(probe, t.poly, 0.2));
+          return !takenHit(probe, 0.2);
         };
         let from = null;
         for (let t = 0; t <= L; t += 2) {
@@ -457,7 +494,9 @@ export function planLayout(map) {
     if (!F) return;
     const bnd = P.boundary;
     const sea = P.seawall?.pts || [];
-    const onSea = (a, b) => sea.some((p, k) => k + 1 < sea.length && ((G.len2(p, a) < 1 && G.len2(sea[k + 1], b) < 1) || (G.len2(p, b) < 1 && G.len2(sea[k + 1], a) < 1)));
+    const river = P.river?.bank || [];
+    const onLine = (line, a, b) => line.some((p, k) => k + 1 < line.length && ((G.len2(p, a) < 1 && G.len2(line[k + 1], b) < 1) || (G.len2(p, b) < 1 && G.len2(line[k + 1], a) < 1)));
+    const onSea = (a, b) => onLine(sea, a, b) || onLine(river, a, b);
     const exitsAt = map.nodes.filter((n) => n.exit);
     let k = 0;
     bnd.forEach((a, q) => {
@@ -475,7 +514,7 @@ export function planLayout(map) {
         const cz = a[1] + d[1] * (s + w / 2) + out[1] * (F.depth / 2 + 1);
         const near = exitsAt.some((n) => Math.hypot(n.x - (a[0] + d[0] * (s + w / 2)), n.z - (a[1] + d[1] * (s + w / 2))) < w / 2 + F.exitGap);
         const o = { x: cx, z: cz, hw: w / 2, hd: F.depth / 2, yaw: Math.atan2(out[0], out[1]) };
-        if (!near && clear(G.obbCorners(o), 0.5)) obbItem('bldg', o, F.heights[k % F.heights.length], { kind: 'filler', front: [-out[0], -out[1]], cycle: k });
+        if (!near && clear(G.obbCorners(o), 0.5)) obbItem('bldg', o, F.heights[k % F.heights.length], { kind: F.kind || 'filler', front: [-out[0], -out[1]], cycle: k });
         s += w + 2;
         k++;
       }
@@ -489,7 +528,7 @@ export function planLayout(map) {
       const pts = e.a === n.id ? e.pts : [...e.pts].reverse();
       const p = along(pts, 6);
       const half = e.street.edge;
-      obbItem('gate', { x: p.x, z: p.z, hw: half, hd: 0.5, yaw: Math.atan2(p.dx, p.dz) }, 1.2, { cycle: 0 });
+      obbItem('gate', { x: p.x, z: p.z, hw: half, hd: 0.5, yaw: Math.atan2(p.dx, p.dz) }, 1.2, { cycle: 0, ...(P.decks ? { y: H(p.x, p.z) - 0.05 } : {}) });
     }
   }
 }

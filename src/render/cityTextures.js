@@ -132,5 +132,12 @@ export function createCityTextures() {
     { repeat: false, filter: THREE.LinearFilter },
   );
 
-  return { sidewalk, asphalt, lot, tiles, dirt, parking, corrugated, glass, glassGlow, container, puddles };
+  // Lawn grass (Maple Hollow), tinted by its material.
+  const grass = canvasTexture(32, 32, (ctx, w, h) => {
+    ctx.fillStyle = '#7a9a66';
+    ctx.fillRect(0, 0, w, h);
+    speckle(ctx, w, h, rng, ['#86a870', '#6a8a58', '#92b27a', '#5e7e4e'], 0.75);
+  });
+
+  return { sidewalk, asphalt, lot, tiles, dirt, parking, corrugated, glass, glassGlow, container, puddles, grass };
 }

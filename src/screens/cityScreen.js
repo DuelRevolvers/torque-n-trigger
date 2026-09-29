@@ -16,10 +16,7 @@ const TYPE_COLOR = { free: '#ffffff', circuit: '#05d9e8', sprint: '#ff2a6d', are
 const TYPE_LABEL = { free: 'FREE DRIVE', sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG' };
 const HOME = { x: 19.5, y: 50 }; // map coords (0-100)
 // On the map but not raced yet (designs in docs/districts). Lobed like its cul-de-sacs.
-const UPCOMING = [{
-  name: 'Maple Hollow', label: [52.5, 14.5],
-  map: [[45.5, 13.3], [49.5, 9.3], [54.5, 10.7], [59, 8.7], [62, 13.3], [62.5, 20.7], [60.5, 26.7], [62, 33.3], [59.5, 40.7], [54, 42.7], [49.5, 40.7], [45, 42.7], [42.5, 36.7], [44, 29.3], [42.5, 22], [43.5, 16.7]],
-}];
+const UPCOMING = []; // districts on the map but not in the game yet
 // The river, through these points: down between Maple Hollow and Chrome
 // Heights, then east between Chrome and the Undercity.
 const RIVER = [[66.25, -2], [65.5, 8], [66.5, 17.3], [67.5, 26.3], [66.5, 35], [65.75, 40.7], [67, 45.7], [70.25, 49], [75, 50], [81.25, 50.7], [87.25, 51.7], [93.75, 52.3], [101.25, 51.3]];
@@ -173,10 +170,10 @@ export class CityScreen {
     }
     const d = DISTRICTS[this.selected];
     if (this.view.startsWith('shop:')) return this.shopHtml(d, this.view.slice(5));
-    const shops = ['shop', 'used', ...(d.tier >= 2 ? ['black'] : [])]
+    const shops = ['shop', 'used', ...(this.selected >= 3 ? ['black'] : [])]
       .map((k) => `<button class="btn small" data-shop="${k}">${SHOP_KINDS[k].name.toUpperCase()}</button>`).join('');
     return `<h2 style="color:${d.color}">${d.name}</h2>
-      <div class="hint">${esc(d.blurb)}<br>Faction: <b>${d.faction}</b> &middot; Tier ${d.tier + 1}</div>
+      <div class="hint">${esc(d.blurb)}<br>Faction: <b>${d.faction}</b> &middot; Tier ${this.selected + 1}</div>
       <div class="row">${shops}<button class="btn small" data-home="1">HOME</button></div>
       <h3>Events</h3>${districtEvents(d).map((e, k) => this.eventCard(e, computed.ok, k + 1)).join('')}`;
   }
@@ -492,6 +489,7 @@ export class CityScreen {
       const planShop = d.city.plan?.specials?.find((q) => q.kind === 'shop');
       const shop = planShop ? null : grid?.shop ? map.cells[grid.shop[1] * (d.city.cols - 1) + grid.shop[0]] : map.cells.filter((c) => c.kind === 'buildings').sort((p, q) => Math.hypot(...lotCentre(p.lot)) - Math.hypot(...lotCentre(q.lot)))[0];
       if (planShop) pins.push([at(planShop.x, planShop.z), '#e8e8ff', '$']);
+      else if (d.city.plan?.shop) pins.push([at(...d.city.plan.shop), '#e8e8ff', '$']); // the parts shop's own spot (Maple Hollow's plaza)
       else if (shop) pins.push([at(...lotCentre(shop.lot)), '#e8e8ff', '$']);
       if (!events.length && map.arena) pins.push([at(map.arena.x, map.arena.z), TYPE_COLOR.arena, '']);
       for (const [[x, y], color, text] of pins) this.pin(ctx, x, y, color, String(text));
@@ -499,7 +497,7 @@ export class CityScreen {
 
     // Name plate, status underneath.
     const [x, y] = labelAt(d, P);
-    const status = !open ? 'LOCKED' : career.bosses.includes(d.id) ? 'CLEARED' : `TIER ${d.tier + 1}`;
+    const status = !open ? 'LOCKED' : career.bosses.includes(d.id) ? 'CLEARED' : `TIER ${i + 1}`;
     this.plate(ctx, d.name.toUpperCase(), x, y, open ? d.color : '#6a6478');
     this.plate(ctx, status, x, y + 11, open ? '#e8e8ff' : '#6a6478');
   }
@@ -605,7 +603,17 @@ function drawPlan(ctx, map, d, open, line, lotColor) {
     ...lotColor, hotels: mix(d.color, '#1c1828', 0.7), clubs: mix(d.color, '#1c1828', 0.62), motels: '#3a3a52', chapels: '#4a4660',
     pawn: '#40382e', flats: '#2e2c3c', arcade: '#1e4a4a', palace: mix(d.color, '#1c1828', 0.5), drivein: '#26242e', boneyard: '#3a2e2a',
     depot: '#2a2832', market: '#6a2a58', promenade: '#1f4a2a',
+    // A suburb: houses on lawns, the golf course, the park, Phase 2's dirt.
+    houses: mix(d.color, '#1c2818', 0.78), island: '#27452a', green: '#27452a', golf: '#2e5a2a', park: '#2a5230', fields: '#2e5430',
+    construction: '#5a4630', school: '#4a3836', plaza: '#3a3848',
   };
+  // The rooftops: decks shaded by tier (the Crown lightest).
+  for (const dk of map.decks || []) {
+    const h = Array.isArray(dk.h) ? Math.max(...dk.h) : dk.h;
+    ctx.fillStyle = open ? mix(d.color, '#1c1828', h >= 108 ? 0.45 : h >= 100 ? 0.6 : 0.72) : '#191522';
+    line(dk.poly, true);
+    ctx.fill();
+  }
   for (const b of map.blocks) {
     ctx.fillStyle = open ? colors[b.kind] || colors.buildings : '#191522';
     line(b.lot, true);
@@ -618,9 +626,15 @@ function drawPlan(ctx, map, d, open, line, lotColor) {
     ctx.fill();
   }
   for (const s of map.sites) {
+    if (!s.poly || s.kind === 'tower') continue; // a way through (Maple Hollow's backyards); a tower on a deck
     ctx.fillStyle = open ? colors[s.kind] || colors.arena : '#191522';
     line(s.poly, true);
     ctx.fill();
+    if (s.pond) {
+      ctx.fillStyle = open ? '#1e3a5a' : '#191522';
+      line(s.pond, true);
+      ctx.fill();
+    }
   }
   for (const st of map.streets) {
     const main = !!st.median;

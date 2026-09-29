@@ -2,7 +2,11 @@
 // spacing, with a fast "where am I relative to the road" query used for wheel
 // raycasts, walls and lap progress. Rendering builds its meshes from the same data.
 
-export const SURFACE = Object.freeze({ ROAD: 0, CURB: 1, OFFROAD: 2 });
+// OFFROAD is grass, gravel and dirt; SAND a golf bunker; WET a lawn under a sprinkler.
+export const SURFACE = Object.freeze({ ROAD: 0, CURB: 1, OFFROAD: 2, SAND: 3, WET: 4 });
+
+import { wetAt } from './sprinklers.js';
+import { pointInPoly as inPoly } from './geom2d.js';
 
 const SEARCH_WINDOW = 16; // samples either side of the hint index
 const SECTION_RAMP = 8; // metres over which a street's width blends into the next
@@ -20,11 +24,13 @@ export function buildTrack(def) {
   const dense = densify(points, closed, 24);
   const pts = resample(dense, closed, spacing);
   // Jump kickers: the road rises over len metres, then drops away.
-  const jumps = (def.jumps || []).map((j) => ({ s: j.frac !== undefined ? j.frac * pts.length : j.s, len: j.len, height: j.height, bump: !!j.bump }));
+  // (A mound comes down again over the same length: a dirt jump.)
+  const jumps = (def.jumps || []).map((j) => ({ s: j.frac !== undefined ? j.frac * pts.length : j.s, len: j.len, height: j.height, bump: !!j.bump, mound: !!j.mound }));
   for (const j of jumps) {
     pts.points.forEach((pt, i) => {
       const s = i * pts.step;
       if (s >= j.s && s <= j.s + j.len) pt[1] += (j.height * (s - j.s)) / j.len;
+      else if (j.mound && s > j.s + j.len && s <= j.s + 2 * j.len) pt[1] += j.height * (1 - (s - j.s - j.len) / j.len);
     });
   }
   // Gaps (rooftop districts): a launch ramp up to the gap, nothing under it
@@ -44,17 +50,27 @@ export function buildTrack(def) {
   const track = new Track(name, pts, closed, widest ? { halfWidth: widest.halfWidth, curbWidth, shoulderWidth: widest.wall - widest.halfWidth - curbWidth } : { halfWidth, curbWidth, shoulderWidth });
   track.sections = sections;
   track.medians = def.medians?.length ? def.medians : null; // a solid median down the middle (the Strip)
+  track.surfaceAll = def.surfaceAll ?? null; // a whole road of one surface (a shortcut across grass)
+  // Solid things inside the walls (verge trees, hedges at a corner): { x, z, hw, hd, yaw?, y, h }.
+  if (def.obstacles?.length) track.setObstacles(def.obstacles);
+  track.sprinklers = def.sprinklers?.length ? def.sprinklers : null; // lawn sprinklers: { x, z, id }
+  track.breakables = def.breakables?.length ? def.breakables : null; // fences, mailboxes, bins
+  track.gusts = def.gusts || null; // the river gusts (Chrome Heights): exposed on bridges, gaps, the Straight
+  // Ground in the run-off that isn't grass: sand bunkers, paved car parks ({ poly, surface }).
+  track.patches = def.patches?.length ? def.patches.map((p) => ({ ...p, box: p.box || bounds2(p.poly) })) : null;
   track.jumps = jumps;
   track.gaps = gaps.length ? gaps : null;
   track.train = def.train || null; // the freight line, if the district has one
   track.truck = def.truck || null; // the armoured cash truck (the Neon Strip)
+  track.rv = def.rv || null; // the runaway RV (Maple Hollow)
   track.closures = def.closures || [];
+  track.watchCars = def.watchCars || null; // Maple Hollow: the Watch's cars along the edges
   track.narrows = def.narrows?.length ? def.narrows : null; // container tunnels, alleys
   track.authored = !!def.authored;
   // Shortcut branches: narrow roads that leave the main line at s0 and rejoin at s1.
   if (def.branches?.length) {
     track.branches = def.branches.map((b) => ({
-      track: buildTrack({ ...b, closed: false, halfWidth: b.halfWidth ?? 6, curbWidth: b.curbWidth ?? 0.8, shoulderWidth: b.shoulderWidth ?? 2, spacing }),
+      track: buildTrack({ ...b, closed: false, halfWidth: b.halfWidth ?? 6, curbWidth: b.curbWidth ?? 0.8, shoulderWidth: b.shoulderWidth ?? 2, spacing, obstacles: def.obstacles, sprinklers: def.sprinklers, patches: def.patches }),
       s0: b.s0,
       s1: b.s1,
       kind: b.kind || 'street',
@@ -160,6 +176,12 @@ class Track {
     return w;
   }
 
+  // The section at s: its road's own surface (a dirt road is offroad all
+  // across) and its sidewalk's width (paved, beyond the kerb).
+  sectionOf(s) {
+    return this.sections.find((c) => s < c.s1) || this.sections[this.sections.length - 1];
+  }
+
   // Road half-width at s (in a narrow section the road runs wall to wall).
   localHalf(s) {
     const half = this.sections ? this.sectionAt(s, 'half') : this.halfWidth;
@@ -180,6 +202,46 @@ class Track {
     return 0;
   }
 
+  // Sim time (seconds), for the sprinklers.
+  setTime(t) {
+    this.time = t;
+  }
+
+  setObstacles(list) {
+    this.obstacles = list;
+    this.obstacleGrid = new Map();
+    for (const o of list) {
+      const r = Math.hypot(o.hw, o.hd);
+      for (let a = Math.floor((o.x - r) / 16); a <= Math.floor((o.x + r) / 16); a++) {
+        for (let b = Math.floor((o.z - r) / 16); b <= Math.floor((o.z + r) / 16); b++) {
+          const k = a * 100003 + b;
+          if (!this.obstacleGrid.has(k)) this.obstacleGrid.set(k, []);
+          this.obstacleGrid.get(k).push(o);
+        }
+      }
+    }
+  }
+
+  // How exposed a car is to a gust: fully on a section marked exposed, less elsewhere.
+  gustExposure(car) {
+    if (!this.sections) return 1;
+    return this.sectionOf(car.trackS ?? 0).exposed ? 1 : this.gusts?.sheltered ?? 0.35;
+  }
+
+  // Is a sprinkler watering (x, z) now?
+  wetAt(x, z) {
+    return wetAt(this.sprinklers, this.time || 0, x, z);
+  }
+
+  // A patch's surface at (x, z) (sand, paving), or null.
+  patchAt(x, z) {
+    for (const p of this.patches) {
+      const b = p.box;
+      if (x >= b[0] && x <= b[1] && z >= b[2] && z <= b[3] && inPoly(x, z, p.poly)) return p.surface;
+    }
+    return null;
+  }
+
   wrap(i) {
     const n = this.count;
     return this.closed ? ((i % n) + n) % n : Math.min(Math.max(i, 0), n - 1);
@@ -193,9 +255,46 @@ class Track {
   // Nearest road surface: the main line, or a shortcut branch when the point is
   // on one. Branch hits report main-line progress (s, index) so laps and
   // positions keep working, and a lateral scaled to the main wall distance.
-  query(x, z, hint = -1) {
+  query(x, z, hint = -1, y) {
     const r = this.queryMain(x, z, hint);
-    if (!this.branches) return r;
+    const best = this.branches ? this.queryBranches(x, z, r) : r;
+    return this.obstacles || this.sprinklers || this.patches ? this.solidAt(x, z, y, best) : best;
+  }
+
+  // The lawns under a sprinkler are wet; an obstacle inside the walls is a wall.
+  solidAt(x, z, y, g) {
+    let out = g;
+    if (this.patches && (g.surface === SURFACE.OFFROAD || g.offRoad)) {
+      const p = this.patchAt(x, z);
+      if (p !== null) out = { ...g, surface: p };
+    }
+    if (this.sprinklers && out.surface === SURFACE.OFFROAD && this.wetAt(x, z)) out = { ...out, surface: SURFACE.WET };
+    if (!this.obstacles) return out;
+    const list = this.obstacleGrid.get(Math.floor(x / 16) * 100003 + Math.floor(z / 16));
+    if (!list) return out;
+    let pen = Math.abs(g.lateral) - this.wallDist;
+    let hit = null;
+    for (const o of list) {
+      if (y !== undefined && (y > o.y + o.h + 0.3 || y < o.y - 2.5)) continue;
+      const dx = Math.sin(o.yaw || 0);
+      const dz = Math.cos(o.yaw || 0);
+      const u = (x - o.x) * dz - (z - o.z) * dx;
+      const v = (x - o.x) * dx + (z - o.z) * dz;
+      const du = Math.abs(u) - o.hw;
+      const dv = Math.abs(v) - o.hd;
+      const p = -Math.max(du, dv);
+      if (p <= pen) continue;
+      pen = p;
+      // Into the obstacle, across whichever face is nearer.
+      const su = u < 0 ? 1 : -1;
+      const sv = v < 0 ? 1 : -1;
+      hit = du > dv ? [dz * su, -dx * su] : [dx * sv, dz * sv];
+    }
+    if (!hit) return out;
+    return { ...out, lateral: this.wallDist + pen, rx: hit[0], rz: hit[1], trueLateral: g.trueLateral ?? g.lateral };
+  }
+
+  queryBranches(x, z, r) {
     let best = r;
     let bestPen = Math.abs(r.lateral) - this.wallDist;
     for (const b of this.branches) {
@@ -279,7 +378,10 @@ class Track {
     const varied = this.narrows || this.sections;
     const squeeze = varied ? this.wallDist - this.localWall(s) : 0;
     const half = varied ? this.localHalf(s) : this.halfWidth;
-    const surface = abs <= half ? SURFACE.ROAD : abs <= half + this.curbWidth ? SURFACE.CURB : SURFACE.OFFROAD;
+    const sec = this.sections ? this.sectionOf(s) : null;
+    const road = this.surfaceAll ?? sec?.surface ?? SURFACE.ROAD;
+    // (Off the road: grass, or a roof deck's concrete where the section says so.)
+    const surface = abs <= half ? road : abs <= half + Math.max(this.curbWidth, sec?.walk || 0) ? (this.surfaceAll ?? SURFACE.CURB) : sec?.off ?? SURFACE.OFFROAD;
     let reported = squeeze > 0 ? Math.sign(lateral) * (abs + squeeze) : lateral;
     // Inside the median: a wall pushing out to the side the point is on.
     const median = this.medians ? this.medianAt(s) : 0;
@@ -299,6 +401,7 @@ class Track {
       rx,
       rz,
       surface,
+      offRoad: abs > half,
     };
   }
 
@@ -378,4 +481,18 @@ function resample(dense, closed, spacing) {
     out.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]);
   }
   return { points: out, length: total, step };
+}
+
+function bounds2(p) {
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let z0 = Infinity;
+  let z1 = -Infinity;
+  for (const [x, z] of p) {
+    x0 = Math.min(x0, x);
+    x1 = Math.max(x1, x);
+    z0 = Math.min(z0, z);
+    z1 = Math.max(z1, z);
+  }
+  return [x0, x1, z0, z1];
 }

@@ -114,8 +114,9 @@ export function subLine(pts, s0, s1) {
 }
 
 // A rounded corner at v between the straight runs from a and on to b: the arc
-// of radius r tangent to both, sampled every `step` metres.
-export function fillet(a, v, b, r, step = 3) {
+// of radius r tangent to both, sampled every `step` metres. It may take up to
+// share1 and share2 of each run (half, where the next corner shares the run).
+export function fillet(a, v, b, r, step = 3, share1 = 0.49, share2 = 0.49) {
   const L1 = len2(a, v);
   const L2 = len2(v, b);
   const d1 = [(v[0] - a[0]) / L1, (v[1] - a[1]) / L1];
@@ -124,7 +125,7 @@ export function fillet(a, v, b, r, step = 3) {
   const turn = Math.atan2(Math.abs(cross), d1[0] * d2[0] + d1[1] * d2[1]);
   if (turn < 1e-3) return [v];
   const tanH = Math.tan(turn / 2);
-  const t = Math.min(r * tanH, 0.49 * L1, 0.49 * L2);
+  const t = Math.min(r * tanH, share1 * L1, share2 * L2);
   const rr = t / tanH;
   const s1 = [v[0] - d1[0] * t, v[1] - d1[1] * t];
   const sign = Math.sign(cross);

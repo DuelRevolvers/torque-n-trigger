@@ -8,6 +8,8 @@ import { districtLayout } from '../sim/cityLayout.js';
 import { buildAuthoredStructures } from './arenaView.js';
 import { deadSignShape } from './deadSigns.js';
 import * as G from '../sim/geom2d.js';
+import { suburbView } from './suburbView.js';
+import { buildRoofDistrictView } from './roofView.js';
 
 // A plan district (the Neon Strip on): its ground in layers (sidewalk
 // everywhere, the lots on top, then the site surfaces, the roads along their
@@ -45,6 +47,7 @@ class Surface {
 }
 
 export function buildPlanDistrictView(map, tex) {
+  if (map.roof) return buildRoofDistrictView(map, tex); // the rooftops (Chrome Heights)
   const { style, heightAt: H } = map;
   const look = style.look;
   const P = style.plan;
@@ -81,6 +84,8 @@ export function buildPlanDistrictView(map, tex) {
     trunk: litMaterial({ color: '#5a4030' }),
   };
   const neonMat = [...Array(neonN).keys()].map((k) => glowMaterial({ color: look.neon[k], intensity: 2.6 }));
+  // A suburb (Maple Hollow) has its own ground and house kit.
+  const suburb = look.suburb ? suburbView({ map, tex, H, group, items: layout.items, text, clipToConvex, merged }) : null;
 
   // Buckets, merged into one mesh per material at the end.
   const B = { building: [], glass: [], painted: [], dark: [], steel: [], concrete: [], containers: [], gold: [], white: [], lamp: [], pool: [], screen: [], plant: [], trunk: [], signs: [], water: [] };
@@ -90,6 +95,9 @@ export function buildPlanDistrictView(map, tex) {
 
   // --- The ground, in layers ---
   // (Layers a few centimetres apart, and pulled forward in depth, so they never fight.)
+  if (suburb) suburb.ground();
+  else cityGround();
+  function cityGround() {
   add(new THREE.Mesh(flatPoly(P.boundary, (x, z) => H(x, z) - 0.16), mats.walk));
   const lotGeos = map.blocks.map((b) => flatPoly(b.lot, (x, z) => H(x, z) - 0.12));
   add(new THREE.Mesh(merged(lotGeos), mats.lot));
@@ -120,10 +128,12 @@ export function buildPlanDistrictView(map, tex) {
     surf.road.push(flatPoly([[a[0] + n[0], a[1] + n[1]], [b[0] + n[0], b[1] + n[1]], [b[0] - n[0], b[1] - n[1]], [a[0] - n[0], a[1] - n[1]]], (x, z) => H(x, z) - 0.08));
   }
   for (const [k, list] of Object.entries(surf)) if (list.length) add(new THREE.Mesh(merged(list), mats[k]));
+  }
 
   // --- Streets: roads along their curves, junctions, markings, kerbs ---
   const clearAt = junctionClearances();
   const road = new Surface();
+  const dirtRoad = new Surface(); // a dirt road (Maple Hollow's Foundation Road)
   const kerb = new Surface();
   const marks = new Surface();
   const junctionGeos = [];
@@ -133,7 +143,8 @@ export function buildPlanDistrictView(map, tex) {
     const c1 = clearAt.get(`${e.id}:${e.b}`) || 0;
     if (e.len - c0 - c1 < 0.5) continue;
     const pts = G.subLine(e.pts, c0, e.len - c1);
-    ribbon(road, pts, -st.half, st.half, -0.045, 8, 8);
+    ribbon(st.surface === 'dirt' ? dirtRoad : road, pts, -st.half, st.half, -0.045, 8, 8);
+    if (st.surface === 'dirt') continue;
     if (st.sidewalk) for (const s of [-1, 1]) ribbon(kerb, pts, s * st.half, s * (st.half + 0.3), -0.04, 4);
     markings(marks, pts, st);
   }
@@ -153,6 +164,7 @@ export function buildPlanDistrictView(map, tex) {
     for (const s of [-1, 1]) ribbon(kerb, out, s * e.street.half, s * e.street.edge, -0.05, 4);
   }
   add(new THREE.Mesh(road.geometry(), mats.road));
+  add(dirtRoad.geometry() && new THREE.Mesh(dirtRoad.geometry(), mats.dirt));
   add(junctionGeos.length ? new THREE.Mesh(merged(junctionGeos), mats.junction) : null);
   add(kerb.geometry() && new THREE.Mesh(kerb.geometry(), mats.kerb));
   add(marks.geometry() && new THREE.Mesh(marks.geometry(), mats.marking));
@@ -180,9 +192,12 @@ export function buildPlanDistrictView(map, tex) {
   const DRAW = makeDrawers({ B, neon, flicker, speakers, sprays, text, sign, frontOf, buildingBox, H, look });
   for (const it of layout.items) {
     if (it.hidden) continue;
+    const own = suburb?.drawers[it.t];
+    if (own && own(it) !== false) continue;
     const draw = DRAW[it.t];
     if (draw) draw(it);
   }
+  const sub = suburb?.finish();
 
   // --- Merge ---
   const mesh = (list, mat) => list.length && add(new THREE.Mesh(merged(list), mat));
@@ -228,7 +243,8 @@ export function buildPlanDistrictView(map, tex) {
   // Ground far beyond the district, and the skyline.
   const minY = Math.min(...P.boundary.map(([x, z]) => H(x, z)));
   tex.ground.repeat.set(500, 500);
-  add(new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000).rotateX(-Math.PI / 2).translate(0, minY - 3, 0), new THREE.MeshLambertMaterial({ map: tex.ground })));
+  // (A suburb's own ground runs on well beyond its edge, round its hills.)
+  if (!suburb) add(new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000).rotateX(-Math.PI / 2).translate(0, minY - 3, 0), new THREE.MeshLambertMaterial({ map: tex.ground })));
   tex.skyline.repeat.set(6, 1);
   const sky = new THREE.Mesh(new THREE.CylinderGeometry(1500, 1500, 320, 48, 1, true), new THREE.MeshBasicMaterial({ map: tex.skyline, side: THREE.BackSide, alphaTest: 0.5, fog: false }));
   sky.position.set(0, minY + 130, 0);
@@ -242,6 +258,7 @@ export function buildPlanDistrictView(map, tex) {
   // Sim time t (seconds) drives the structures; real time drives the neon.
   group.userData.animate = (t, real = t) => {
     structures.userData.animate(t);
+    sub?.animate(t, real);
     flickerMeshes.forEach((m, k) => {
       const f = Math.sin(real * (7 + k * 3.1)) + Math.sin(real * (13.7 + k)) * 0.8;
       m.visible = f > -0.6;
@@ -252,6 +269,11 @@ export function buildPlanDistrictView(map, tex) {
       sprayMesh.position.y = phase * 3;
     }
   };
+  // Breakable props (a suburb): which are down (world state), and which way they fell.
+  if (sub) {
+    group.userData.setBroken = sub.setBroken;
+    group.userData.breakEvent = sub.breakEvent;
+  }
   group.userData.knock = (cars) => {
     if (!speakerMesh) return;
     let changed = false;

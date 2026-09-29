@@ -3,6 +3,7 @@
 
 import { makeRng, makePart } from '../parts/generate.js';
 import { PART_TYPES, SLOTS, QUALITIES } from '../parts/catalog.js';
+import { DISTRICTS } from './districts.js';
 
 const KEY = 'tt.career.v1';
 
@@ -25,6 +26,12 @@ export function migrateCareer(data) {
     data.completed ??= [];
     data.results ??= {};
     data.bought ??= {};
+    // Beating a district's boss opens the next: a district added to the
+    // campaign since the save (Maple Hollow, third) moves the ones after it on.
+    for (const id of data.bosses) {
+      const i = DISTRICTS.findIndex((d) => d.id === id);
+      if (i >= 0) data.district = Math.max(data.district, Math.min(i + 1, DISTRICTS.length - 1));
+    }
     return data;
   }
 }

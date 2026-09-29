@@ -54,16 +54,15 @@ A district doc covers:
 ## Status
 
 The table is in campaign order. **All six docs are agreed.** They're being built
-in campaign order. Rustline Docks and the Neon Strip are done. Next is Maple
-Hollow, which adds a few extras to the `city.plan` format the Neon Strip
-introduced.
+in campaign order. Rustline Docks, the Neon Strip, Maple Hollow and Chrome Heights
+are done. Next is the Undercity.
 
 | # | District | Theme | Status |
 |---|----------|-------|--------|
 | 1 | [Rustline Docks](01-rustline-docks.md) | Working port, grid | Agreed and built: rebuilt from the ground up, everything authored to the doc (see its "Build spec"). |
 | 2 | [Neon Strip](02-neon-strip.md) | Casinos and clubs: a main strip with diagonals and curves, a central car park | Agreed and built: everything authored to the doc, the first `city.plan` district (see its "Build spec"). |
-| 3 | [Maple Hollow](03-maple-hollow.md) | Suburbs: curving loops and cul-de-sacs (new district, not in the game yet) | Agreed, ready to build |
-| 4 | [Chrome Heights](04-chrome-heights.md) | Skyscraper rooftops: roof decks in three tiers, skybridges, ramp bridges and gap jumps over the street canyons | Agreed, ready to build |
+| 3 | [Maple Hollow](03-maple-hollow.md) | Suburbs: curving loops and cul-de-sacs | Agreed and built: everything authored to the doc, a `city.plan` district with terrain, house plots and breakable props (see its "Build spec"). |
+| 4 | [Chrome Heights](04-chrome-heights.md) | Skyscraper rooftops: roof decks in three tiers, skybridges, ramp bridges and gap jumps over the street canyons | Agreed and built: everything authored to the doc, the first rooftop `city.plan` district, its crossings built from the roof roads (see its "Build spec"). |
 | 5 | [The Undercity](05-the-undercity.md) | A sinkhole city, half under the upper city's deck: twisting streets round the pit, and a storm drain along the south | Agreed, ready to build |
 | 6 | [Corporate Spire](06-corporate-spire.md) | Radial downtown: the Spire on a central roundabout, diagonal avenues, two octagonal rings, Central Park. The finale | Agreed, ready to build |
 
@@ -92,7 +91,8 @@ run out over it.
 The overview map is drawn in `src/screens/cityScreen.js`:
 - `RIVER` and `ROADS` are point lists, drawn as smooth curves. Bridges appear
   automatically where a road crosses the river.
-- `HOME` is the garage icon, and `UPCOMING` holds Maple Hollow's placeholder.
+- `HOME` is the garage icon, and `UPCOMING` holds any district not in the game
+  yet (none now).
 - The legend runs along the bay.
 
 In `src/career/districts.js`, each district has:
@@ -101,10 +101,10 @@ In `src/career/districts.js`, each district has:
   box, clipped to the outline);
 - `label`: where its name plate goes.
 
-Rustline and the Neon Strip are built to their docs, fully authored: streets,
-lots, arenas, shortcuts, set pieces and race dressing. The other three playable
-districts still use the old generator, which makes a grid with randomly placed
-sites, and Maple Hollow isn't in the game yet. That's what the docs replace.
+Rustline, the Neon Strip, Maple Hollow and Chrome Heights are built to their
+docs, fully authored: streets, lots, arenas, shortcuts, set pieces and race
+dressing. The other two districts still use the old generator, which makes a grid with
+randomly placed sites. That's what the docs replace.
 
 ## Owner decisions that apply everywhere
 

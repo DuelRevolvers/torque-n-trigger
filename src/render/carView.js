@@ -231,6 +231,24 @@ export class CarView {
       box(0.03, 0.06, 0.5, tape, -W / 2 - 0.01, 0.0, -0.8);
     }
 
+    // Wood-panel sides (Picket's minivan): between the wheel arches, framed in cream.
+    if (build.look?.woodPanels) {
+      // (Matte, no reflections; texture sets give them the trim finish in their own colours.)
+      const wood = litMaterial({ color: '#7a4a22', side: THREE.DoubleSide });
+      wood.userData = { kind: 'trim', quality: bodyQuality };
+      const trim = litMaterial({ color: '#e8dcc0', side: THREE.DoubleSide });
+      trim.userData = { kind: 'trim', quality: bodyQuality };
+      const z0 = frontWheelZ + archR + 0.1;
+      const z1 = rearWheelZ - archR - 0.1;
+      const yc = bodyYMin + (bodyYMax - bodyYMin) * 0.42;
+      const h = (bodyYMax - bodyYMin) * 0.42;
+      for (const s of [-1, 1]) {
+        const x = s * (sideAt(yc) + 0.006);
+        box(0.012, h, z1 - z0, wood, x, yc, (z0 + z1) / 2);
+        for (const dy of [-h / 2, h / 2]) box(0.016, 0.035, z1 - z0 + 0.03, trim, x + s * 0.002, yc + dy, (z0 + z1) / 2);
+      }
+    }
+
     const m = shell;
     const cage = (height, z0, z1) => {
       for (const s of [-1, 1]) {

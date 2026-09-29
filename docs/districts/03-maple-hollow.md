@@ -1,8 +1,8 @@
 # 3. Maple Hollow
 
-**Status:** agreed, ready to build (everything is open to change after
-playtesting). **Campaign:** 3rd, after the Neon Strip.
-It's a new district and not in the game yet. **Faction:** the Neighbourhood Watch.
+**Status:** agreed and built (everything is open to change after playtesting;
+see "Build spec" and "Built vs this doc" at the end). **Campaign:** 3rd, after
+the Neon Strip. **Faction:** the Neighbourhood Watch.
 
 **On the city map:** top middle, in the lobed outline. The street plan below fills
 that outline, so the map and the district are the same shape.
@@ -432,3 +432,235 @@ data.
 - **Hazard:** the runaway RV.
 
 All of these can change after playtesting.
+
+## Build spec
+
+What the game builds, with the numbers it uses. The data is in
+`src/districts/mapleHollow.js`:
+- **The plan:** the boundary, terrain, nodes, streets and sites exactly as above.
+- **The rest of the file:** what every block is, the set pieces (`suburb`), the
+  runaway RV, and the Homecoming Brawl's structures.
+
+The code that builds it:
+- `src/sim/planMap.js`: the terrain, the streets (with the plan-format extras)
+  and the blocks;
+- `src/sim/planSuburb.js`: the house plots and the set pieces, by fixed rules;
+- `src/sim/planLayout.js`: calls it, and adds the lamps and the ring of houses
+  beyond the edge;
+- `src/sim/planRoute.js`: the event routes and free roam;
+- `src/sim/breakables.js`, `src/sim/rv.js`, `src/sim/sprinklers.js`: the
+  breakable props, the RV and the sprinklers, all in the simulation;
+- `src/render/planView.js` with `src/render/suburbView.js`: draws it all;
+  `src/render/rvView.js` draws the RV.
+
+Metres: x east, z south, origin mid-district. Nothing is random: the same plan
+always builds the same district.
+
+**Ground and streets**
+- **Terrain:** the bowl (12 m deep round the pond, 650 m across to the rim) and
+  Water Tower Hill (10 m more, 260 m across). The pond is the lowest point; the
+  tower's circle is 22 m above it.
+  - The pond's bed falls 2.5 m over 10 m in from its edge.
+  - The stadium is levelled, blending out over 25 m.
+  - The causeway (x ±16, z 95 to 255) is level with the banks at its ends.
+- **Streets:** the doc's widths. Every street and court has a 3 m sidewalk and a
+  2 m grass verge, so its lot line is half the road plus 5 m: 15 m on Maple
+  Avenue, 11 m on the streets, 10 m on the courts. Foundation Road is 8 m of dirt
+  with no sidewalk.
+- **Rounded corners:** built from the plan's `via` points and radii. A corner
+  may use up to 90% of a straight that ends at a junction (half, where two
+  corners share it), so every bend keeps the doc's radius.
+- **Turning circles:** 22 m to the kerb (30 m round the water tower). The planted
+  island inside has a tree. The Linden Loop is an 80 m ring round a green with
+  trees and benches.
+- **Roads out:** Hollow Road (to the Corporate Spire), the Riverside Bridge (to
+  Chrome Heights) and Maple Avenue (to the Neon Strip) end on the boundary. A
+  barrier stands across each 6 m inside it.
+- **Blocks:** 16 faces between the streets and the boundary: ten of land, five
+  turning-circle islands and the Linden green.
+- **Lamps:** amber, every 70 m along both verges.
+- **The river:** 70 m wide beyond the east edge, with a low wall along the bank.
+  Free roam treats the water as a drop (you respawn).
+- **Beyond the edge:** a ring of houses just outside the boundary (not across
+  the river), solid, so free roam stays in the district.
+
+**Houses** (along every street frontage of the house blocks, frontage by
+frontage, the avenue first)
+- **Plots:** 18–23 m wide on a fixed cycle, 35 m deep (28 m where the block is
+  shallower). On a curve the plot's front stands where the lot line is furthest in.
+- **The riverside:** 28–34 m plots, 44 m deep, with bigger houses. These are the
+  plots east of x 436 (Ridgeway's east side and the Riverside Bridge) and east
+  of x 420 below z 300 (Willow Bend's east side).
+- **Each plot, from the street:**
+  - a maple on the verge (solid);
+  - an 8 m front lawn with a sprinkler, a picket fence (on two plots in three),
+    a mailbox and, on every other plot, two bins (all breakable);
+  - a minivan on the driveway on every third plot (solid);
+  - the property line: a 1.4 m hedge, or a 1 m garden wall on every third plot,
+    with a gate across the driveway (all solid);
+  - the porch (with its light), the two-storey house (8–10 m to the ridge,
+    gabled, some windows lit warm and some blue with TV), and the garage;
+  - a basketball hoop on every fourth plot;
+  - the backyard: a pool (fall in and you respawn) on two plots in three,
+    otherwise a trampoline; a table and chair; wooden fences down the side and
+    across the back (all breakable).
+- **Numbers:** 389 plots (358 houses and 31 riverside houses), 146 houses in the
+  ring beyond the edge, 245 pools, 389 sprinklers, 8,685 breakable props.
+- **Block middles:** oaks on a staggered 17 m grid wherever nothing stands.
+- **Maple Avenue:** maples every 15 m on both verges (not on the causeway, nor
+  within 24 m of a junction).
+
+**The set pieces**
+- **Water Tower Hill:** the tower at (50, −615), on four solid legs 18 m apart,
+  with cross braces. The tank is 24–34 m up with MAPLE HOLLOW painted round it,
+  a cone roof and a red beacon that blinks.
+- **Hollow Hills Golf:**
+  - nine fairways (lighter grass) with greens, tees and flags (breakable);
+  - ten sand bunkers (sand: slow): one by each of seven greens, and three beside
+    the shortcut's line;
+  - the water hazard (fall in and you respawn) at (−205, −605);
+  - the clubhouse (30 × 18 m, facing Water Tower Circle), six golf carts in a
+    row and its car park, which the shortcut runs through.
+- **Phase 2:** dirt ground; 18 timber frames, most in pairs either side of
+  Foundation Road 24 m off it, three for the next street to the west; four dirt mounds (free-roam jumps, 1.5–2 m);
+  a bulldozer, a digger, lumber and pipe stacks, and three portable toilets.
+  Foundation Road's two jumps are 1.2 m mounds at 35% and 70% along it.
+- **Hollow Park and Hollow Pond:** grass; the pond (fall in and you respawn) is
+  the doc's ellipse, 220 × 160 m, its surface 0.2 m up. The causeway's railings
+  stand at x ±11. The park has a gazebo, swings, a slide and a climbing frame,
+  six benches, trees, a footpath round the pond on both sides of the avenue, and
+  mist over the water.
+- **Hollow High:**
+  - the school (140 × 44 m, three storeys, HOLLOW HIGH over the door) and the gym;
+  - the car park: three double rows between the school and Pinecrest, split
+    along the boss race's shortcut, and four lamp masts;
+  - the gates on School Lane, and a sign (GO HAWKS! HOMECOMING FRIDAY);
+  - the practice fields: a baseball diamond with its backstop, and three fenced
+    tennis courts.
+- **Hollow Plaza:** the strip mall along the south (FOODWAY, SUDS, PIZZA,
+  VIDEO, and HOLLOW HARDWARE & AUTO, the parts shop), facing north over its car
+  park of three double rows, open to Maple Avenue; lamp masts, a HOLLOW PLAZA
+  pylon by the avenue, and trees.
+- **The cut-throughs:**
+  - **Birch–Hawthorn:** three backyards, each 10 m either side of the way,
+    fenced from each other across it and down both sides (breakable). Each has a
+    pool beside the way, a shed, and a trampoline or garden furniture.
+  - **Chestnut–Phase 2:** the same, three backyards, then Phase 2's dirt.
+
+**Events as built**
+- **Paper Route:** 3.37 km. The golf shortcut saves 79 m, across grass
+  (offroad all the way) and past the bunkers.
+- **Ridgeway Loop:** 1.91 km a lap, starting 80 m up Maple Avenue from the Hollow
+  crossroads. The Foundation Road shortcut saves 109 m: dirt, with both jumps.
+- **Hollow Drop:** 402 m from the grid at z −90 to the finish at z +312, four
+  abreast, then 120 m to pull up. The walls close to the railings over the
+  causeway.
+- **Homecoming Brawl:** the stadium (x −465 to −255, z 110 to 280), inside its
+  fence:
+  - the running track: a 33 m-radius oval with 70 m straights and six lanes,
+    round the football field (grass) and its end zones;
+  - bleachers 60 m long on both sides, the press box on the west stand, four
+    floodlight towers, goalposts at both ends, the scoreboard at the south end,
+    the team benches and the water-cooler table (all solid);
+  - the homecoming stage at the north end: 40 × 8 m and 1.6 m up, a 10 m ramp from
+    the west;
+  - the parade float laps the running track's middle lane at 5 m/s and does 25
+    damage a second.
+- **Rival: Backyard Run:** 2.91 km against Mule, no shortcuts. Through both
+  cut-throughs (offroad), over the causeway, and over one of Foundation Road's
+  jumps.
+- **Boss: Picket:** 3.00 km a lap, 2 laps, starting 30 m south of Ridgeway. The
+  school car park shortcut saves 41 m.
+- **Race widths and edges:**
+  - the road is the street's; the sidewalk is kerb (a little less grip);
+  - the lawns are run-off (grass: less grip, wet and slipperier under a
+    sprinkler);
+  - the wall is the property line: 23 m on Maple Avenue, 19 m on the streets,
+    18 m on the courts, 6 m on Foundation Road, 7 m in the backyards, 9 m on the
+    golf course, 6.5 m through the school car park;
+  - everything solid inside the walls (the verge maples, lamps, minivans, a
+    hedge at a corner) is solid in the race too;
+  - the fences, mailboxes, bins and garden furniture in reach go down.
+- **Race dressing:**
+  - every street leaving a route is closed with the Watch's minivans and station
+    wagons parked nose to tail, spotlights on and turned on the route;
+  - where there's no property line, Watch cars line the edge instead (the park,
+    the plaza car park, the golf course, the school, Phase 2, gaps at corners);
+  - no road or barriers are laid over the district's own streets;
+  - at the start: the Watch captain in hi-vis with a megaphone, neighbours in
+    dressing gowns on the nearest porches, lawn chairs and a barbecue, and two
+    spotlights on the grid;
+  - the drag: the start lights hang from the maple nearest the line, and there
+    are crowds on the pond banks.
+- **Sprinklers:** each comes on for 20 s windows, about one in six at a time,
+  from a hash of the window and the sprinkler. The same in every replay.
+- **The runaway RV:**
+  - about one minute in five, never in the first minute;
+  - it rolls off the circle by the tower, down Maple Avenue, accelerating at
+    0.6 m/s² to 90 km/h (reached about z −90, 42 s in) and drifting up to 7 m
+    across the lanes;
+  - it veers off the causeway just past its north end and goes into the pond
+    53 s after it starts, then sinks;
+  - it shoves cars aside and does 20 damage, plus 1.6 for every m/s of closing
+    speed;
+  - it's in every race (it crosses every route) and free roam, not the brawl.
+- **Free roam:** the ground's surfaces (grass, road, sidewalk, driveways and car
+  parks, sand, dirt), the pond, pools, the golf hazard and the river (fall in
+  and you respawn), the breakable props, the sprinklers, the mounds and the RV.
+  It starts at the Hollow crossroads.
+
+**The campaign**
+- Third, after the Neon Strip. Tier 3 on the map; AI difficulty level 2.
+- The Neighbourhood Watch. Rival Mule (from the rival list), boss Picket.
+- **Picket:** a lifted minivan (van chassis, long-travel off-road suspension) in
+  white with wood-panel sides, a ram bumper, a roof light bar, a scatter cannon
+  and an oil slick. Aggression 0.6, caution 0.5, targets the leader.
+- **The rival list** is now one per district: Jackal, Ghost, Mule, Redline,
+  Vixen, Static. Redline (Chrome Heights' rival) is in `drivers.js` to Chrome
+  Heights' doc.
+- **AI difficulty levels:** 0, 1, 2, 3, 3, 4. Chrome Heights moves from 2 to 3.
+- **Saves from before:** beating a district's boss opens the next, so a save
+  that had cleared the Neon Strip opens Maple Hollow, and one further on keeps
+  what it had open.
+
+## Built vs this doc
+
+Maple Hollow was built from the ground up to this doc on 2026-09-28, with
+every part authored. It was checked against the doc point by point.
+`tests/mapleHollow.test.js` checks that:
+- the build uses no randomness;
+- the plan's widths, turning circles, exits, blocks and terrain match this doc;
+- the houses and their kit, and every set piece, are there;
+- the route lengths match, the shortcuts save distance, the rival race has
+  none, and the causeway narrows the drag, the rival and the boss;
+- the lawns are run-off up to the property line, and what stands on them is solid;
+- fences go down when hit, the same way every time;
+- the RV is rare, reaches about 90 km/h and ends in the pond, and hits hard;
+- the sprinklers come and go;
+- the brawl and free roam hold their structures, surfaces and water;
+- Maple Hollow is third, with Mule and Picket, and old saves carry over.
+
+**Decisions made while building, all open to change after playtesting:**
+- **The golf shortcut:** the doc gives its two ends. A straight line between them
+  crosses Ridgeway, so it bends through the clubhouse car park and along the
+  course, clear of the road. It saves 79 m (the doc said about 100).
+- **The school car park shortcut:** from Pinecrest's south side, diagonally
+  through the car park to its west side. It saves 41 m (the doc gives no figure).
+- **The cut-throughs:** the doc's paths, each made into three fenced backyards
+  (the doc says three for Birch–Hawthorn; Chestnut–Phase 2 has three too).
+- **The stadium:** the doc's structures, laid out by this build: the oval, the
+  stands, the stage at the north end outside the track, and the float's lap.
+- **The stage ramp:** up from the west, across the stage, and off its front
+  onto the track.
+- **Race walls:** the property line, as the doc says. Where the doc names no
+  number, the widths are the plan's.
+- **Where the doc gives no numbers:** plot widths, house heights and colours,
+  the kit's sizes, lamp spacing, the golf layout, Phase 2's layout, the park's
+  furniture, the school, the plaza and the RV's figures are this build's choices.
+- **Rounded corners (applies to every plan district):** a corner now keeps its
+  radius where the straight beside it ends at a junction. Before, every corner
+  was held to half of each straight, which made Ridgeway's 130 m bend 95 m and
+  Willow Bend's 100 m bend 73 m. The Neon Strip's Velvet Curve and Crown Road
+  now keep their radii too (see its doc).
+- **Breakables and the car:** the car is three circles (front, middle, back)
+  when it meets a breakable prop, so a thin fence can't pass between them.

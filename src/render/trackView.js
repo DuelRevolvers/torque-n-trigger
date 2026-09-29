@@ -39,9 +39,13 @@ export function buildTrackView(track, tex, opts = {}) {
   });
   const inMain = (x, z) => Math.abs(track.queryMain(x, z, -1).lateral) < track.wallDist - 0.5;
 
-  buildRoad(group, track, mats, groundY, { wallSkip: branches.length ? inBranch : null });
+  // A suburb's route is its own streets and lawns: no road laid over them, no
+  // barriers (the property lines are the walls).
+  // (The same on the rooftops: the decks, bridges and kickers are the district's.)
+  const suburb = !!opts.look?.suburb || opts.look?.closures === 'transporters';
+  if (!suburb) buildRoad(group, track, mats, groundY, { wallSkip: branches.length ? inBranch : null });
   for (const br of branches) {
-    buildRoad(group, br.track, mats, groundY, { lift: 0.03, wallSkip: inMain, roadMat: branchMaterial(br.kind, tex, mats) });
+    if (!suburb) buildRoad(group, br.track, mats, groundY, { lift: 0.03, wallSkip: inMain, roadMat: branchMaterial(br.kind, tex, mats) });
     group.add(beacons(br.track));
   }
 
@@ -62,8 +66,9 @@ export function buildTrackView(track, tex, opts = {}) {
     // (Authored districts: a fixed pattern of heights and colours, nothing random.)
     let n = 0;
     const limos = opts.look?.closures === 'limos';
+    const watch = opts.look?.closures === 'watch';
     for (const [k, c] of (track.closures || []).entries()) {
-      if (limos) {
+      if (limos || watch) {
         tops.push({ c, y: c.y + (c.bus ? 3.4 : 1.5), bus: c.bus });
         continue;
       }
@@ -85,6 +90,7 @@ export function buildTrackView(track, tex, opts = {}) {
     }
     if (stacks.length) group.add(new THREE.Mesh(mergeGeometries(stacks), litMaterial({ map: tex.container, vertexColors: true })));
     if (limos) group.add(limoClosures(track.closures || []));
+    if (watch) group.add(watchCars(track.closures || [], track.watchCars || [], tex));
     const i0 = track.closed ? 0 : 0;
     const masts = [];
     const heads = [];
@@ -98,11 +104,23 @@ export function buildTrackView(track, tex, opts = {}) {
     }
     group.add(new THREE.Mesh(mergeGeometries(masts), litMaterial({ color: '#4a4858' })), new THREE.Mesh(mergeGeometries(heads), glowMaterial({ color: '#fff4d0', intensity: 3 })));
     if (opts.look?.startDressing === 'docks') group.add(docksDressing(track, tex, at, opts.clear || (() => true), tops));
+    if (opts.look?.startDressing === 'maple') {
+      const dressing = mapleDressing(track, tex, at, opts);
+      group.add(dressing);
+      group.userData.animate = dressing.userData.animate;
+    }
     if (opts.look?.startDressing === 'strip') {
       const dressing = stripDressing(track, tex, at, opts, tops);
       group.add(dressing);
       group.userData.animate = dressing.userData.animate;
     }
+  }
+  // The rooftops: Kessler car transporters across the links the route doesn't use; the start.
+  if (opts.city && opts.look?.closures === 'transporters') {
+    group.add(transporterClosures(track.closures || []));
+    const dressing = chromeDressing(track, tex, at, opts);
+    group.add(dressing);
+    group.userData.animate = dressing.userData.animate;
   }
   group.add(buildStartLine(track, tex, at, track.closed ? 0 : track.indexAtDistance(track.finishS ?? track.length - 25)));
   if (!opts.city) group.add(buildLamps(track, tex, at));
@@ -225,6 +243,301 @@ function limoClosures(closures) {
   group.add(new THREE.Mesh(mergeGeometries(body), litMaterial({ color: '#15121c' })));
   group.add(new THREE.Mesh(mergeGeometries(glass), litMaterial({ color: '#2a2440' })));
   group.add(new THREE.Mesh(mergeGeometries(lit), glowMaterial({ color: '#ff5ab8', intensity: 2.2 })));
+  return group;
+}
+
+// The Neighbourhood Watch's cars: minivans and station wagons parked nose to
+// tail across every closed street, roof spotlights on and turned on the route,
+// and more of them lined up along the route wherever there's no property line
+// to mark its edge (the park, the plaza car park).
+const WATCH_COLORS = ['#e8e4dc', '#7a8a9a', '#8a2a2a', '#2a4a6a', '#c8b890', '#3a5a3a', '#5a5a64'];
+function watchCars(closures, line, tex) {
+  const body = [];
+  const glass = [];
+  const lamps = [];
+  const beams = [];
+  const tinted = (g, color) => {
+    const c = new THREE.Color(color);
+    const cols = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < cols.length; k += 3) cols.set([c.r, c.g, c.b], k);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return g;
+  };
+  let n = 0;
+  // A minivan (or a wagon with a roof rack) at (x, y, z) along yaw; a spotlight
+  // on its roof aimed along aim (a yaw), if given.
+  const car = (x, y, z, yaw, aim) => {
+    const van = n % 3 !== 1;
+    const color = WATCH_COLORS[n % WATCH_COLORS.length];
+    n++;
+    body.push(tinted(new THREE.BoxGeometry(1.95, van ? 1.25 : 0.9, 4.9).rotateY(yaw).translate(x, y + (van ? 0.95 : 0.75), z), color));
+    glass.push(new THREE.BoxGeometry(1.85, 0.5, van ? 3.6 : 2.6).rotateY(yaw).translate(x, y + (van ? 1.8 : 1.45), z));
+    if (van) body.push(tinted(new THREE.BoxGeometry(1.9, 0.08, 3.7).rotateY(yaw).translate(x, y + 2.09, z), color));
+    else body.push(tinted(new THREE.BoxGeometry(1.5, 0.1, 2.4).rotateY(yaw).translate(x, y + 1.75, z), '#2a2a30'));
+    if (aim === undefined) return;
+    const top = y + (van ? 2.2 : 1.85);
+    lamps.push(new THREE.BoxGeometry(0.4, 0.3, 0.3).rotateY(aim).translate(x, top + 0.1, z));
+    // Its light on the road ahead of it.
+    beams.push(new THREE.PlaneGeometry(9, 14).rotateX(-Math.PI / 2).translate(0, 0, 10).rotateY(aim).translate(x, y + 0.12, z));
+  };
+  for (const c of closures) {
+    const len = 5.2;
+    const k = Math.max(1, Math.floor(c.width / len));
+    const across = [Math.cos(c.yaw), -Math.sin(c.yaw)];
+    for (let q = 0; q < k; q++) {
+      const off = -c.width / 2 + (c.width * (q + 0.5)) / k;
+      car(c.x + across[0] * off, c.y, c.z + across[1] * off, c.yaw + Math.PI / 2, q % 2 === 0 ? c.yaw + Math.PI : undefined);
+    }
+  }
+  for (const w of line) car(w.x, w.y, w.z, w.yaw, w.k % 4 === 0 ? w.yaw + Math.PI / 2 : undefined);
+  const group = new THREE.Group();
+  if (!body.length) return group;
+  group.add(new THREE.Mesh(mergeGeometries(body), litMaterial({ vertexColors: true })));
+  group.add(new THREE.Mesh(mergeGeometries(glass), litMaterial({ color: '#1c1c28' })));
+  if (lamps.length) group.add(new THREE.Mesh(mergeGeometries(lamps), glowMaterial({ color: '#fff8e0', intensity: 3 })));
+  if (beams.length) {
+    const b = new THREE.Mesh(mergeGeometries(beams), additiveMaterial({ map: tex.glow, color: '#fff4d8', opacity: 0.22 }));
+    b.renderOrder = 2;
+    group.add(b);
+  }
+  return group;
+}
+
+// Maple Hollow's start: the Watch captain with a megaphone, neighbours out on
+// their porches in dressing gowns, lawn chairs and a barbecue on the lawns
+// either side, spotlights on the grid. A drag: the start lights hung from a
+// maple tree over the road, and crowds on the pond banks.
+function mapleDressing(track, tex, at, opts) {
+  const group = new THREE.Group();
+  const clear = opts.clear || (() => true);
+  const painted = [];
+  const tinted = (g, color) => {
+    const c = new THREE.Color(color);
+    const cols = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < cols.length; k += 3) cols.set([c.r, c.g, c.b], k);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return g;
+  };
+  const GOWNS = ['#e8a0b8', '#6a7ab0', '#8a2a3a', '#c8c0a8', '#4a6a8a', '#b8a0d0'];
+  const i0 = track.closed ? 0 : 0;
+  const [sx, , sz] = at(i0, 0);
+  const W = track.localWall ? track.localWall(track.s[i0]) : track.wallDist;
+  // The captain, in hi-vis, with a megaphone, by the line.
+  {
+    const i = track.indexAtDistance(4);
+    const [x, y, z] = at(i, W - 1.5);
+    const yaw = Math.atan2(-track.rx[i], -track.rz[i]);
+    figure(painted, tinted, x, y, z, yaw, '#c8f03a');
+    painted.push(tinted(new THREE.ConeGeometry(0.18, 0.45, 8).rotateX(-Math.PI / 2).rotateY(yaw).translate(x + Math.sin(yaw) * 0.35, y + 1.72, z + Math.cos(yaw) * 0.35), '#e8e8e8'));
+  }
+  // Neighbours on the nearest porches.
+  (opts.fronts || [])
+    .map((q) => ({ ...q, d: Math.hypot(q.x - sx, q.z - sz) }))
+    .filter((q) => q.d < 90)
+    .sort((p, q) => p.d - q.d)
+    .slice(0, 5)
+    .forEach((f, k) => {
+      for (let q = 0; q < 2; q++) figure(painted, tinted, f.x + f.fx * 1.2 + f.fz * (q - 0.5) * 1.4, f.y + 0.5, f.z + f.fz * 1.2 - f.fx * (q - 0.5) * 1.4, Math.atan2(f.fx, f.fz), GOWNS[(k * 2 + q) % GOWNS.length]);
+    });
+  // Lawn chairs and a barbecue on the lawns just past the line, where there's room.
+  for (const [s, side] of [[14, -1], [22, 1], [34, -1]]) {
+    const i = track.indexAtDistance(s);
+    const lat = side * Math.max(6, W - 5);
+    const [x, y, z] = at(i, lat);
+    if (!clear(x, z)) continue;
+    const yaw = Math.atan2(-track.rx[i] * side, -track.rz[i] * side);
+    for (let q = -1; q <= 1; q++) {
+      const cx = x + track.tx[i] * q * 1.3;
+      const cz = z + track.tz[i] * q * 1.3;
+      painted.push(tinted(new THREE.BoxGeometry(0.55, 0.08, 0.55).rotateY(yaw).translate(cx, y + 0.45, cz), '#3a8ac8'));
+      painted.push(tinted(new THREE.BoxGeometry(0.55, 0.55, 0.08).rotateY(yaw).translate(cx - Math.sin(yaw) * 0.26, y + 0.72, cz - Math.cos(yaw) * 0.26), '#3a8ac8'));
+      figure(painted, tinted, cx, y - 0.35, cz, yaw, GOWNS[(q + 4 + s) % GOWNS.length]);
+    }
+    if (side < 0) {
+      const bx = x + track.tx[i] * 3.2;
+      const bz = z + track.tz[i] * 3.2;
+      painted.push(tinted(new THREE.SphereGeometry(0.4, 8, 6, 0, Math.PI * 2, 0, Math.PI / 2).rotateX(Math.PI).translate(bx, y + 0.95, bz), '#1c1c20'));
+      for (let q = 0; q < 3; q++) painted.push(tinted(new THREE.BoxGeometry(0.05, 0.9, 0.05).translate(bx + Math.cos(q * 2.1) * 0.3, y + 0.45, bz + Math.sin(q * 2.1) * 0.3), '#1c1c20'));
+      group.add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.06, 0.5).translate(bx, y + 1, bz), glowMaterial({ color: '#ff6020', intensity: 2.4 })));
+    }
+  }
+  // A drag: the start lights hung from the maple nearest the line, and crowds
+  // on the pond banks.
+  if (opts.drag) {
+    const tree = (opts.trees || []).map((t) => ({ ...t, d: Math.hypot(t.x - sx, t.z - sz) })).sort((p, q) => p.d - q.d)[0];
+    const i = track.indexAtDistance(12);
+    const [lx, ly, lz] = at(i, 0);
+    const hx = tree && tree.d < 30 ? tree.x + (lx - tree.x) * 0.35 : lx;
+    const hz = tree && tree.d < 30 ? tree.z + (lz - tree.z) * 0.35 : lz;
+    const hy = ly + 5.2;
+    group.add(new THREE.Mesh(new THREE.BoxGeometry(0.9, 3.4, 0.6).rotateY(Math.atan2(track.tx[i], track.tz[i])).translate(hx, hy, hz), litMaterial({ color: '#15121c' })));
+    if (tree) group.add(new THREE.Mesh(new THREE.BoxGeometry(0.04, 3, 0.04).translate(hx, hy + 3.2, hz), litMaterial({ color: '#2a2a2a' })));
+    [['#ff2020', 1.2], ['#ffb000', 0.4], ['#ffb000', -0.4], ['#20ff60', -1.2]].forEach(([color, dy]) => {
+      group.add(new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.7).translate(hx - track.tx[i] * 0.2, hy + dy, hz - track.tz[i] * 0.2), glowMaterial({ color, intensity: 2.6 })));
+    });
+    const pond = opts.pond;
+    if (pond) {
+      const cx = pond.reduce((s, p) => s + p[0], 0) / pond.length;
+      const cz = pond.reduce((s, p) => s + p[1], 0) / pond.length;
+      pond.forEach(([px, pz], k) => {
+        if (Math.abs(px) < 18 || Math.abs(px) > 90) return;
+        const d = Math.hypot(px - cx, pz - cz);
+        for (let q = 0; q < 3; q++) {
+          const out = 2.5 + q * 1.2;
+          const x = px + ((px - cx) / d) * out + (q - 1) * 0.8;
+          const z = pz + ((pz - cz) / d) * out;
+          if (!clear(x, z)) continue;
+          figure(painted, tinted, x, opts.heightAt ? opts.heightAt(x, z) : ly, z, Math.atan2(cx - x, cz - z), GOWNS[(k + q) % GOWNS.length]);
+        }
+      });
+    }
+  }
+  if (painted.length) group.add(new THREE.Mesh(mergeGeometries(painted), litMaterial({ vertexColors: true })));
+  // Spotlights on stands either side of the grid, their light swinging over the road.
+  const pools = [];
+  const poolMat = additiveMaterial({ map: tex.glow, color: '#fff0d0', opacity: 0.3 });
+  for (const [k, side] of [[0, -1], [1, 1]]) {
+    const i = track.indexAtDistance(track.closed ? 12 : 44 + k * 6);
+    const [x, y, z] = at(i, side * (W - 2));
+    const stand = new THREE.Mesh(new THREE.BoxGeometry(0.3, 4, 0.3), litMaterial({ color: '#2a2a30' }));
+    stand.position.set(x, y + 2, z);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.5), glowMaterial({ color: '#fff4dc', intensity: 3 }));
+    head.position.set(x, y + 4.2, z);
+    const pool = new THREE.Mesh(new THREE.PlaneGeometry(12, 12).rotateX(-Math.PI / 2), poolMat);
+    pool.renderOrder = 2;
+    group.add(stand, head, pool);
+    pools.push({ pool, k, side, i, y });
+  }
+  group.userData.animate = (t, real = t) => {
+    for (const { pool, k, side, i, y } of pools) {
+      const a = side * (W - 2) * (0.55 + 0.35 * Math.sin(real * 0.6 + k * 2));
+      pool.position.set(track.x[i] + track.rx[i] * a, y + 0.15, track.z[i] + track.rz[i] * a);
+    }
+  };
+  group.userData.animate(0);
+  return group;
+}
+
+// Kessler car transporters parked across the heads of the links a route doesn't
+// use: a cab and a two-deck trailer loaded with new cars, amber beacons on.
+function transporterClosures(closures) {
+  const cab = [];
+  const trailer = [];
+  const cars = [];
+  const lamps = [];
+  const tinted = (g, color) => {
+    const c = new THREE.Color(color);
+    const cols = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < cols.length; k += 3) cols.set([c.r, c.g, c.b], k);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return g;
+  };
+  const COLORS = ['#c8ccd4', '#05d9e8', '#1a1a20', '#e8e8f0', '#ff2a6d'];
+  closures.forEach((c, n) => {
+    const yaw = c.yaw + Math.PI / 2;
+    const ax = Math.sin(yaw);
+    const az = Math.cos(yaw);
+    const L = c.width;
+    const at = (u, dy) => [c.x + ax * u, c.y + dy, c.z + az * u];
+    const [cx, cy, cz] = at(-L / 2 + 1.5, 1.8);
+    cab.push(new THREE.BoxGeometry(2.6, 3, 3).rotateY(yaw).translate(cx, cy, cz));
+    lamps.push(new THREE.BoxGeometry(0.5, 0.3, 0.5).translate(cx, cy + 1.7, cz));
+    const [tx, ty, tz] = at(1.5, 1.1);
+    trailer.push(new THREE.BoxGeometry(2.7, 0.5, L - 3).rotateY(yaw).translate(tx, ty, tz));
+    trailer.push(new THREE.BoxGeometry(2.8, 0.2, L - 3).rotateY(yaw).translate(tx, ty + 2.3, tz));
+    for (const s of [-1, 1]) trailer.push(new THREE.BoxGeometry(0.15, 3, L - 3).rotateY(yaw).translate(tx - az * s * 1.35, ty + 1.5, tz + ax * s * 1.35));
+    for (let q = 0; q < Math.floor((L - 3) / 4.6); q++) {
+      for (const [dy, k] of [[0.9, 0], [3.1, 1]]) {
+        const [x, y, z] = at(-L / 2 + 3.3 + q * 4.6, dy);
+        cars.push(tinted(new THREE.BoxGeometry(1.8, 0.9, 4.1).rotateY(yaw).translate(x, y, z), COLORS[(n + q + k) % COLORS.length]));
+      }
+    }
+  });
+  const group = new THREE.Group();
+  if (!cab.length) return group;
+  group.add(new THREE.Mesh(mergeGeometries(cab), litMaterial({ color: '#e8e8f0' })));
+  group.add(new THREE.Mesh(mergeGeometries(trailer), litMaterial({ color: '#5a6070' })));
+  group.add(new THREE.Mesh(mergeGeometries(cars), litMaterial({ vertexColors: true })));
+  group.add(new THREE.Mesh(mergeGeometries(lamps), glowMaterial({ color: '#ffb040', intensity: 2.6 })));
+  return group;
+}
+
+// Chrome Heights' start: Kessler banners on poles either side, pit gazebos on
+// the deck, a TV helicopter holding overhead. A drag: the crowd on the East
+// Terrace bridge beside the start.
+function chromeDressing(track, tex, at, opts) {
+  const group = new THREE.Group();
+  const painted = [];
+  const tinted = (g, color) => {
+    const c = new THREE.Color(color);
+    const cols = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < cols.length; k += 3) cols.set([c.r, c.g, c.b], k);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return g;
+  };
+  const clear = opts.clear || (() => true);
+  const s0 = track.closed ? 0 : 40;
+  const half = track.localHalf ? track.localHalf(s0) : track.halfWidth;
+  const banner = textTexture('KESSLER', '#05d9e8', '#06121c');
+  const bannerMat = glowMaterial({ map: banner, intensity: 1.6, side: THREE.DoubleSide });
+  for (const [ds, side] of [[-10, -1], [-10, 1], [14, -1], [14, 1]]) {
+    const i = track.indexAtDistance(Math.max(0, s0 + ds));
+    const [x, y, z] = at(i, side * (half + 3));
+    painted.push(tinted(new THREE.BoxGeometry(0.25, 9, 0.25).translate(x, y + 4.5, z), '#8a8e98'));
+    const g = new THREE.PlaneGeometry(1.4, 5).rotateY(Math.atan2(track.tx[i], track.tz[i]) + Math.PI / 2).translate(x, y + 5.8, z);
+    group.add(new THREE.Mesh(g, bannerMat));
+  }
+  // Pit gazebos: white canopies on the deck either side, where there's room.
+  for (const [ds, side] of [[-24, -1], [-24, 1], [-36, 1]]) {
+    const i = track.indexAtDistance(Math.max(0, s0 + ds));
+    const [x, y, z] = at(i, side * (half + 9));
+    if (!clear(x, z)) continue;
+    const yaw = Math.atan2(track.tx[i], track.tz[i]);
+    painted.push(tinted(new THREE.BoxGeometry(6, 0.3, 6).rotateY(yaw).translate(x, y + 3, z), '#e8f4ff'));
+    painted.push(tinted(new THREE.ConeGeometry(4.3, 1.2, 4).rotateY(yaw + Math.PI / 4).translate(x, y + 3.75, z), '#e8f4ff'));
+    for (const [a, b] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) painted.push(tinted(new THREE.BoxGeometry(0.12, 3, 0.12).translate(x + a * 2.8, y + 1.5, z + b * 2.8), '#8a8e98'));
+    painted.push(tinted(new THREE.BoxGeometry(2, 1, 0.8).rotateY(yaw).translate(x, y + 0.5, z), '#2a2e38'));
+  }
+  // The drag's crowd on the bridge beside the start.
+  const br = opts.crowdBridge;
+  if (opts.drag && br) {
+    const L = br.pts.reduce((s, p, k) => (k ? s + Math.hypot(p[0] - br.pts[k - 1][0], p[1] - br.pts[k - 1][1]) : 0), 0);
+    let s = 0;
+    br.pts.forEach((p, k) => {
+      if (k) s += Math.hypot(p[0] - br.pts[k - 1][0], p[1] - br.pts[k - 1][1]);
+      if (k % 1) return;
+      const y = br.hA + ((br.hB - br.hA) * s) / (L || 1);
+      const q = br.pts[Math.min(br.pts.length - 1, k + 1)];
+      const dx = q[0] - p[0];
+      const dz = q[1] - p[1];
+      const len = Math.hypot(dx, dz) || 1;
+      for (const sd of [-1, 1]) {
+        const x = p[0] - (dz / len) * sd * (br.half + 0.4);
+        const z = p[1] + (dx / len) * sd * (br.half + 0.4);
+        figure(painted, tinted, x, y, z, Math.atan2((dz / len) * sd, (-dx / len) * sd), ['#05d9e8', '#e8e8f0', '#ff2a6d', '#3a4a6a'][(k + (sd > 0 ? 1 : 0)) % 4]);
+      }
+    });
+  }
+  if (painted.length) group.add(new THREE.Mesh(mergeGeometries(painted), litMaterial({ vertexColors: true })));
+  // The TV helicopter, holding over the start (scenery), rotor turning.
+  const heli = new THREE.Group();
+  heli.add(new THREE.Mesh(mergeGeometries([new THREE.BoxGeometry(2.2, 2, 5), new THREE.BoxGeometry(0.5, 0.6, 5).translate(0, 0.4, -4.5)]), litMaterial({ color: '#1c2230' })));
+  heli.add(new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.3, 0.4).translate(0, -1.1, 2), glowMaterial({ color: '#ff2020', intensity: 3 })));
+  const rotor = new THREE.Mesh(new THREE.BoxGeometry(11, 0.08, 0.4), litMaterial({ color: '#3a3e48' }));
+  rotor.position.y = 1.3;
+  heli.add(rotor);
+  const i0 = track.indexAtDistance(s0);
+  heli.position.set(track.x[i0] + track.rx[i0] * 20, track.y[i0] + 45, track.z[i0] + track.rz[i0] * 20);
+  heli.rotation.y = Math.atan2(-track.rx[i0], -track.rz[i0]);
+  group.add(heli);
+  const light = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 6, 45, 8, 1, true).translate(0, -22.5, 0), additiveMaterial({ map: tex.glow, color: '#e8f4ff', opacity: 0.08 }));
+  light.renderOrder = 2;
+  heli.add(light);
+  group.userData.animate = (t, real = t) => {
+    rotor.rotation.y = real * 30;
+    heli.position.y = track.y[i0] + 45 + Math.sin(real * 0.7) * 0.8;
+  };
+  group.userData.animate(0);
   return group;
 }
 

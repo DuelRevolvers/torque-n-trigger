@@ -554,7 +554,7 @@ sized from fixed cycles)
   Road.
 
 **Events as built**
-- **Neon Strip Sprint:** 2.70 km. The depot shortcut saves 102 m.
+- **Neon Strip Sprint:** 2.69 km. The depot shortcut saves 102 m.
 - **Casino Circuit:** 1.44 km a lap. The start and finish are 40 m east of the
   porte-cochère. The car park rows shortcut saves 35 m.
 - **Strip Quarter Mile:**
@@ -570,8 +570,8 @@ sized from fixed cycles)
     second.
 - **Rival: Glow Laps:** 1.99 km a lap, starting 30 m east of Motel Row. The depot
   shortcut saves 102 m.
-- **Boss: Vixen:** 2.82 km, finishing in the car park. The boneyard shortcut
-  saves 120 m.
+- **Boss: Vixen:** 2.81 km, finishing in the car park. The boneyard shortcut
+  saves 112 m.
 - **Race widths:** each stretch of a route takes its street's width. The race
   wall stands at the lot line: 10 m on the streets, 3.5 m on the lanes and 19 m
   on the Strip. It closes to 5 m through the underpass, and in the car park
@@ -612,8 +612,12 @@ every part authored. It was checked against the doc point by point.
   - It can be done as its own job.
 
 **Decisions made while building, all open to change after playtesting:**
-- **The shortcuts' savings:** the depot saves 102 m and the boneyard 120 m. The
+- **The shortcuts' savings:** the depot saves 102 m and the boneyard 112 m. The
   doc said about 130 m for both. These are its own paths, measured as built.
+- **Rounded corners (since Maple Hollow):** a corner keeps its full radius
+  where the straight beside it ends at a junction; before, every corner was held
+  to half of each straight. Velvet Curve (120 m) and Crown Road (80 m) are now
+  the doc's radii, which took about 10 m off the sprint and the boss route.
 - **The Palace:**
   - the porte-cochère is a canopy cantilevered over the mouth;
   - the fountain forecourt is either side of it, where the podium's wings stand

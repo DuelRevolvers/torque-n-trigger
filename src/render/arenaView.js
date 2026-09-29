@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
-import { PALETTE } from './textures.js';
+import { PALETTE, textTexture } from './textures.js';
 import { rampGeometry, box, tint, indexed, scaleUv } from './shapes.js';
 import { deckLegs } from '../sim/city.js';
 import { pathPose } from '../sim/arena.js';
@@ -14,7 +14,7 @@ export function buildArenaView(arena, tex, { outdoor = false, look = null } = {}
   const group = new THREE.Group();
   group.position.set(arena.cx, arena.y0, arena.cz);
   const { def, halfX, halfZ } = arena;
-  if (def.authored) return authoredArenaView(group, def, tex);
+  if (def.authored) return authoredArenaView(group, def, tex, look);
   const sx = halfX * 2;
   const sz = halfZ * 2;
 
@@ -220,7 +220,8 @@ const RUBBLE = [[-0.4, -0.3, 0.5, 0.5, 1], [0.35, 0.2, 0.5, 0.55, 0.8], [0.1, -0
 
 export function buildAuthoredStructures(style, tex, heightAt = null) {
   const group = new THREE.Group();
-  const geos = { steel: [], yellow: [], dark: [], concrete: [], grating: [], containers: [] };
+  const geos = { steel: [], yellow: [], dark: [], concrete: [], grating: [], containers: [], painted: [], lamps: [], mesh: [] };
+  const signs = [];
   const mesh = (list, mat) => list.length && group.add(new THREE.Mesh(mergeGeometries(list), mat));
   const liftPads = [];
   const movers = [];
@@ -237,13 +238,25 @@ export function buildAuthoredStructures(style, tex, heightAt = null) {
         for (const [fx, fz, fw, fd, fh] of RUBBLE) geos.concrete.push(box(o.hw * 2 * fw, o.h * fh, o.hd * 2 * fd, o.x + o.hw * fx, gy + (o.h * fh) / 2, o.z + o.hd * fz));
       } else if (o.kind === 'craneLeg') {
         geos.yellow.push(box(o.hw * 2, o.h, o.hd * 2, o.x, gy + o.h / 2, o.z));
+      } else if (stadiumPiece(o, gy, geos, signs)) {
+        // (Hollow High's stadium: drawn by stadiumPiece.)
       } else {
         geos.steel.push(box(o.hw * 2, o.h + 1, o.hd * 2, o.x, gy + (o.h - 1) / 2, o.z));
       }
     }
     // Decks: a steel girder under a grating, yellow lines along the edges (no
-    // railings: nothing stops a car going over the side).
+    // railings: nothing stops a car going over the side). The homecoming stage
+    // is boards on a skirt, bunting along its front.
     for (const p of spec.platforms || []) {
+      if (p.kind === 'stage') {
+        geos.painted.push(tint(box(p.hw * 2, p.h - 0.1, p.hd * 2, p.x, gy + (p.h - 0.1) / 2, p.z), '#6a1a2a'));
+        geos.painted.push(tint(box(p.hw * 2 + 0.2, 0.1, p.hd * 2 + 0.2, p.x, gy + p.h - 0.05, p.z), '#a88860'));
+        for (let x = p.x - p.hw + 1; x < p.x + p.hw; x += 2) geos.lamps.push(box(0.3, 0.3, 0.3, x, gy + p.h + 3.2, p.z - p.hd));
+        for (const s of [-1, 1]) geos.steel.push(box(0.2, 4, 0.2, p.x + s * p.hw, gy + p.h + 2, p.z - p.hd));
+        geos.steel.push(box(p.hw * 2, 0.1, 0.1, p.x, gy + p.h + 3.4, p.z - p.hd));
+        signs.push(['HOMECOMING', '#ffd040', p.x, gy + p.h + 3.6, p.z - p.hd, 0, 1, 16]);
+        continue;
+      }
       const thick = p.under ? p.thick || 0.8 : p.h;
       geos.steel.push(box(p.hw * 2, thick - 0.05, p.hd * 2, p.x, gy + p.h - thick / 2 - 0.025, p.z));
       geos.grating.push(box(p.hw * 2, 0.05, p.hd * 2, p.x, gy + p.h - 0.025, p.z));
@@ -271,6 +284,15 @@ export function buildAuthoredStructures(style, tex, heightAt = null) {
   mesh(geos.concrete, litMaterial({ map: tex.wallConcrete || tex.wall, color: '#8a8278' }));
   mesh(geos.grating, litMaterial({ map: tex.tiles || tex.lot, color: '#8a8a92', side: THREE.DoubleSide }));
   mesh(geos.containers, litMaterial({ map: tex.container, vertexColors: true }));
+  mesh(geos.painted, litMaterial({ vertexColors: true }));
+  mesh(geos.lamps, glowMaterial({ color: '#fff4dc', intensity: 3 }));
+  mesh(geos.mesh, litMaterial({ color: '#3a3a44', transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
+  for (const [str, color, x, y, z, fx, fz, w] of signs) {
+    const t = textTexture(str, color, '#141018');
+    const h = (w * t.image.height) / t.image.width;
+    const g = new THREE.PlaneGeometry(w, h).rotateY(Math.atan2(fx, fz)).translate(x + fx * 0.15, y + h / 2, z + fz * 0.15);
+    group.add(new THREE.Mesh(g, glowMaterial({ map: t, intensity: 1.8, side: THREE.DoubleSide })));
+  }
   // Moving parts follow the simulation clock (seconds), with the same motion as the sim.
   group.userData.animate = (t) => {
     for (const { l, pad, gy } of liftPads) pad.position.set(l.x, gy + l.hMax * (0.5 - 0.5 * Math.cos((2 * Math.PI * t) / l.period + l.phase)) - 0.3, l.z);
@@ -283,6 +305,78 @@ export function buildAuthoredStructures(style, tex, heightAt = null) {
   };
   group.userData.animate(0);
   return group;
+}
+
+// Hollow High's stadium pieces (Maple Hollow): stepped bleachers, the press
+// box, floodlight towers, goalposts, the scoreboard, team benches, the
+// water-cooler table, the chain-link fence. Returns false for anything else.
+function stadiumPiece(o, gy, geos, signs) {
+  const y = gy;
+  if (o.kind === 'bleachers') {
+    // Rows rising away from the field (face: the field's side, -1 west / +1 east).
+    const rows = 8;
+    const depth = (o.hw * 2) / rows;
+    for (let r = 0; r < rows; r++) {
+      const x = o.x - o.face * (-o.hw + depth * (r + 0.5));
+      const h = ((r + 1) * o.h) / rows;
+      geos.painted.push(tint(box(depth, 0.25, o.hd * 2, x, y + h - 0.12, o.z), r % 2 ? '#8a8a96' : '#9a9aa8'));
+      geos.steel.push(box(depth, h - 0.25, 0.3, x, y + (h - 0.25) / 2, o.z - o.hd + 0.2), box(depth, h - 0.25, 0.3, x, y + (h - 0.25) / 2, o.z + o.hd - 0.2));
+    }
+    geos.dark.push(box(0.3, o.h, o.hd * 2, o.x + o.face * o.hw, y + o.h / 2, o.z));
+    return true;
+  }
+  if (o.kind === 'pressbox') {
+    for (const s of [-1, 1]) geos.steel.push(box(0.4, o.h - 3, 0.4, o.x, y + (o.h - 3) / 2, o.z + s * (o.hd - 0.5)));
+    geos.painted.push(tint(box(o.hw * 2, 3, o.hd * 2, o.x, y + o.h - 1.5, o.z), '#6a1a2a'));
+    geos.lamps.push(box(0.08, 1.2, o.hd * 2 - 1, o.x + o.hw + 0.02, y + o.h - 1.4, o.z));
+    signs.push(['HOLLOW HIGH HAWKS', '#f0e0b0', o.x + o.hw + 0.05, y + o.h + 0.1, o.z, 1, 0, o.hd * 1.6]);
+    return true;
+  }
+  if (o.kind === 'floodlight') {
+    geos.steel.push(box(o.hw * 2, o.h, o.hd * 2, o.x, y + o.h / 2, o.z));
+    geos.dark.push(box(5, 3, 0.6, o.x, y + o.h + 1, o.z));
+    for (let a = -2; a <= 2; a += 1.25) for (const b of [-0.8, 0.6]) geos.lamps.push(box(0.9, 0.9, 0.2, o.x + a, y + o.h + 1 + b, o.z + (o.z < 195 ? 0.35 : -0.35)));
+    return true;
+  }
+  if (o.kind === 'goalpost') {
+    geos.yellow.push(box(0.3, o.h, 0.3, o.x, y + o.h / 2, o.z));
+    geos.yellow.push(box(5.6, 0.25, 0.25, o.x, y + o.h, o.z + o.face * 0.8), box(0.25, 1, 0.25, o.x, y + o.h - 0.4, o.z + o.face * 0.4));
+    for (const s of [-1, 1]) geos.yellow.push(box(0.2, 6, 0.2, o.x + s * 2.8, y + o.h + 3, o.z + o.face * 0.8));
+    return true;
+  }
+  if (o.kind === 'scoreboard') {
+    geos.steel.push(box(o.hw * 2, o.h, o.hd * 2, o.x, y + o.h / 2, o.z));
+    if (o.x < -360) {
+      geos.dark.push(box(20, 6, 0.8, -360, y + o.h + 2, o.z));
+      signs.push(['HOME 21  VISITORS 17', '#ff5a3a', -360, y + o.h + 1.4, o.z - 0.45, 0, -1, 17]);
+    }
+    return true;
+  }
+  // (Tower Plaza's planters and pergola posts.)
+  if (o.kind === 'planter') {
+    geos.painted.push(tint(box(o.hw * 2, o.h, o.hd * 2, o.x, y + o.h / 2, o.z), '#c8c8d0'));
+    geos.painted.push(tint(new THREE.IcosahedronGeometry(1.6, 0).translate(o.x, y + o.h + 2.6, o.z), '#3a7a4a'));
+    geos.painted.push(tint(box(0.3, 2, 0.3, o.x, y + o.h + 1, o.z), '#4a3424'));
+    return true;
+  }
+  if (o.kind === 'pergolaPost') {
+    geos.painted.push(tint(box(o.hw * 2, o.h, o.hd * 2, o.x, y + o.h / 2, o.z), '#e8e8f0'));
+    return true;
+  }
+  if (o.kind === 'bench' || o.kind === 'cooler') {
+    geos.painted.push(tint(box(o.hw * 2, o.h, o.hd * 2, o.x, y + o.h / 2, o.z), o.kind === 'cooler' ? '#e8a020' : '#3a4a8a'));
+    return true;
+  }
+  if (o.kind === 'fence') {
+    const L = o.hd * 2;
+    const dx = Math.sin(o.yaw);
+    const dz = Math.cos(o.yaw);
+    for (let t = -o.hd; t <= o.hd + 0.01; t += 3) geos.steel.push(box(0.1, o.h + 0.2, 0.1, o.x + dx * t, y + (o.h + 0.2) / 2, o.z + dz * t));
+    geos.mesh.push(box(0.02, o.h, L, o.x, y + o.h / 2, o.z, o.yaw));
+    geos.steel.push(box(0.06, 0.06, L, o.x, y + o.h, o.z, o.yaw));
+    return true;
+  }
+  return false;
 }
 
 // Cranes. The hook: a portal crane over the yard (its legs are obstacles),
@@ -332,8 +426,13 @@ function craneView(group, geos, m, gy) {
 // own pieces. Barriers along the arena edge where no fence or wall stands,
 // limos parked across the entrances, and the event-only movers (the Glow
 // Palace shuttle bus doing laps of the car park). Arena-local coordinates.
-function authoredArenaView(group, def, tex) {
-  const geos = { barrier: [], limo: [], chrome: [], glass: [] };
+function authoredArenaView(group, def, tex, look) {
+  const geos = { barrier: [], limo: [], chrome: [], glass: [], watch: [] };
+  // (Maple Hollow closes its gates with the Watch's minivans instead of limos;
+  // Chrome Heights with Kessler car transporters.)
+  const watch = look?.closures === 'watch';
+  const transporter = look?.closures === 'transporters';
+  const WATCH = ['#e8e4dc', '#7a8a9a', '#8a2a2a', '#2a4a6a', '#c8b890'];
   const mesh = (list, mat) => list.length && group.add(new THREE.Mesh(mergeGeometries(list), mat));
   const floor = (x, z) => (def.heightAt ? def.heightAt(x + def.cx, z + def.cz) - def.y : 0);
   for (const [ax, az, bx, bz] of def.barriers || []) {
@@ -350,12 +449,26 @@ function authoredArenaView(group, def, tex) {
   for (const [ax, az, bx, bz] of def.limos || []) {
     const len = Math.hypot(bx - ax, bz - az);
     const yaw = Math.atan2(bx - ax, bz - az);
-    const n = Math.max(1, Math.ceil(len / 7.2));
+    const n = Math.max(1, Math.ceil(len / (watch ? 5 : 7.2)));
     for (let q = 0; q < n; q++) {
       const t = (q + 0.5) / n;
       const x = ax + (bx - ax) * t;
       const z = az + (bz - az) * t;
       const y = floor(x, z);
+      if (transporter) {
+        const along = [Math.sin(yaw), Math.cos(yaw)];
+        const seg = len / n;
+        geos.limo.push(box(2.6, 1.2, seg - 0.6, x, y + 1, z, yaw));
+        for (const dy of [1.9, 4.1]) geos.chrome.push(box(2.7, 0.15, seg - 0.4, x, y + dy, z, yaw));
+        for (const [q, dy] of [[-0.25, 2.5], [0.25, 2.5], [-0.25, 4.7], [0.25, 4.7]]) geos.watch.push(tint(box(1.8, 1, 4, x + along[0] * q * seg, y + dy, z + along[1] * q * seg, yaw), ['#c8ccd4', '#05d9e8', '#1a1a20', '#e8e8f0'][(q > 0 ? 1 : 0) + (dy > 3 ? 2 : 0)]));
+        continue;
+      }
+      if (watch) {
+        geos.watch.push(tint(box(1.95, 1.25, 4.8, x, y + 0.95, z, yaw), WATCH[q % WATCH.length]));
+        geos.glass.push(box(1.85, 0.5, 3.6, x, y + 1.8, z, yaw));
+        geos.chrome.push(box(0.4, 0.3, 0.3, x, y + 2.2, z, yaw));
+        continue;
+      }
       geos.limo.push(box(2, 1, 6.8, x, y + 0.75, z, yaw));
       geos.glass.push(box(1.8, 0.5, 4.8, x, y + 1.5, z, yaw));
       geos.chrome.push(box(2.05, 0.12, 6.9, x, y + 0.5, z, yaw));
@@ -363,11 +476,34 @@ function authoredArenaView(group, def, tex) {
   }
   mesh(geos.barrier, litMaterial({ map: tex.wallConcrete || tex.wall, color: '#ffd0a0' }));
   mesh(geos.limo, litMaterial({ color: '#15121c' }));
+  mesh(geos.watch, litMaterial({ vertexColors: true }));
   mesh(geos.glass, litMaterial({ color: '#2a2440' }));
   mesh(geos.chrome, glowMaterial({ color: '#d8d0ff', intensity: 1.2 }));
   // The shuttle bus (and any other event mover), moved along its path.
   const buses = (def.movers || []).filter((m) => m.event).map((m) => {
     const bus = new THREE.Group();
+    if (m.kind === 'gantry') {
+      // The window-cleaning gantry: a steel carriage on its rail, the boom and cradle out over the edge.
+      const steel = [box(m.hw * 2, 1.2, m.hd * 2, 0, 0.9, 0), box(0.8, m.h, 0.8, 0, m.h / 2, 0), box(m.hw * 2 + 4, 0.6, 0.6, m.hw + 1, m.h, 0)];
+      const lamps = [box(0.4, 0.3, 0.4, -m.hw, 1.6, m.hd), box(0.4, 0.3, 0.4, m.hw, 1.6, m.hd), box(0.4, 0.4, 0.4, 0, m.h + 0.5, 0)];
+      bus.add(new THREE.Mesh(mergeGeometries(steel), litMaterial({ color: '#c8ccd4' })));
+      bus.add(new THREE.Mesh(mergeGeometries(lamps), glowMaterial({ color: '#ffb040', intensity: 2.6 })));
+      group.add(bus);
+      return { m, bus };
+    }
+    if (m.kind === 'float') {
+      // The homecoming parade float: a flatbed skirted in the school's maroon,
+      // a gold crown on a stepped stage, lights all round.
+      const maroon = [box(m.hw * 2, 1.2, m.hd * 2, 0, 0.8, 0), box(m.hw * 1.4, 1, m.hd * 1.2, 0, 1.9, -0.4)];
+      const gold = [box(m.hw * 2 + 0.05, 0.25, m.hd * 2 + 0.05, 0, 1.45, 0), box(m.hw, 0.9, m.hd * 0.6, 0, 2.85, -0.6), new THREE.ConeGeometry(0.9, 1.2, 5).translate(0, 3.9, -0.6)];
+      const lights = [];
+      for (let z = -m.hd + 0.4; z <= m.hd - 0.4; z += 0.8) for (const sx of [-1, 1]) lights.push(box(0.15, 0.15, 0.15, sx * (m.hw + 0.05), 1.3, z));
+      bus.add(new THREE.Mesh(mergeGeometries(maroon), litMaterial({ color: '#6a1a2a' })));
+      bus.add(new THREE.Mesh(mergeGeometries(gold), litMaterial({ color: '#e0b020' })));
+      bus.add(new THREE.Mesh(mergeGeometries(lights), glowMaterial({ color: '#fff0c0', intensity: 2.4 })));
+      group.add(bus);
+      return { m, bus };
+    }
     const body = [box(m.hw * 2, m.h - 0.5, m.hd * 2, 0, 0.5 + (m.h - 0.5) / 2, 0)];
     const dark = [box(m.hw * 2 - 0.2, 0.7, m.hd * 2 - 1, 0, 0.35, 0)];
     const glow = [box(m.hw * 2 + 0.04, 0.8, m.hd * 2 - 2.4, 0, m.h - 1.1, -0.4), box(m.hw * 2 - 0.4, 0.5, 0.08, 0, m.h - 0.6, m.hd + 0.02)];

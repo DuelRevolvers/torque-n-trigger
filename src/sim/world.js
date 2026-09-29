@@ -6,6 +6,9 @@ import { createCarState, placeCar, stepCar, carUp, carSpeed } from './vehicle.js
 import { yawFromDirection } from './math.js';
 import { hitByTrain } from './train.js';
 import { hitByTruck } from './truck.js';
+import { hitByRv } from './rv.js';
+import { hitBreakables } from './breakables.js';
+import { applyGusts } from './gusts.js';
 import { initCombat, initCombatWorld, updateMods, updateCombat, collideCars, ringOut } from './combat.js';
 import { neutralInput } from './input.js';
 import { initEventCar, eventInput, updateEvent } from './event.js';
@@ -22,6 +25,7 @@ export function createWorld({ track, cars, respawnOnWreck = true, poses = null, 
   const params = cars.map((c) => c.params);
   const state = {
     tick: 0,
+    broken: {}, // breakable props knocked over: id -> tick
     cars: cars.map((c, i) => createCarState(i, c.params, poses?.[i] ?? (track.spawnPose ? track.spawnPose(i) : gridPose(track, i)))),
   };
   initCombatWorld(state);
@@ -54,6 +58,9 @@ export function stepWorld(world, inputs) {
   collideCars(world);
   if (track.train) hitByTrain(world);
   if (track.truck) hitByTruck(world);
+  if (track.rv) hitByRv(world);
+  if (track.breakables) hitBreakables(world);
+  if (track.gusts) applyGusts(world);
   updateCombat(world, effective, SIM_DT, respawnCar);
   if (state.event) updateEvent(world, SIM_DT);
   state.tick++;

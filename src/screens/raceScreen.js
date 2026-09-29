@@ -22,6 +22,7 @@ import { buildArenaView } from '../render/arenaView.js';
 import { buildDistrictView, districtClear } from '../render/districtView.js';
 import { buildTrainView, updateTrainView } from '../render/trainView.js';
 import { buildTruckView, updateTruckView } from '../render/truckView.js';
+import { buildRvView, updateRvView } from '../render/rvView.js';
 import { districtLayout } from '../sim/cityLayout.js';
 import { trainAt } from '../sim/train.js';
 import { additiveMaterial } from '../render/retroMaterial.js';
@@ -49,7 +50,7 @@ const conditionsOf = (build) =>
 // The street faces of a plan district's hotels and casinos (where crews stand at the start).
 function buildingFronts(map) {
   return districtLayout(map).items
-    .filter((it) => it.t === 'bldg' && (it.kind === 'hotel' || it.kind === 'casino'))
+    .filter((it) => it.t === 'bldg' && (it.kind === 'hotel' || it.kind === 'casino' || it.kind === 'house' || it.kind === 'bighouse'))
     .map((it) => ({ x: it.obb.x + it.front[0] * it.obb.hd, z: it.obb.z + it.front[1] * it.obb.hd, fx: it.front[0], fz: it.front[1], w: it.obb.hw * 2, y: map.heightAt(it.obb.x, it.obb.z) }));
 }
 
@@ -112,6 +113,12 @@ export class RaceScreen {
           arches: map.plan ? districtLayout(map).items.filter((it) => it.t === 'arch') : null,
           fronts: map.plan ? buildingFronts(map) : null,
           drag: def.type === 'drag',
+          // A suburb: its maples (the drag's start lights hang from one), the pond's banks.
+          trees: def.city.look.suburb ? districtLayout(map).items.filter((it) => it.t === 'tree' && it.kind === 'maple').map((it) => ({ x: it.x, z: it.z })) : null,
+          pond: map.sites?.find((s) => s.pond)?.pond || null,
+          heightAt: map.heightAt,
+          // The rooftops: the East Terrace bridge, where the drag's crowd stands.
+          crowdBridge: map.roof ? map.crossings.find((c) => c.st.name === 'Terrace Line' && c.deckB?.name === 'Skyline Straight') || null : null,
         });
         animate = view.userData.animate || null;
         group.add(view);
@@ -124,9 +131,11 @@ export class RaceScreen {
     if (train) group.add(train);
     const truck = track.truck ? buildTruckView(track.truck) : null;
     if (truck) group.add(truck);
+    const rv = track.rv ? buildRvView(track.rv, tex) : null;
+    if (rv) group.add(rv);
     group.visible = false;
     this.scene.add(group);
-    const entry = { track, group, outdoor: v.kind !== 'arena' || !!def.city, animate, train, truck, heightAt: def.city ? districtMap(def.city).heightAt : null };
+    const entry = { track, group, outdoor: v.kind !== 'arena' || !!def.city, animate, train, truck, rv, heightAt: def.city ? districtMap(def.city).heightAt : null };
     this.venues.set(key, entry);
     return entry;
   }
@@ -498,6 +507,7 @@ export class RaceScreen {
     const { state } = this.world;
     if (this.venueEntry?.train) updateTrainView(this.venueEntry.train, this.track.train, state.tick - 1 + alpha);
     if (this.venueEntry?.truck) updateTruckView(this.venueEntry.truck, this.track.truck, state.tick - 1 + alpha, this.venueEntry.heightAt);
+    if (this.venueEntry?.rv) updateRvView(this.venueEntry.rv, this.track.rv, state.tick - 1 + alpha, this.venueEntry.heightAt);
     // Speaker posts at the drive-in go down when a car drives through them.
     this.envGroup?.userData.knock?.(state.cars.map((c) => ({ x: c.pos.x, y: c.pos.y, z: c.pos.z, vx: c.vel.x, vz: c.vel.z })));
     if (this.crossingLights) {
@@ -510,6 +520,9 @@ export class RaceScreen {
 
     // Events: effects, dents, respawns (a fresh car model), popups and shake.
     const events = this.world.events.splice(0);
+    // Breakable props (a suburb) knocked over this frame, and which are down.
+    for (const e of events) if (e.type === 'break') this.envGroup?.userData.breakEvent?.(e);
+    this.envGroup?.userData.setBroken?.(state.broken);
     for (const e of events) {
       if (e.type === 'respawn') {
         this.views[e.car].removeFrom(this.scene);

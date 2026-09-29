@@ -1,7 +1,7 @@
 # 4. Chrome Heights
 
-**Status:** agreed, ready to build (everything is open to change after
-playtesting). **Campaign:** 4th. **Faction:** Kessler
+**Status:** agreed and built (everything is open to change after playtesting;
+see "Build spec" and "Built vs this doc" at the end). **Campaign:** 4th. **Faction:** Kessler
 Motors.
 
 **On the city map:** top right, in the outline with the ridge of peaks along the
@@ -428,3 +428,150 @@ the same data.
 - **Hazard:** the river gusts.
 
 All of these can change after playtesting.
+
+## Build spec
+
+What the game builds, with the numbers it uses. The data is in
+`src/districts/chromeHeights.js`:
+- **The plan:** the boundary, the city below, the decks, nodes, roof roads and
+  sites exactly as above.
+- **The rest of the file:** what stands on every deck (`roof.props`), the
+  floodlights, the kickers' sizes, the spiral towers' radii, the river gusts, and
+  the Tower Plaza Showdown's structures.
+
+The code that builds it:
+- `src/sim/planRoofMap.js`: the decks' heights, the roof roads, the crossings
+  and the spiral towers (called by `src/sim/planMap.js`);
+- `src/sim/planRoof.js`: parapets, balustrades, kickers, the spiral towers,
+  Kessler HQ and every deck's props, by fixed rules (called by
+  `src/sim/planLayout.js`);
+- `src/sim/planRoute.js`: the event routes and free roam;
+- `src/sim/gusts.js`: the river gusts;
+- `src/render/roofView.js`: draws it all.
+
+Metres: x east, z south, origin mid-district. The streets below are at 0.
+Nothing is random: the same plan always builds the same district.
+
+**Decks and crossings**
+- **Tiers:** the Crown at 110 m, the Terrace at 100 m, the Riverfront at 90 m.
+  The Skyline Straight slopes from 110 m at its north end to 90 m at its south end.
+- **Roof roads:** the doc's widths (14 m, the Straight 24 m, ramps and links
+  12 m), marked on the decks.
+- **Crossings,** built where a road leaves one deck for another:
+  - **skybridges** where the heights match, **ramp bridges** where they differ.
+    The East, Solar and South Bridges meet the sloping Straight a few metres
+    higher, so they're gentle ramps. A bridge's deck runs 1 m past the road each
+    side to its glass balustrades, lit cyan.
+  - **Gap jumps** (the Crown, Garden, Pool and River Gaps, and the one-way Site
+    Drop): steel kickers cantilevered from both decks, 12 m long and 1.8 m high,
+    leaving 25 m of air between their lips.
+  - **Spiral ramp towers:** the Helix is one turn of 16 m radius, from the
+    Helipad down 10 m to the Sports roof. The Drop is seven turns of 22 m radius,
+    from Riverfront East down to the Undercity bridge at 10 m.
+- **Roads out:** the Skyway runs level with the Helipad inside the district and
+  descends beyond it; the Drop's bottom leaves by the south edge. A barrier
+  stands across each, 6 m inside the boundary.
+- **Parapets:** 1.2 m concrete round every deck, open where a crossing leaves.
+  Tower Plaza has a low glass balustrade instead, which breaks.
+- **Everything else at roof level is a drop.** The streets below are drawn with
+  their lamps and slow traffic. Lower buildings stand round the edges, well
+  under the roofs, and the river runs beyond the west and south edges.
+
+**The decks**
+- **West Peak:** the Heights radio mast (95 m, red beacons), three dishes and a
+  water tank.
+- **Kessler HQ:** the glass tower, 70 × 56 m, from the lobby's 10 m ceiling to
+  240 m, KESSLER near its top. Its floor at deck level is the sky lobby: glass
+  walls either side of the Crown Line, open through 30 m wide, four show cars on
+  plinths, the glass floor lit from below, and Kessler Performance.
+- **East Peak:** the Heights Observatory dome, and a telescope on the lookout.
+- **Helipad:** a raised pad with a ramp up from the east, a windsock and a fuel
+  bowser.
+- **The Gardens:** four lawns, a bandstand, two pergolas, trees in planters, and
+  the shallow reflecting pool (drive through it, slowly).
+- **Tower Plaza:** see the Showdown below.
+- **East Terrace:** the Skybar, and three Kessler billboards on steel frames.
+- **The Skyline Straight:** five towers under one sloping deck, timing gantries
+  at the Terrace and River Lines, and lamp masts every 40 m on both sides.
+- **Sports:** two basketball courts and a running track.
+- **Pools:** four infinity pools (shallow: they slow you), with sun loungers and
+  umbrellas that break.
+- **Kessler Tower Site:** the crane (a solid mast, its 115 m jib swinging slowly
+  overhead), one storey built (columns under a slab you can drive beneath), site
+  huts, steel beams and rebar.
+- **Solar:** 68 rows of low solar panels and two water tanks.
+- **Riverfront West and East:** rooftop car parks with rows of parked cars.
+- **Floodlights:** 24 masts round the decks.
+
+**Events as built**
+- **Hilltop Grand Prix:** 1.63 km a lap, 3 laps, starting on the Gardens heading
+  west, over the Garden Gap every lap. No shortcut.
+- **Skybridge Sprint:** 3.31 km, over the Pool Gap and the Crown Gap. Weapons in
+  the second half.
+- **Skyline Quarter Mile:** 402 m down the Straight from z −232, four abreast,
+  then 120 m to pull up. The crowd is on the East Terrace bridge.
+- **Tower Plaza Showdown:**
+  - last standing, 5 cars, 4 minutes;
+  - the raised helipad (26 m square, 2 m up) with ramps from the south and the
+    west, planters and two pergolas;
+  - off the edge, through the glass, is a ring-out;
+  - Kessler transporters across the four links (solid);
+  - the window-cleaning gantry runs round the edge on its rail at 4 m/s and does
+    20 damage a second.
+- **Rival: Tower Run:** 2.49 km against Redline, ending off the Site Drop under
+  the crane's jib.
+- **Boss: Static:** 2.37 km a lap, 3 laps, starting on the Straight at the
+  Terrace Line, over the Pool Gap and the Garden Gap.
+- **Race edges:** the walls are the parapets. Every 5 m the wall is out at the
+  further parapet (up to 150 m on a wide deck), and the nearer one stands inside
+  as a solid obstacle. On a crossing, the walls are the balustrades. Everything
+  on the decks inside the walls is solid. The decks are concrete; the lawns are
+  grass and the pools slow you.
+- **Race dressing:**
+  - Kessler car transporters (solid, loaded with new cars) across the head of
+    every link the route doesn't use, within reach;
+  - Kessler banners, pit gazebos and a TV helicopter at the start;
+  - lit kickers with amber chevrons on the gap jumps;
+  - no Jersey barriers.
+- **The gusts:** about one minute in five, never in the first minute, from a hash
+  of the minute. There's 1.5 s of warning (flags snap, debris blows across the
+  decks), then 4 s of crosswind from the west at up to 6 m/s². It's full strength
+  on the crossings and the Straight, and a third of that elsewhere. The same in
+  every replay.
+- **Free roam:** every deck, bridge, ramp and gap (the kickers are ramps), the
+  spiral towers level by level, round the mast, the observatory and the crane,
+  through the pools and the Gardens, and the car parks. Fall into a canyon and
+  you respawn on the nearest roof road.
+
+## Built vs this doc
+
+Chrome Heights was rebuilt from the ground up to this doc on 2026-09-28, with
+every part authored. It was checked against the doc point by point.
+`tests/chromeHeights.test.js` checks that:
+- the build uses no randomness;
+- the tiers, the sloping Straight and every crossing the doc names match;
+- every gap leaves 25 m of air, and the Site Drop is one way;
+- the parapets, the sky lobby and the decks' props are there;
+- the route lengths and their gap jumps match;
+- the gusts are rare, warn first and push cars east;
+- the Showdown's ring-out and structures, and free roam's spiral towers, work.
+
+**Decisions made while building, all open to change after playtesting:**
+- **Crossing kinds follow the doc's rule** (same height: skybridge; different:
+  ramp). Sports Run stays on the Sports roof, so it's a roof road, not a bridge.
+- **The Skyway** runs level with the Helipad inside the district, because a climb
+  from the Maple Hollow bridge that steep wouldn't be drivable. It descends
+  beyond the edge.
+- **The Drop's** exit node is 37 m from the boundary, so on the rooftops a road
+  out may end up to 40 m from it.
+- **The raised helipads** stand beside the roads (the plaza's in its north-east
+  quarter), so no race drives over them.
+- **Race walls on the decks** are the parapets, as the doc says, so a race can
+  use the whole deck.
+- **Tower Plaza's glass** breaks in every event. In a race, the wall still stands
+  at the edge.
+- **Where the doc gives no numbers:** the props' sizes and places, the kicker
+  size, the spiral radii, the gust strength and the Showdown's layout are this
+  build's choices.
+- **Applies to every authored arena:** the limos, minivans and transporters that
+  close it off are now solid.

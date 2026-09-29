@@ -16,8 +16,8 @@ const LOCAL_RIGHT = v3(1, 0, 0);
 const RAD_S_TO_RPM = 60 / (2 * Math.PI);
 
 // Indexed by SURFACE value.
-const SURFACE_GRIP = [1, 0.95, 0.72];
-const SURFACE_DRAG = [0, 0, 25]; // extra rolling resistance, N per m/s per wheel
+const SURFACE_GRIP = [1, 0.95, 0.72, 0.55, 0.58]; // road, kerb, grass/dirt, sand, wet grass
+const SURFACE_DRAG = [0, 0, 25, 90, 30]; // extra rolling resistance, N per m/s per wheel
 
 export function createCarState(id, params, pose) {
   const car = {

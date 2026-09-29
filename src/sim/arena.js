@@ -14,6 +14,7 @@
 // respawn in free roam.
 
 import { yawFromDirection } from './math.js';
+import { wetAt } from './sprinklers.js';
 
 const WALL_DIST = 1000;
 const GRID = 16; // obstacle grid cell size (m)
@@ -38,6 +39,20 @@ const inPoly = (x, z, p) => {
     if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) inside = !inside;
   }
   return inside;
+};
+
+const boxOf = (p) => {
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let z0 = Infinity;
+  let z1 = -Infinity;
+  for (const [x, z] of p) {
+    x0 = Math.min(x0, x);
+    x1 = Math.max(x1, x);
+    z0 = Math.min(z0, z);
+    z1 = Math.max(z1, z);
+  }
+  return [x0, x1, z0, z1];
 };
 
 // A path mover's place on its loop at time t: position and heading.
@@ -87,6 +102,11 @@ class Arena {
     this.holes = def.holes || [];
     this.train = def.train || null;
     this.truck = def.truck || null;
+    this.rv = def.rv || null;
+    this.breakables = def.breakables?.length ? def.breakables : null; // world coordinates
+    this.sprinklers = def.sprinklers?.length ? def.sprinklers : null; // world coordinates
+    this.gusts = def.gusts || null; // the river gusts (Chrome Heights)
+    if (def.gustExposure) this.gustExposure = (car) => def.gustExposure(car.pos.x, car.pos.z);
     if (def.obstacles.length > 64) {
       this.grid = new Map();
       for (const o of def.obstacles) {
@@ -146,7 +166,11 @@ class Arena {
   // A car that has dropped into a pit: 'ringOut' (arena) or 'respawn' (free roam).
   fellIn(pos) {
     const hl = this.holeAt(pos.x, pos.z);
-    if (!hl || pos.y > this.y0 - 3) return null;
+    // Dropped well below the ground round it (a pool is shallower than the bay).
+    if (!hl) return null;
+    // (Off a roof: measured from the arena's own floor, not the streets far below.)
+    const base = this.heightAt && !hl.ringOut ? this.heightAt(pos.x, pos.z) : this.y0;
+    if (pos.y > base - Math.min(3, (hl.drop || 3) * 0.6)) return null;
     return hl.ringOut ? 'ringOut' : hl.respawn ? 'respawn' : null;
   }
 
@@ -155,9 +179,9 @@ class Arena {
   }
 
   // Ground height and normal at arena-local (x, z): holes (water, the gaps
-  // between rooftops), then ramps, then the floor (flat, or the district's
-  // hills in free roam).
-  ground(x, z) {
+  // between rooftops), then ramps, then spiral ramp towers (the level under a
+  // car at height ly), then the floor (flat, or the district's hills in free roam).
+  ground(x, z, ly) {
     const base = this.heightAt ? this.heightAt(x + this.cx, z + this.cz) - this.y0 : 0;
     for (const hl of this.holes) {
       const r = hl.r;
@@ -171,8 +195,24 @@ class Arena {
       if (u >= 0 && u <= r.len && Math.abs(v) <= r.width / 2) {
         const slope = r.height / r.len;
         const n = Math.hypot(slope, 1);
-        return { h: base + (r.base || 0) + slope * u, nx: (-r.dirX * slope) / n, ny: 1 / n, nz: (-r.dirZ * slope) / n };
+        // (A kicker over a canyon stands at its own height, abs, not on the ground below.)
+        const from = r.abs !== undefined ? r.abs - this.y0 : base + (r.base || 0);
+        return { h: from + slope * u, nx: (-r.dirX * slope) / n, ny: 1 / n, nz: (-r.dirZ * slope) / n, top: true, surface: r.surface };
       }
+    }
+    for (const sp of this.def.spirals || []) {
+      const dx = x - sp.cx;
+      const dz = z - sp.cz;
+      if (Math.abs(Math.hypot(dx, dz) - sp.r) > sp.half) continue;
+      const total = sp.turns * Math.PI * 2;
+      let a = (Math.atan2(dz, dx) - sp.a0) * sp.dir;
+      a = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      let best = null;
+      for (let t = a; t <= total + 1e-6; t += Math.PI * 2) {
+        const y = sp.yTop + ((sp.yBot - sp.yTop) * t) / total - this.y0;
+        if ((ly === undefined || y <= ly + 1.5) && (best === null || y > best)) best = y;
+      }
+      if (best !== null) return { h: best, nx: 0, ny: 1, nz: 0, top: true, surface: 0 };
     }
     if (this.heightAt) {
       const wx = x + this.cx;
@@ -205,7 +245,7 @@ class Arena {
     const x = wx - this.cx;
     const z = wz - this.cz;
     const ly = y === undefined ? undefined : y - this.y0;
-    const g = this.ground(x, z);
+    const g = this.ground(x, z, ly);
     // Deepest penetration into the outer walls or any obstacle (negative = clear).
     let pen = -Infinity;
     let rx = 1;
@@ -301,7 +341,7 @@ class Arena {
         if (Math.abs(u) > p.hw || Math.abs(v) > p.hd) return;
       } else if (Math.abs(x - p.x) > p.hw || Math.abs(z - p.z) > p.hd) return;
       if (ly !== undefined && ly > top - 1) {
-        if (top > g.h) Object.assign(g, { h: top, nx: 0, ny: 1, nz: 0 });
+        if (top > g.h) Object.assign(g, { h: top, nx: 0, ny: 1, nz: 0, top: true, surface: 0 });
         return;
       }
       if (p.under && (ly === undefined || ly < top - (p.thick || 0.8) - 1.2)) return; // under the bridge
@@ -336,7 +376,30 @@ class Arena {
         rz = sn * ix + c * iz;
       }
     }
-    return { index: 0, s: 0, lateral: WALL_DIST + pen, height: this.y0 + g.h, nx: g.nx, ny: g.ny, nz: g.nz, rx, rz, surface: 0 };
+    return { index: 0, s: 0, lateral: WALL_DIST + pen, height: this.y0 + g.h, nx: g.nx, ny: g.ny, nz: g.nz, rx, rz, surface: g.top ? g.surface ?? 0 : this.surfaceAt(x, z) };
+  }
+
+  // The ground's surface at arena-local (x, z): the district's own (free roam
+  // in a suburb: groundSurface, world coordinates), else the first of
+  // def.surfaces ({ poly, surface }) it's inside, else road. A lawn under a
+  // sprinkler is wet.
+  surfaceAt(x, z) {
+    let s = 0;
+    if (this.def.groundSurface) s = this.def.groundSurface(x + this.cx, z + this.cz);
+    else if (this.def.surfaces) {
+      for (const q of this.def.surfaces) {
+        const b = q.box || (q.box = boxOf(q.poly));
+        if (x < b[0] || x > b[1] || z < b[2] || z > b[3] || !inPoly(x, z, q.poly)) continue;
+        s = q.surface;
+        break;
+      }
+    }
+    if (s === 2 && this.sprinklers && this.wetAt(x + this.cx, z + this.cz)) return 4;
+    return s;
+  }
+
+  wetAt(x, z) {
+    return wetAt(this.sprinklers, this.time, x, z);
   }
 
   // Spawn points on a ring, facing the centre.

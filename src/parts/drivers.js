@@ -52,6 +52,23 @@ export const DRIVERS = [
     parts: { chassis: 'van', engine: 'v6', suspension: 'heavy', transmission: 'four', wheels: 'offroad', primaryWeapon: 'scatter', secondaryWeapon: 'turret', armor: 'composite', utility: 'repair', interiors: 'street', lights: 'halogen', paint: 'matte' },
     colors: { paint: '#2a6a3a' },
   },
+  {
+    // Captain of the Neighbourhood Watch (Maple Hollow): a lifted minivan in
+    // white with wood-panel sides. Patient but relentless.
+    id: 'picket', name: 'Picket',
+    personality: { aggression: 0.6, caution: 0.5, target: 'leader' },
+    parts: { chassis: 'van', engine: 'v6', suspension: 'offroad', transmission: 'five', wheels: 'offroad', primaryWeapon: 'scatter', utility: 'oil', bodyKit: 'ram', armor: 'light', interiors: 'street', lights: 'lightbar', paint: 'gloss' },
+    colors: { paint: '#f2efe6' },
+    look: { woodPanels: true },
+  },
+  {
+    // Kessler Motors' factory test driver (Chrome Heights): a light wedge on
+    // the near-silent Mag-Coil. Clean, precise, good over the gaps.
+    id: 'redline', name: 'Redline',
+    personality: { aggression: 0.35, caution: 0.6, target: 'leader' },
+    parts: { chassis: 'wedge', engine: 'magcoil', suspension: 'sport', transmission: 'sequential', wheels: 'street', primaryWeapon: 'chaingun', nitrous: 'directPort', interiors: 'stripped', lights: 'strips', paint: 'chrome' },
+    colors: { paint: '#c8ccd4', lights: '#05d9e8' },
+  },
 ];
 
 // Quality range per difficulty tier.
@@ -72,7 +89,7 @@ export function buildDriver(driver, tier, seed) {
     if (driver.colors[slot]) part.color = driver.colors[slot];
     parts[slot] = part;
   }
-  return { build: { parts }, personality: { ...driver.personality, skill: t.skill }, name: driver.name };
+  return { build: { parts, ...(driver.look ? { look: driver.look } : {}) }, personality: { ...driver.personality, skill: t.skill }, name: driver.name };
 }
 
 // Picks a tier whose cars roughly match a Performance Rating.

@@ -163,7 +163,7 @@ function deriveParams(eff, mass, overweight, powerSupply, powerDraw) {
     tireForceY: -0.15,
     gripFront: wh.grip * GRIP_BOOST,
     gripRear: wh.grip * 1.167 * GRIP_BOOST,
-    surfaceGrip: [1, 0.95, 0.72 * wh.offroadGrip],
+    surfaceGrip: [1, 0.95, 0.72 * wh.offroadGrip, 0.55 * wh.offroadGrip, 0.58 * wh.offroadGrip],
     slipPeak: 0.16,
     slideGrip: 0.82,
     lowSpeedSlip: 3,

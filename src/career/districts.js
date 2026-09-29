@@ -21,6 +21,8 @@
 
 import { RUSTLINE_CITY } from '../districts/rustline.js';
 import { STRIP_CITY } from '../districts/neonStrip.js';
+import { MAPLE_CITY } from '../districts/mapleHollow.js';
+import { CHROME_CITY } from '../districts/chromeHeights.js';
 
 // A plan district's outline on the city map: its boundary, scaled into place
 // (centre and metres per map unit), so the map and the district always match.
@@ -66,31 +68,40 @@ export const DISTRICTS = [
     boss: { key: 'boss', type: 'sprint', name: 'Boss: Vixen', desc: 'Vixen: the long way round the edge of the district, through the Palace Underpass, into the Casino Car Park.', route: { kind: 'sprint', path: ['strip-palace', 'strip-velvet', 'crown-palace', 'marquee-east', 'marquee-palace', 'arena'], shortcuts: ['boneyard'] }, cars: 5, purse: 3000, driver: 'vixen' },
   },
   {
-    id: 'chrome', name: 'Chrome Heights', tier: 2, faction: 'Kessler Motors', color: '#05d9e8',
-    blurb: 'Uptown, up top: every race runs across the skyscraper rooftops. Jump the gaps between buildings, cut across roof gardens and drive straight through a tower. Sponsors pay well, rivals hit hard.',
-    theme: { haze: '#0d1530', fog: 0.0038 },
-    // A ridge of hilltops along the north, the river along the west and south.
-    map: [[71, 11.3], [74.5, 7.3], [78, 10.7], [82.5, 5.3], [87, 10], [90.5, 6.7], [95, 10.7], [97, 20], [96, 32], [97.5, 40], [93, 45.3], [85, 46], [77.5, 44.7], [73, 41.3], [71.5, 33.3], [73, 24], [70.5, 16.7]],
-    label: [84, 13],
-    city: {
-      id: 'chrome', name: 'Chrome Heights', seed: 3303, cols: 9, rows: 8,
-      spacingX: [115, 170], spacingZ: [115, 165], removeEdges: 0.08, elevation: 2, hillScale: 240, rooftop: 60, gapShare: 0.4,
-      sites: [
-        { kind: 'arena', name: 'Tower Plaza', sizes: GROUND, min: 150 },
-        { kind: 'park', name: 'Heights Park', sizes: [[2, 2], [2, 1]], where: 'centre' },
-        { kind: 'construction', name: 'Kessler Tower Site', sizes: [[2, 1], [1, 2]] },
-      ],
-      lots: { quad: 4, plaza: 2, park: 2, housing: 3, alley: 1, parking: 1 },
-      buildings: 'tower', heights: [45, 140], features: ['skybridges'],
-      look: { building: '#9ec0e0', buildingTex: 'glass', lamp: '#d0f0ff', barrier: '#c8d0d8', signs: 0.2, lot: '#6a7888', neon: ['#05d9e8', '#ffffff'], roof: '#9aa2ac', walk: '#7a828c' },
-    },
+    id: 'maple', name: 'Maple Hollow', tier: 2, faction: 'Neighbourhood Watch', color: '#e8c33a',
+    blurb: 'The suburbs at night: curving streets of houses, lawns and picket fences in a bowl round Hollow Pond, the water tower on the hill. By day the Neighbourhood Watch complains about the noise. By night it runs the races.',
+    theme: { haze: '#0e1420', fog: 0.005 },
+    // The lobed outline, top middle; Maple Avenue down the middle.
+    map: planOutline(MAPLE_CITY.plan.boundary, [52.5, 25.73], [60, 44]),
+    label: [52.5, 14.5],
+    // Authored to docs/districts/03-maple-hollow.md (src/districts/mapleHollow.js).
+    city: MAPLE_CITY,
     events: [
-      { key: 'circuit', type: 'circuit', name: 'Hilltop Grand Prix', desc: 'Round the Heights Park roof garden, jumping the gaps between buildings.', route: { kind: 'circuit', seed: 1, cells: 7, around: 'park' }, cars: 6, laps: 3, purse: 2400 },
-      { key: 'sprint', type: 'sprint', name: 'Skybridge Sprint', desc: 'From the Kessler Tower site across the rooftops. Mind the drops.', route: { kind: 'sprint', seed: 2, length: 3200, from: 'construction' }, cars: 6, purse: 2200, modifiers: ['weaponsLate'] },
-      { key: 'arena', type: 'arena', mode: 'lastStanding', name: 'Tower Plaza Showdown', desc: 'Tower Plaza: a podium roof between the glass towers.', route: { kind: 'arena', site: 0 }, cars: 5, timeLimit: 240, purse: 2300 },
-      { key: 'rival', type: 'sprint', name: 'Rival: Tower Run', desc: 'Roof garden to tower site, any way across the rooftops.', route: { kind: 'sprint', seed: 4, length: 3400, from: 'park', to: 'construction' }, cars: 5, purse: 2700, rival: true },
+      { key: 'sprint', type: 'sprint', name: 'Paper Route', desc: 'From the water tower round the west side: Ridgeway along the golf course, Pinecrest, Hollow Road, past the school gates, round Willow Bend to the Hollow crossroads. Shortcut across the golf course.', route: { kind: 'sprint', path: ['tower', 'ridge-maple', 'ridge-west', 'pine-hollow', 'hollow-lane', 'pine-lane', 'south-x', 'hawthorn', 'hollow-maple'], shortcuts: ['golf'] }, cars: 6, purse: 1900 },
+      { key: 'circuit', type: 'circuit', name: 'Ridgeway Loop', desc: 'Up Maple Avenue out of the hollow and round the ridge: over the top of the district, down past the Riverside Bridge and back. Shortcut down Foundation Road through Phase 2: dirt, and two jumps.', route: { kind: 'circuit', path: ['hollow-x', 'orchard-s', 'ridge-maple', 'ridge-bridge'], shortcuts: ['Foundation Road'] }, cars: 6, laps: 3, purse: 2000 },
+      { key: 'drag', type: 'drag', name: 'Hollow Drop', desc: 'Southbound on Maple Avenue, four abreast: down into the hollow, over the causeway across Hollow Pond, and up the other side. The start lights hang from a maple tree.', route: { kind: 'drag', along: 'Maple Avenue', from: [0, -102], to: [0, 432] }, cars: 4, purse: 1500, finishS: 414 },
+      { key: 'brawl', type: 'arena', mode: 'takedowns', name: 'Homecoming Brawl', desc: 'The Hollow High stadium under the floodlights: the bleachers, the homecoming stage, and the parade float doing laps of the running track.', route: { kind: 'arena', site: 0 }, cars: 6, timeLimit: 120, purse: 1900 },
+      { key: 'rival', type: 'sprint', name: 'Rival: Backyard Run', desc: 'Court to court through the backyards: Birch to Hawthorn, back over the causeway, Chestnut into Phase 2 and up Foundation Road to the water tower. No shortcuts: the route already goes the way nobody should.', route: { kind: 'sprint', path: ['pine-lane', 'south-x', 'birch', 'backyards', 'hawthorn', 'hollow-maple', 'hollow-x', 'ridge-chestnut', 'backyards', 'phase2-top', 'ridge-maple', 'tower'] }, cars: 5, purse: 2300, rival: true },
     ],
-    boss: { key: 'boss', type: 'circuit', name: 'Boss: Static', desc: 'Static races the long rooftop loop round the Kessler Tower site.', route: { kind: 'circuit', seed: 5, cells: 8, around: 'construction' }, cars: 6, laps: 3, purse: 4200, driver: 'static' },
+    boss: { key: 'boss', type: 'circuit', name: 'Boss: Picket', desc: 'The Watch\'s patrol route: down Maple Avenue across the causeway, round the south-west corner and up the west side, back along Ridgeway past the golf course. Shortcut through the Hollow High car park.', route: { kind: 'circuit', path: ['ridge-maple', 'south-x', 'pine-lane', 'ridge-west'], shortcuts: ['school'], start: 30 }, cars: 6, laps: 2, purse: 3600, driver: 'picket' },
+  },
+  {
+    id: 'chrome', name: 'Chrome Heights', tier: 3, faction: 'Kessler Motors', color: '#05d9e8',
+    blurb: 'Uptown, up top: every race runs across the skyscraper rooftops, a hundred metres over the street canyons. Skybridges, ramp bridges, gap jumps, and a road straight through the sky lobby of Kessler HQ. Sponsors pay well, rivals hit hard.',
+    theme: { haze: '#0d1530', fog: 0.0038 },
+    // A ridge of peaks along the top, the river along the west and south.
+    map: planOutline(CHROME_CITY.plan.boundary, [84, 25.65], [51.85, 39.29]),
+    label: [84, 13],
+    // Authored to docs/districts/04-chrome-heights.md (src/districts/chromeHeights.js).
+    city: CHROME_CITY,
+    events: [
+      { key: 'circuit', type: 'circuit', name: 'Hilltop Grand Prix', desc: 'Round the Gardens and Kessler HQ: up the West Ramp, through the sky lobby, down to Tower Plaza and over the Garden Gap every lap. No shortcut.', route: { kind: 'circuit', path: ['b2', 'b1', 'a1', 'plaza-top', 'b3'], start: 60 }, cars: 6, laps: 3, purse: 2400 },
+      { key: 'sprint', type: 'sprint', name: 'Skybridge Sprint', desc: 'From the Kessler Tower Site over the Pool Gap, up to West Peak, the whole Crown Line through the sky lobby and over the Crown Gap, then all the way down the Skyline Straight. Weapons in the second half.', route: { kind: 'sprint', path: ['c3', 'c2', 'b2', 'b1', 'a1', 'straight-n', 'straight-end'] }, cars: 6, purse: 2200, modifiers: ['weaponsLate'] },
+      { key: 'drag', type: 'drag', name: 'Skyline Quarter Mile', desc: 'Southbound down the Skyline Straight from the Terrace Line gantry, gently downhill, four abreast. The crowd is on the East Terrace bridge.', route: { kind: 'drag', along: 'Skyline Straight', from: [540, -244], to: [540, 290] }, cars: 4, purse: 2100, finishS: 414 },
+      { key: 'arena', type: 'arena', mode: 'lastStanding', name: 'Tower Plaza Showdown', desc: 'The hexagonal Tower Plaza roof, closed off at its bridges and ramps. Push a car through the glass and over the edge. Mind the window-cleaning gantry.', route: { kind: 'arena', site: 0 }, cars: 5, timeLimit: 240, purse: 2300 },
+      { key: 'rival', type: 'sprint', name: 'Rival: Tower Run', desc: 'From the Helipad the long way round: up to Kessler HQ, through the sky lobby, over the Crown Gap, down the Straight and back west, ending off the Site Drop under the crane.', route: { kind: 'sprint', path: ['b1w', 'b2', 'garden-top', 'straight-n', 'straight-t', 'b3', 'c3'] }, cars: 5, purse: 2700, rival: true },
+    ],
+    boss: { key: 'boss', type: 'circuit', name: 'Boss: Static', desc: 'Static races the long rooftop loop round the Kessler Tower Site: down the Straight, over the Pool Gap, up to the Gardens and back over the Garden Gap.', route: { kind: 'circuit', path: ['straight-t', 'straight-r', 'c2', 'b2', 'straight-t'], start: 20 }, cars: 6, laps: 3, purse: 4200, driver: 'static' },
   },
   {
     id: 'undercity', name: 'The Undercity', tier: 3, faction: 'Low Road Crew', color: '#39ff14',
@@ -148,8 +159,9 @@ export const DISTRICTS = [
   },
 ];
 
-// Recurring rivals: one per district's rival event, getting tougher each district.
-export const RIVALS = ['jackal', 'ghost', 'mule', 'vixen', 'static'];
+// Recurring rivals: one per district's rival event, in campaign order, getting
+// tougher each district.
+export const RIVALS = ['jackal', 'ghost', 'mule', 'redline', 'vixen', 'static'];
 
 export const MODIFIER_LABELS = {
   noNitro: 'No nitrous',
