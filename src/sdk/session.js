@@ -23,10 +23,10 @@ export class Session {
     // The district's own copy, built on its sculpted ground (again only when
     // the ground changes: 0.1-2 s); object edits are made on it.
     const e = this.doc.edits;
-    const ground = JSON.stringify([e.terrain || null, e.paint || null, e.plan || null]);
+    const ground = JSON.stringify([e.terrain || null, e.paint || null, e.plan || null, e.grid || null]);
     if (ground !== this.groundKey) {
       this.groundKey = ground;
-      this.district = districtFromDoc({ ...this.doc, edits: { ...emptyEdits(), terrain: e.terrain, paint: e.paint, plan: e.plan } });
+      this.district = districtFromDoc({ ...this.doc, edits: { ...emptyEdits(), terrain: e.terrain, paint: e.paint, plan: e.plan, grid: e.grid } });
       this.map = districtMap(this.district.city);
       this.base = new Map(baseLayout(this.map).items.map((it) => [it.key, it]));
     }
@@ -69,6 +69,7 @@ export class Session {
     to.push(JSON.stringify(this.doc.edits));
     this.doc.edits = JSON.parse(from.pop());
     this.dirty = true;
+    this.broken = null; // (the events are checked again when next needed)
     this.apply();
     return true;
   }

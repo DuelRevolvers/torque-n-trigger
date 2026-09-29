@@ -5,12 +5,13 @@ import { createCityTextures } from '../render/cityTextures.js';
 import { createStreetTextures } from '../render/streetTextures.js';
 import { retroUniforms } from '../render/retroMaterial.js';
 import { buildDistrictView } from '../render/districtView.js';
-import { docFromDistrict, serializeDoc, parseDoc, baseChanged } from '../content/mapDoc.js';
-import { canMove } from '../sim/layoutEdits.js';
+import { docFromDistrict, districtFromDoc, serializeDoc, parseDoc, baseChanged } from '../content/mapDoc.js';
+import { canMove, LINKED } from '../sim/layoutEdits.js';
+import { brokenEvents } from './checks.js';
 import { Session, footBox } from './session.js';
 import { catalogue, CATEGORIES } from './catalogue.js';
 import { brush } from './brush.js';
-import { roadEdit, lotEdit, lotKinds, linePoints } from './roads.js';
+import { roadEdit, gridRoadEdit, lotEdit, gridLotEdit, lotAt, lotKinds, linePoints, featureAt, deleteStreet, setStreet, moveNode, removeNode, deleteSite, gridRemove, gridMoveLine } from './roads.js';
 import * as G from '../sim/geom2d.js';
 import { saveOverride, listOverrides, removeOverride, setOverrideOn, shippedMap } from '../content/store.js';
 
@@ -68,6 +69,7 @@ let brushAt = null; // where the brush is on the ground
 let roadPts = []; // the road tool's points so far
 let lineFrom = null; // placing along a line: where it starts
 let scatter = null; // placing by scatter: [[x, z, yaw]] so far
+let feature = null; // a street, junction or site selected (sdk/roads.js featureAt)
 let rebuildTimer = 0;
 const cam = { x: 0, y: 300, z: 400, yaw: Math.PI, pitch: -0.6, top: null };
 const keys = new Set();
@@ -184,6 +186,9 @@ const published = new Set(DISTRICTS.filter((d) => shippedMap(d.id)).map((d) => d
 async function publish() {
   const doc = session.doc;
   if (!doc.base || doc.base !== doc.id) return window.alert('Only an edited built-in district can be published for now.');
+  // Every event in it has to work: the career plays a published district.
+  const broken = brokenEvents(districtFromDoc(JSON.parse(serializeDoc(doc))));
+  if (broken.length) return window.alert(`${doc.name} can't be published: these events don't work with it as it is.\n\n${broken.map((b) => `• ${b.name}: ${b.error}`).join('\n')}\n\nPut back what they use (Ctrl+Z), or fix the events.`);
   if (!window.confirm(`Publish ${doc.name}? It ships with the game in place of its district file, career included.`)) return;
   try {
     const res = await fetch(`/__sdk/maps/${encodeURIComponent(doc.id)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: serializeDoc(doc) });
@@ -321,7 +326,7 @@ function showOverlay() {
     if (it) box(footBox(it), session.baseY(it), it.h || 2, color, opacity);
   };
   if (hovered && hovered !== selected && !drag && !placing) shown(hovered, 0xffffff, 0.08);
-  if (drag?.moved) {
+  if (drag?.moved && !drag.feature) {
     // The object where it's going: its box, moved and turned, kept at its height above the ground.
     const it = session.item(drag.key);
     const fb = footBox(it);
@@ -338,6 +343,7 @@ function showOverlay() {
     else if (lineFrom) for (const [x, z, yaw] of linePoses(lineFrom, [ghostAt.x, ghostAt.z])) ghost(x, z, yaw);
     else ghost(ghostAt.x, ghostAt.z, placeYaw);
   }
+  showFeature();
 }
 
 // --- Ground tools -----------------------------------------------------------------
@@ -348,10 +354,6 @@ const TOOL_NAMES = { raise: 'Raise', lower: 'Lower', smooth: 'Smooth', flatten: 
 const brushOpts = (dt) => ({ radius: Number($('radius').value), strength: Number($('strength').value), kind: $('kind').value, target: stroke?.target, dt });
 
 function setTool(t) {
-  if ((t === 'road' || t === 'lot') && !session.map.plan) {
-    toast('Streets and blocks can be edited in the street districts; Rustline Docks comes later.');
-    return;
-  }
   tool = t;
   roadPts = [];
   for (const b of document.querySelectorAll('#tools button')) b.classList.toggle('on', b.dataset.tool === t);
@@ -359,7 +361,7 @@ function setTool(t) {
   $('kind-row').hidden = t !== 'paint';
   $('road-opts').hidden = t !== 'road';
   $('lot-opts').hidden = t !== 'lot';
-  if (t === 'lot') $('lot-kind').innerHTML = lotKinds(session.district.city.plan).map((k) => `<option>${esc(k)}</option>`).join('');
+  if (t === 'lot') $('lot-kind').innerHTML = lotKinds(session.district.city.plan || { lots: session.district.city.grid?.lots }).map((k) => `<option>${esc(k)}</option>`).join('');
   showRoad();
   showLotHover();
   if (t !== 'select') {
@@ -477,6 +479,11 @@ function showRoad() {
   }
   const pts = [...roadPts];
   if (brushAt && roadPts.length) pts.push([brushAt.x, brushAt.z]);
+  setLine(roadLine, densify(pts));
+}
+
+// A point every few metres along a line (so it follows the ground).
+function densify(pts) {
   const dense = [];
   for (let k = 0; k + 1 < pts.length; k++) {
     const [ax, az] = pts[k];
@@ -485,7 +492,115 @@ function showRoad() {
     for (let q = 0; q < n; q++) dense.push([ax + ((bx - ax) * q) / n, az + ((bz - az) * q) / n]);
   }
   if (pts.length) dense.push(pts[pts.length - 1]);
-  setLine(roadLine, dense);
+  return dense;
+}
+
+// --- Streets, junctions and sites already there -----------------------------------
+
+const featLine = new THREE.Line(new THREE.BufferGeometry(), lineMat());
+featLine.renderOrder = 12;
+featLine.visible = false;
+scene.add(featLine);
+
+function selectFeature(f) {
+  feature = f;
+  selected = null;
+  refresh();
+  showOverlay();
+}
+
+// The selected street, junction (a ring round it) or site, outlined.
+function showFeature() {
+  const f = drag?.feature ? { ...drag.feature, x: drag.x, z: drag.z } : feature;
+  if (!f || !session) {
+    featLine.visible = false;
+    return;
+  }
+  const pts =
+    f.type === 'node' ? [...Array(25).keys()].map((k) => [f.x + Math.cos((k / 24) * Math.PI * 2) * 6, f.z + Math.sin((k / 24) * Math.PI * 2) * 6])
+      : f.type === 'site' ? [...f.poly, f.poly[0]]
+        : f.pts;
+  setLine(featLine, densify(pts));
+}
+
+// A change to the streets or sites: the district is built again (refused and
+// undone if it can't be). The selection is found again at `at`.
+function editFeature(label, make, at) {
+  let patch;
+  try {
+    patch = make();
+  } catch (err) {
+    window.alert(err.message);
+    return;
+  }
+  const type = feature?.type;
+  rebuildDistrict(label, (e) => Object.assign(e, patch), (kept) => {
+    const again = kept && at ? featureAt(session, ...at) : null;
+    feature = again && again.type === type ? again : kept ? null : feature;
+  });
+}
+
+function deleteFeature() {
+  const f = feature;
+  if (!f) return;
+  const make =
+    f.type === 'street' ? () => ({ plan: deleteStreet(session, f) })
+      : f.type === 'node' ? () => ({ plan: removeNode(session, f.name) })
+        : f.type === 'site' ? () => deleteSite(session, f)
+          : () => ({ grid: gridRemove(session, f) });
+  editFeature(`Taking out ${f.name}…`, make, null);
+}
+
+function featureInspector(ins) {
+  const f = feature;
+  const warn = '<p class="note">Events that use it may stop working: check them before publishing.</p>';
+  if (f.type === 'street') {
+    ins.innerHTML = `
+      <h3>${esc(f.name)}</h3><div class="key">street${f.ringRoad ? ' (ring road)' : ''}</div>
+      ${f.key ? `<div class="grid">
+        <label for="st-name">name</label><input id="st-name" value="${esc(f.spec.name)}" />
+        <label for="st-width">width (m)</label><input id="st-width" type="number" min="4" max="60" step="1" value="${f.width}" />
+        <label for="st-surface">surface</label><select id="st-surface"><option value="asphalt"${f.surface === 'asphalt' ? ' selected' : ''}>Asphalt</option><option value="dirt"${f.surface === 'dirt' ? ' selected' : ''}>Dirt</option></select>
+      </div>` : ''}
+      ${f.fixed ? `<p class="note">${esc(f.fixed)}</p>` : ''}
+      <div class="row">${f.key ? '<button id="st-apply">Apply</button>' : ''}${f.fixed ? '' : '<button id="f-del" class="danger">Delete street</button>'}</div>
+      ${warn}`;
+    $('st-apply')?.addEventListener('click', () =>
+      editFeature('Rebuilding the street…', () => ({ plan: setStreet(session, f, { name: $('st-name').value, width: Number($('st-width').value), surface: $('st-surface').value }) }), f.at));
+  } else if (f.type === 'node') {
+    ins.innerHTML = `
+      <h3>${esc(f.name)}</h3><div class="key">junction</div>
+      ${f.movable ? `<div class="grid">
+        <label for="n-x">x (m)</label><input id="n-x" type="number" step="1" value="${f.x.toFixed(1)}" />
+        <label for="n-z">z (m)</label><input id="n-z" type="number" step="1" value="${f.z.toFixed(1)}" />
+      </div><p class="note">Drag it to move it: every street through it follows.</p>` : '<p class="note">Part of a ring road or the rooftops: it moves with them.</p>'}
+      <div class="row">${f.movable ? '<button id="f-del" class="danger">Remove junction</button>' : ''}</div>
+      ${warn}`;
+    for (const id of ['n-x', 'n-z']) {
+      $(id)?.addEventListener('change', () => {
+        const x = Number($('n-x').value);
+        const z = Number($('n-z').value);
+        editFeature('Moving the junction…', () => ({ plan: moveNode(session, f.name, x, z) }), [x, z]);
+      });
+    }
+  } else if (f.type === 'site') {
+    ins.innerHTML = `
+      <h3>${esc(f.name)}</h3><div class="key">site (${esc(f.kind)})</div>
+      <div class="row"><button id="f-del" class="danger">Delete site</button></div>
+      ${f.kind === 'arena' ? '<p class="note warn">An event ground: the arena events held here stop working without it.</p>' : warn}`;
+  } else {
+    ins.innerHTML = `
+      <h3>${esc(f.name)}</h3><div class="key">street, junction to junction</div>
+      <div class="grid"><label for="g-line">${f.line.axis} (m)</label><input id="g-line" type="number" step="5" value="${f.line.value}" /></div>
+      <p class="note">Moves the whole ${f.dir === 'h' ? 'row' : 'column'} of streets it's on.</p>
+      <div class="row"><button id="f-del" class="danger">Delete this piece</button></div>
+      ${warn}`;
+    $('g-line').addEventListener('change', () => {
+      const v = Number($('g-line').value);
+      editFeature('Moving the streets…', () => ({ grid: gridMoveLine(session, f.line, v) }), f.line.axis === 'x' ? [v, f.at[1]] : [f.at[0], v]);
+    });
+  }
+  $('f-del')?.addEventListener('click', deleteFeature);
 }
 
 function buildRoad() {
@@ -493,47 +608,61 @@ function buildRoad() {
   roadPts = [];
   showRoad();
   if (pts.length < 2) return;
-  let pe;
+  const name = $('road-name').value;
+  let patch;
   try {
-    pe = roadEdit(session, pts, { width: $('road-width').value, surface: $('road-surface').value, name: $('road-name').value });
+    patch = session.map.plan ? { plan: roadEdit(session, pts, { width: $('road-width').value, surface: $('road-surface').value, name }) } : { grid: gridRoadEdit(session, pts, name) };
   } catch (err) {
     window.alert(err.message);
     return;
   }
-  setBusy('Building the street…');
-  setTimeout(() => {
-    try {
-      if (session.change((e) => (e.plan = pe))) {
-        changed();
-        toast(`${Object.keys(pe.streets).pop()} built: its blocks are filled the district's way.`);
-      } else setBusy(null);
-    } catch (err) {
-      setBusy(null);
-      window.alert(`That street can't be built there: ${err.message}`);
-    }
-  }, 30);
+  rebuildDistrict('Building the street…', (e) => Object.assign(e, patch), (kept) => kept && toast(`${name.trim() || 'New Street'} built: its blocks are filled the district's way.`));
 }
 
 function setLot(g) {
-  if (!session.map.blockAt(g.x, g.z)) return;
+  const lot = lotAt(session, g.x, g.z);
+  if (!lot) return;
   const kind = $('lot-kind').value;
-  setBusy('Filling the block…');
+  rebuildDistrict('Filling the block…', lot.grid ? (e) => (e.grid = gridLotEdit(session, lot.grid, kind)) : (e) => (e.plan = lotEdit(session, g.x, g.z, kind)));
+}
+
+// A change to the streets, blocks or sites: the district is built again (a
+// change it can't be built with is refused). Then its events are checked: if
+// the change stops any of them working, you're asked whether to keep it.
+function rebuildDistrict(label, mutate, done) {
+  setBusy(label);
   setTimeout(() => {
     try {
-      if (session.change((e) => (e.plan = lotEdit(session, g.x, g.z, kind)))) changed();
-      else setBusy(null);
+      const before = session.broken ?? brokenEvents(session.district);
+      if (!session.change(mutate)) {
+        setBusy(null);
+        return;
+      }
+      const after = brokenEvents(session.district);
+      const newly = after.filter((b) => !before.some((q) => q.key === b.key));
+      const list = newly.map((b) => `• ${b.name}: ${b.error}`).join('\n');
+      if (newly.length && !window.confirm(`This stops ${newly.length === 1 ? 'an event' : 'these events'} working:\n\n${list}\n\nKeep the change anyway? (They'll need fixing before this district can be published.)`)) {
+        session.undo();
+        session.future.pop();
+        session.broken = before;
+        done?.(false);
+      } else {
+        session.broken = after;
+        done?.(true);
+      }
+      changed();
     } catch (err) {
       setBusy(null);
-      window.alert(`That block can't be ${kind}: ${err.message}`);
+      window.alert(`That can't be built: ${err.message}`);
     }
   }, 30);
 }
 
 // The block under the cursor (the lot tool).
 function showLotHover() {
-  const b = tool === 'lot' && brushAt && session?.map.blockAt ? session.map.blockAt(brushAt.x, brushAt.z) : null;
-  if (!b) blockLine.visible = false;
-  else setLine(blockLine, b.lot);
+  const lot = tool === 'lot' && brushAt && session ? lotAt(session, brushAt.x, brushAt.z) : null;
+  if (!lot) blockLine.visible = false;
+  else setLine(blockLine, lot.poly);
 }
 
 // Copies along a line from a to b, turned to run along it.
@@ -582,6 +711,7 @@ function endStroke() {
 
 function select(key) {
   selected = key;
+  feature = null;
   refresh();
   showOverlay();
 }
@@ -612,6 +742,7 @@ function nudge(dx, dz) {
 }
 
 function removeSelected() {
+  if (feature) return deleteFeature();
   if (selected && session.remove(selected)) {
     selected = null;
     changed();
@@ -674,7 +805,8 @@ function refresh() {
 
   const it = selected && session.item(selected);
   const ins = $('inspector');
-  if (!it) {
+  if (feature) featureInspector(ins);
+  else if (!it) {
     ins.innerHTML = `<p class="note">Click an object to select it. Drag it to move it.<br><br>Pick an object on the left, then click in the world to place it (or drag it in).</p>`;
   } else {
     const p = session.pose(selected);
@@ -696,7 +828,7 @@ function refresh() {
         ${moved ? '<button id="b-reset">Put back</button>' : ''}
         <button id="b-del" class="danger" title="Delete">Delete</button>
       </div>
-      ${movable ? '' : '<p class="note">Part of the streets, ground or a district set piece: it can be deleted but not moved.</p>'}`;
+      ${LINKED[it.t] ? `<p class="note">${esc(LINKED[it.t])}</p>` : ''}`;
     const read = () => [Number($('in-x').value), Number($('in-z').value), (Number($('in-turn').value) * Math.PI) / 180, Number($('in-lift').value)];
     for (const id of ['in-x', 'in-z', 'in-turn', 'in-lift']) {
       $(id)?.addEventListener('change', () => {
@@ -860,7 +992,18 @@ canvas.addEventListener('mousedown', (e) => {
     hint();
     return;
   }
-  const key = pickAt();
+  // An object; else a junction, street or site.
+  const hit = meshHit();
+  const key = hit ? session.pick(hit.x, hit.z, hit.y) : null;
+  const f = !key && hit ? featureAt(session, hit.x, hit.z) : null;
+  if (f) {
+    selectFeature(f);
+    if (f.type === 'node' && f.movable) {
+      const g = groundHit();
+      if (g) drag = { feature: f, sx: e.clientX, sy: e.clientY, ox: f.x - g.x, oz: f.z - g.z, x: f.x, z: f.z, yaw: 0, moved: false };
+    }
+    return;
+  }
   select(key);
   if (key && canMove(session.item(key))) {
     const g = groundHit();
@@ -952,6 +1095,10 @@ window.addEventListener('mouseup', (e) => {
   if (e.button === 0 && drag) {
     const d = drag;
     drag = null;
+    if (d.moved && d.feature) {
+      editFeature('Moving the junction…', () => ({ plan: moveNode(session, d.feature.name, d.x, d.z) }), [d.x, d.z]);
+      return;
+    }
     if (d.moved && session.place(d.key, d.x, d.z, d.yaw)) changed();
     else {
       showOverlay();

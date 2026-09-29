@@ -20,7 +20,8 @@
 export const FORMAT = 'tt-map';
 export const VERSION = 1;
 export const EDITOR = 'T&T SDK 0.1';
-import { applyPlanEdits, hasPlanEdits } from '../sim/planEdits.js';
+import { applyPlanEdits, hasPlanEdits, renameStreets } from '../sim/planEdits.js';
+import { applyGridEdits, hasGridEdits } from '../sim/gridEdits.js';
 
 const KEYS = ['id', 'name', 'tier', 'faction', 'color', 'blurb', 'theme', 'map', 'frame', 'label', 'city', 'events', 'boss'];
 
@@ -45,9 +46,15 @@ export const emptyEdits = () => ({ remove: [], move: {}, add: [] });
 // already carries edits (city.edits): they come out as the document's own.
 export function docFromDistrict(d, now = new Date().toISOString()) {
   const district = districtData(d);
+  // (Keys left from an earlier edit of a published district: its plan is its own now.)
+  if (district.city?.plan) {
+    const own = (list) => list?.map(({ sdkKey: _k, ...s }) => s);
+    district.city.plan = { ...district.city.plan, streets: own(district.city.plan.streets), sites: own(district.city.plan.sites) };
+  }
   const edits = { ...emptyEdits(), ...district.city?.edits };
   if (district.city) delete district.city.edits;
-  delete edits.plan; // (a published plan has its street edits made already)
+  delete edits.plan; // (a published district has its street edits made already)
+  delete edits.grid;
   return {
     format: FORMAT,
     version: VERSION,
@@ -66,7 +73,7 @@ export const baseChanged = (doc, d) => !!doc.base && hashOf(districtData(d)) !==
 
 // Is there anything edited?
 export const hasEdits = (e) =>
-  !!e && ((e.remove?.length || 0) + Object.keys(e.move || {}).length + (e.add?.length || 0) + Object.keys(e.terrain?.dh || {}).length + Object.keys(e.paint?.s || {}).length + (hasPlanEdits(e.plan) ? 1 : 0) > 0);
+  !!e && ((e.remove?.length || 0) + Object.keys(e.move || {}).length + (e.add?.length || 0) + Object.keys(e.terrain?.dh || {}).length + Object.keys(e.paint?.s || {}).length + (hasPlanEdits(e.plan) ? 1 : 0) + (hasGridEdits(e.grid) ? 1 : 0) > 0);
 
 // Problems with a document (an empty list if it's fine to open).
 export function validateDoc(doc) {
@@ -112,7 +119,12 @@ export function districtFromDoc(doc) {
   if (!districts.has(doc)) {
     const d = json(doc.district);
     if (hasEdits(doc.edits)) d.city.edits = json(doc.edits);
-    if (d.city.plan && hasPlanEdits(doc.edits?.plan)) d.city.plan = applyPlanEdits(d.city.plan, doc.edits.plan);
+    if (d.city.plan && hasPlanEdits(doc.edits?.plan)) {
+      d.city.plan = applyPlanEdits(d.city.plan, doc.edits.plan);
+      const R = doc.edits.plan.renames;
+      if (R && Object.keys(R).length) Object.assign(d, { events: renameStreets(d.events, R), boss: renameStreets(d.boss, R) });
+    }
+    if (d.city.grid && hasGridEdits(doc.edits?.grid)) d.city = { ...applyGridEdits(d.city, doc.edits.grid), edits: d.city.edits };
     districts.set(doc, d);
   }
   return districts.get(doc);

@@ -21,25 +21,41 @@
 // xf: { src, drop: true } for a removed item, drawn and thrown away so the
 // items after it look just as they did.
 
-// Types that are part of the streets, the ground or a district's moving parts
-// (the RV's run, the flood, the cash truck, the rooftop crossings): these stay
-// where the district's rules put them.
-export const FIXED = new Set([
-  // Ground, water and ways through.
-  'patch', 'fairway', 'driveway', 'footpath', 'backyardWay', 'alley', 'river', 'riverWall', 'water', 'pond', 'pondWater', 'hazard',
-  'seawall', 'seawallLine', 'seaWall', 'median', 'gatePlaza', 'plaza', 'plazaRamp', 'balustrade', 'spire', 'drydock', 'hull',
-  // Rooftop crossings and decks (Chrome Heights).
-  'bridge', 'cantilever', 'gapJump', 'kicker', 'helix', 'spiralWall', 'spiralCore', 'pad', 'padRamp', 'lobby', 'lobbyWall', 'hqTower', 'parapet',
-  // The Undercity's deck, tunnel and storm drain.
-  'deck', 'tunnel', 'tunnelWall', 'portal', 'culvert', 'culvertMouth', 'outfall', 'inlet', 'grate',
-  // The Glow Palace's underpass and cash run; Rustline's quay, goods shed and rail.
-  'underpass', 'cashDock', 'porteCochere', 'palaceFront', 'podium', 'dock', 'dockRamp', 'quayCrane', 'goodsShed', 'loadPlatform', 'platformRamp', 'signal', 'ctunnel',
-  // Maple Hollow's water tower (the RV's run starts under it; its beacon blinks on its own).
-  'waterTower', 'towerLeg',
-]);
+// Set pieces a district's moving parts run past: moving one moves it and what
+// it collides with, not the part (said in the SDK when one is moved).
+export const LINKED = {
+  culvert: 'The flash flood still runs down the drain where the plan has it.',
+  culvertMouth: 'The flash flood still runs down the drain where the plan has it.',
+  outfall: 'The flash flood still runs down the drain where the plan has it.',
+  inlet: "The Sump's gush still comes from where the plan has it.",
+  cashDock: 'The cash truck still drives its own route.',
+  porteCochere: 'The cash truck still drives its own route.',
+  underpass: 'The underpass road and the cash truck stay where the plan has them.',
+  waterTower: 'The runaway RV still starts on Water Tower Hill.',
+  towerLeg: 'The runaway RV still starts on Water Tower Hill.',
+  median: "Races down this street keep to the median where it's moved.",
+  drydock: "The Dry Dock Brawl's ring-out stays in its arena.",
+  hull: "The Dry Dock Brawl's ring-out stays in its arena.",
+  goodsShed: "The goods platform's shortcut stays where it was.",
+  loadPlatform: "The goods platform's shortcut stays where it was.",
+  platformRamp: "The goods platform's shortcut stays where it was.",
+  ctunnel: "The container terminal's way through stays where it was.",
+  alley: "The alley's shortcut stays where it was.",
+  bridge: 'Rooftop roads cross where their streets are: move their junctions to move them.',
+  cantilever: 'Rooftop roads cross where their streets are: move their junctions to move them.',
+  gapJump: 'Rooftop roads cross where their streets are: move their junctions to move them.',
+  helix: 'The spiral ramp runs where its street is: move its junctions to move it.',
+  spiralWall: 'The spiral ramp runs where its street is: move its junctions to move it.',
+  spiralCore: 'The spiral ramp runs where its street is: move its junctions to move it.',
+  tunnel: 'The tunnel road runs where its street is: move its junctions to move it.',
+  tunnelWall: 'The tunnel road runs where its street is: move its junctions to move it.',
+  portal: 'The tunnel road runs where its street is: move its junctions to move it.',
+  deck: 'The deck overhead (and its shade) stays where the plan has it.',
+};
 
-// Can this item be moved, turned or copied? (Any item can be removed.)
-export const canMove = (it) => !it.hidden && !FIXED.has(it.t);
+// Can this item be moved, turned or copied? Every item can (and removed),
+// except collision drawn some other way (hidden).
+export const canMove = (it) => !it.hidden;
 
 // The middle of an item on the ground plane.
 export function itemCentre(it) {
@@ -134,6 +150,14 @@ export function moveItem(src, m) {
     it.ramp = { ...it.ramp, x, z, dirX, dirZ, ...(typeof it.ramp.abs === 'number' ? { abs: it.ramp.abs + m.dy } : {}) };
   }
   if (Array.isArray(it.front)) it.front = turnVector(m, it.front[0], it.front[1]);
+  // Points and paths the item carries (a fairway's tee and green, a footpath),
+  // drawn from the item itself with the ground.
+  const pair = (v) => Array.isArray(v) && v.length === 2 && typeof v[0] === 'number' && typeof v[1] === 'number';
+  for (const [k, v] of Object.entries(it)) {
+    if (k === 'front' || k === 'r' || k === 'poly') continue;
+    if (pair(v)) it[k] = movePoint(m, v[0], v[1]);
+    else if (Array.isArray(v) && v.length && v.every(pair)) it[k] = v.map(([x, z]) => movePoint(m, x, z));
+  }
   return it;
 }
 

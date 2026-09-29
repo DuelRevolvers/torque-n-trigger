@@ -521,7 +521,7 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
       paint(new THREE.CylinderGeometry(r + 0.5, r + 0.5, 0.5, 16).translate(it.x, y + it.tank + 0.25, it.z), '#6a7078');
       // MAPLE HOLLOW round the tank, and the red beacon on top.
       for (const [fx, fz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) paintedText('MAPLE HOLLOW', '#24345e', '#b8c8d0', it.x + fx * (r + 0.1), y + (it.tank + it.top) / 2 - 1.2, it.z + fz * (r + 0.1), fx, fz, r * 1.3);
-      beacon = box(0.8, 0.8, 0.8, it.x, y + it.top + 4.4, it.z);
+      beacons.push(box(0.8, 0.8, 0.8, it.x, y + it.top + 4.4, it.z));
     },
     cart(it) {
       const o = it.obb;
@@ -743,7 +743,7 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
     mast: null, // the plan view's own
   };
 
-  let beacon = null;
+  const beacons = []; // the water tower's red beacon
   // Lettering painted on (lit by the scene, not glowing).
   function paintedText(str, color, bg, x, y, z, fx, fz, w) {
     const t = textTexture(str, color, bg);
@@ -924,7 +924,7 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
     propMeshesBuild();
     sprayMeshBuild();
     for (const m of mistMeshes) add(m);
-    const beaconMesh = beacon ? new THREE.Mesh(beacon, mats.beacon) : null;
+    const beaconMesh = beacons.length ? new THREE.Mesh(merged(beacons), mats.beacon) : null;
     add(beaconMesh);
     return {
       animate(t, real) {
@@ -944,7 +944,7 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
   // Items the ground needs (patches, driveways, fairways, paths, the pond).
   for (const it of items) if (['patch', 'fairway', 'driveway', 'footpath', 'pondWater', 'hazard'].includes(it.t)) districtItems.push(it);
   // What the drawers add to (for drawing edited items, render/itemCapture.js).
-  const buckets = [B, trees, props, sprinklers, mistMeshes];
+  const buckets = [B, trees, props, sprinklers, mistMeshes, beacons];
   return { ground, drawers, finish, buckets };
 }
 

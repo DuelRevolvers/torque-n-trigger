@@ -4,7 +4,8 @@
 // junctions). Plan districts only. Returns the plan edits; the session builds
 // the district from them (and refuses them if the plan won't build).
 import * as G from '../sim/geom2d.js';
-import { streetKeys } from '../sim/planEdits.js';
+import { streetKeys, siteKeys } from '../sim/planEdits.js';
+import { ekey } from '../sim/city.js';
 
 const SNAP_NODE = 14; // metres: a click this close to a junction is at it
 const NEAR_END = 3; // a crossing this close to a junction is at that junction
@@ -21,7 +22,9 @@ export function roadEdit(session, clicks, { width = 'street', surface = 'asphalt
   // A street on the map as its plan spec (null: a ring road or turning circle, made by its rules).
   const specOf = (st) => {
     const i = st.k - rings;
-    return st.ring || i < 0 || i >= P.streets.length ? null : { key: keys[i], spec: pe.streets[keys[i]] || P.streets[i] };
+    if (st.ring || i < 0 || i >= P.streets.length) return null;
+    const key = P.streets[i].sdkKey || keys[i];
+    return { key, spec: pe.streets[key] || P.streets[i] };
   };
   const taken = new Set([...Object.keys(P.nodes), ...[...map.byName.keys()]]);
   let n = 1;
@@ -104,7 +107,8 @@ export function roadEdit(session, clicks, { width = 'street', surface = 'asphalt
       while (k < ib && along(p[k]) < at) k++;
       p.splice(k, 0, s.name);
     }
-    pe.streets[key] = { ...spec, path: p };
+    const { sdkKey: _k, ...own } = spec;
+    pe.streets[key] = { ...own, path: p };
   }
 
   let title = (name || '').trim() || 'New Street';
@@ -136,4 +140,209 @@ export function linePoints([ax, az], [bx, bz], spacing) {
   const out = [];
   for (let k = 0; k <= n; k++) out.push([ax + ((bx - ax) * k) / n, az + ((bz - az) * k) / n]);
   return { pts: L < 0.5 ? [[ax, az]] : out, yaw: Math.atan2(bx - ax, bz - az) };
+}
+
+// --- What's already there: streets, junctions and sites -----------------------------
+
+const WIDTH_OF = { lane: 7, street: 12, avenue: 20 };
+
+// The street, junction or site at (x, z), when no object is: { type, at, ... }.
+export function featureAt(session, x, z) {
+  const map = session.map;
+  const at = [x, z];
+  if (!map.plan) return gridFeatureAt(session, x, z);
+  const P = session.district.city.plan;
+  const hub = map.nodes
+    .filter((n) => n.name && !n.boundary)
+    .map((n) => ({ n, d: Math.hypot(n.x - x, n.z - z) }))
+    .sort((a, b) => a.d - b.d)[0];
+  if (hub && hub.d < 10) {
+    const own = !!P.nodes[hub.n.name];
+    return { type: 'node', at, name: hub.n.name, x: hub.n.x, z: hub.n.z, movable: own && !map.roof };
+  }
+  let best = null;
+  for (const st of map.streets) {
+    const q = G.nearestOnLine(st.pts, x, z);
+    if (q.d < st.half + 1.5 && (!best || q.d < best.d)) best = { st, d: q.d };
+  }
+  if (best) return { type: 'street', at, ...streetRef(session, best.st) };
+  const sk = siteKeys(P.sites || []);
+  const i = map.sites.findIndex((s) => s.poly && G.pointInPoly(x, z, s.poly));
+  if (i >= 0) return { type: 'site', at, key: P.sites[i].sdkKey || sk[i], name: map.sites[i].name || map.sites[i].kind, kind: map.sites[i].kind, poly: map.sites[i].poly };
+  return null;
+}
+
+// A street on the map as the plan has it: { key, spec } (or a ring road, or fixed).
+function streetRef(session, st) {
+  const P = session.district.city.plan;
+  const keys = streetKeys(P.streets);
+  const base = { name: st.name, pts: st.pts };
+  if (st.ringRoad) return { ...base, ringRoad: true };
+  if (st.drain) return { ...base, fixed: 'The storm drain is the flash flood\'s: it stays.' };
+  // (A court's turning circle is its street's.)
+  const i = st.ring ? P.streets.findIndex((q) => q.name === st.name) : st.k - (P.rings || []).length;
+  if (i < 0 || i >= P.streets.length) return { ...base, fixed: 'Laid out by the district\'s rules.' };
+  const spec = P.streets[i];
+  const width = typeof spec.width === 'number' ? spec.width : WIDTH_OF[spec.width || 'street'];
+  return { ...base, key: spec.sdkKey || keys[i], spec, width, surface: spec.surface === 'dirt' ? 'dirt' : 'asphalt' };
+}
+
+const planOf = (session) => {
+  const pe = structuredClone(session.doc.edits.plan || {});
+  pe.nodes ||= {};
+  pe.streets ||= {};
+  return pe;
+};
+
+export function deleteStreet(session, f) {
+  const pe = planOf(session);
+  if (f.ringRoad) (pe.rings ||= {})[f.name] = null;
+  else if (f.key) pe.streets[f.key] = null;
+  else throw new Error(f.fixed || `${f.name} can't be taken out.`);
+  return pe;
+}
+
+// Name, width (lane / street / avenue, or metres) and surface.
+// (A new name goes everywhere the old one was: events, sites, the plan.)
+export function setStreet(session, f, { name, width, surface }) {
+  if (!f.key) throw new Error(f.fixed || `${f.name} is laid out by its own rules.`);
+  const pe = planOf(session);
+  const { sdkKey: _k, ...own } = f.spec;
+  const next = (name || '').trim() || own.name;
+  if (next !== own.name && session.district.city.plan.streets.some((q) => q.name === next)) throw new Error(`There's already a street called ${next}.`);
+  pe.renames ||= {};
+  const orig = Object.keys(pe.renames).find((k) => pe.renames[k] === own.name) ?? own.name;
+  if (orig === next) delete pe.renames[orig];
+  else pe.renames[orig] = next;
+  const spec = { ...own, name: orig, width };
+  if (surface === 'dirt') spec.surface = 'dirt';
+  else delete spec.surface;
+  pe.streets[f.key] = spec;
+  return pe;
+}
+
+export function moveNode(session, name, x, z) {
+  const pe = planOf(session);
+  pe.nodes[name] = [Math.round(x * 100) / 100, Math.round(z * 100) / 100];
+  return pe;
+}
+
+// Takes a junction out: the streets through it run straight on (one left with
+// fewer than two junctions goes too).
+export function removeNode(session, name) {
+  const P = session.district.city.plan;
+  const pe = planOf(session);
+  const keys = streetKeys(P.streets);
+  P.streets.forEach((s, i) => {
+    if (!s.path?.includes(name)) return;
+    const { sdkKey, ...own } = s;
+    const path = own.path.filter((p) => p !== name);
+    pe.streets[sdkKey || keys[i]] = path.filter((p) => typeof p === 'string').length < 2 ? null : { ...own, path };
+  });
+  if (P.nodes[name]) pe.nodes[name] = null;
+  return pe;
+}
+
+export function deleteSite(session, f) {
+  if (!session.map.plan) {
+    const ge = structuredClone(session.doc.edits.grid || {});
+    (ge.sites ||= {})[f.key] = null;
+    return { grid: ge };
+  }
+  const pe = planOf(session);
+  (pe.sites ||= {})[f.key] = null;
+  return { plan: pe };
+}
+
+// Rustline's grid: a run of street between two junctions, or a site.
+function gridFeatureAt(session, x, z) {
+  const map = session.map;
+  const at = [x, z];
+  let best = null;
+  for (const e of map.edges.values()) {
+    const A = map.nodes[e.a];
+    const B = map.nodes[e.b];
+    if (A.stub || B.stub || A.i < 0 || B.i < 0) continue;
+    const { d } = G.segDist(x, z, [A.x, A.z], [B.x, B.z]);
+    if (d < 9 && (!best || d < best.d)) best = { d, A, B, e };
+  }
+  if (best) {
+    const { A, B } = best;
+    const dir = A.j === B.j ? 'h' : 'v';
+    const [i, j] = [Math.min(A.i, B.i), Math.min(A.j, B.j)];
+    const grid = session.district.city.grid;
+    return {
+      type: 'gridStreet', at, i, j, dir, name: map.streetOf?.get(ekey(A.id, B.id)) || 'Street', pts: [[A.x, A.z], [B.x, B.z]],
+      // The grid line it's on: a row's z (h) or a column's x (v).
+      line: dir === 'h' ? { axis: 'z', index: j, value: grid.zs[j] } : { axis: 'x', index: i, value: grid.xs[i] },
+    };
+  }
+  const s = map.sites.find((q) => x > q.x0 && x < q.x1 && z > q.z0 && z < q.z1);
+  if (s) return { type: 'site', at, key: s.name || s.kind, name: s.name || s.kind, kind: s.kind, poly: [[s.x0, s.z0], [s.x1, s.z0], [s.x1, s.z1], [s.x0, s.z1]] };
+  return null;
+}
+
+export function gridRemove(session, f) {
+  const ge = structuredClone(session.doc.edits.grid || {});
+  ge.remove = [...(ge.remove || []), [f.i, f.j, f.dir]];
+  return ge;
+}
+
+// Moves a grid line, keeping it between its neighbours.
+export function gridMoveLine(session, { axis, index }, value) {
+  const grid = session.district.city.grid;
+  const list = axis === 'x' ? grid.xs : grid.zs;
+  if ((index > 0 && value <= list[index - 1] + 40) || (index + 1 < list.length && value >= list[index + 1] - 40)) {
+    throw new Error(`Keep it at least 40 m from the next ${axis === 'x' ? 'column' : 'row'} of streets (between ${index > 0 ? list[index - 1] + 40 : '…'} and ${index + 1 < list.length ? list[index + 1] - 40 : '…'}).`);
+  }
+  const ge = structuredClone(session.doc.edits.grid || {});
+  (ge[axis === 'x' ? 'xs' : 'zs'] ||= {})[index] = Math.round(value * 100) / 100;
+  return ge;
+}
+
+// Rustline's road tool: its streets run along its grid, so a new one goes
+// from the junction nearest the first click to the one nearest the last, along
+// their row or column (putting back any piece taken out on the way).
+export function gridRoadEdit(session, clicks, name) {
+  const map = session.map;
+  const near = ([x, z]) => map.nodes.filter((n) => n.i >= 0 && !n.stub).map((n) => ({ n, d: Math.hypot(n.x - x, n.z - z) })).sort((a, b) => a.d - b.d)[0];
+  const A = near(clicks[0]);
+  const B = near(clicks[clicks.length - 1]);
+  if (!A || !B || A.d > 40 || B.d > 40) throw new Error("Rustline's streets run along its grid: start and end at junctions (where its rows and columns cross).");
+  if (A.n === B.n) throw new Error('Click two different junctions.');
+  if (A.n.i !== B.n.i && A.n.j !== B.n.j) throw new Error("Rustline's streets run along its grid: pick two junctions in the same row or column.");
+  const ge = structuredClone(session.doc.edits.grid || {});
+  ge.add ||= [];
+  ge.remove ||= [];
+  const row = A.n.j === B.n.j;
+  const [a, b] = row ? [A.n.i, B.n.i].sort((p, q) => p - q) : [A.n.j, B.n.j].sort((p, q) => p - q);
+  const title = (name || '').trim() || 'New Street';
+  for (let k = a; k < b; k++) {
+    const piece = row ? [k, A.n.j, 'h'] : [A.n.i, k, 'v'];
+    const same = (r) => r[0] === piece[0] && r[1] === piece[1] && r[2] === piece[2];
+    const gone = ge.remove.findIndex(same);
+    if (gone >= 0) ge.remove.splice(gone, 1);
+    else if (!ge.add.some(same)) ge.add.push([...piece, title]);
+  }
+  return ge;
+}
+
+// The block (or Rustline's grid lot) at (x, z): { poly, grid: [i, j] }.
+export function lotAt(session, x, z) {
+  const map = session.map;
+  if (map.plan) {
+    const b = map.blockAt(x, z);
+    return b ? { poly: b.lot } : null;
+  }
+  const { xs, zs } = session.district.city.grid;
+  const i = xs.findIndex((v, k) => k + 1 < xs.length && x >= v && x < xs[k + 1]);
+  const j = zs.findIndex((v, k) => k + 1 < zs.length && z >= v && z < zs[k + 1]);
+  if (i < 0 || j < 0) return null;
+  return { poly: [[xs[i], zs[j]], [xs[i + 1], zs[j]], [xs[i + 1], zs[j + 1]], [xs[i], zs[j + 1]]], grid: [i, j] };
+}
+
+export function gridLotEdit(session, [i, j], kind) {
+  const ge = structuredClone(session.doc.edits.grid || {});
+  ge.lots = [...(ge.lots || []).filter((L) => L.at[0] !== i || L.at[1] !== j), { at: [i, j], kind }];
+  return ge;
 }
