@@ -9,6 +9,7 @@ import { CRANE_LEGS } from '../sim/authoredLayout.js';
 import { rampGeometry } from './shapes.js';
 import { buildAuthoredStructures } from './arenaView.js';
 import { buildPlanDistrictView } from './planView.js';
+import { distantSpire } from './spireLandmark.js';
 
 // A whole city district, built once and shared by every event held there:
 // streets and sidewalks in the district's own surface (roof decks with gaps to
@@ -67,7 +68,22 @@ const AWNINGS = ['#c83a4a', '#3a8ac8', '#e0b020', '#3aa05a', '#b04dff', '#e06a2a
 const HOUSE_COLORS = ['#c8b8a0', '#a8b8c8', '#b8a8c0', '#d0c0a8', '#a0b0a0', '#c0a898'];
 const SHACK_COLORS = ['#6a5a48', '#4a6a6a', '#7a4a3a', '#5a5a62', '#6a6a3a', '#3a4a5a', '#5a3a4a'];
 
+// A district, and the Spire on its skyline (every district but the Spire's own).
 export function buildDistrictView(map, tex) {
+  const group = districtViewOf(map, tex);
+  const far = distantSpire(map.style);
+  if (far) {
+    group.add(far);
+    const inner = group.userData.animate;
+    group.userData.animate = (t, real = t) => {
+      inner?.(t, real);
+      far.userData.animate(real);
+    };
+  }
+  return group;
+}
+
+function districtViewOf(map, tex) {
   if (map.plan) return buildPlanDistrictView(map, tex);
   const { style, heightAt, nodes } = map;
   const look = style.look;

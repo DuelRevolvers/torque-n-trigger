@@ -24,6 +24,7 @@ import { STRIP_CITY } from '../districts/neonStrip.js';
 import { MAPLE_CITY } from '../districts/mapleHollow.js';
 import { CHROME_CITY } from '../districts/chromeHeights.js';
 import { UNDERCITY_CITY } from '../districts/undercity.js';
+import { SPIRE_CITY } from '../districts/corporateSpire.js';
 
 // A plan district's outline on the city map: its boundary, scaled into place
 // (centre and metres per map unit), so the map and the district always match.
@@ -126,28 +127,19 @@ export const DISTRICTS = [
     id: 'spire', name: 'Corporate Spire', tier: 4, faction: 'Syncorp', color: '#b04dff',
     blurb: 'Downtown: pale stone monoliths trimmed in gold, grand plazas, boulevards, Central Park and the Spire itself. Win here and the championship is yours.',
     theme: { haze: '#1c160c', fog: 0.0033 },
-    // Faceted round the radial downtown.
-    map: [[20, 8], [27.5, 6], [35, 9.3], [37.5, 17.3], [37.5, 28], [35, 37.3], [29, 42.7], [21, 43.3], [15, 38], [13.5, 28.7], [13.5, 17.3]],
+    // Faceted round the radial downtown, its north-west corner restored.
+    map: planOutline(SPIRE_CITY.plan.boundary, [25.5, 24.65], [62.5, 45.63]),
     label: [25.5, 10.5],
-    city: {
-      id: 'spire', name: 'Corporate Spire', seed: 5505, cols: 9, rows: 7,
-      spacingX: [150, 210], spacingZ: [140, 190], removeEdges: 0.04, elevation: 3, hillScale: 320,
-      sites: [
-        { kind: 'arena', name: 'Syncorp Forecourt', sizes: [[2, 1], [1, 2], [2, 2]], min: 160 },
-        { kind: 'park', name: 'Central Park', sizes: [[3, 2], [2, 2]], where: 'centre' },
-        { kind: 'plaza', name: 'Spire Plaza', sizes: [[2, 1], [1, 2]], where: 'centre' },
-      ],
-      lots: { plaza: 4, construction: 1, parking: 1, alley: 1 },
-      buildings: 'monolith', heights: [60, 200], features: ['spire'], streetTrees: true,
-      look: { building: '#d8d0c0', buildingTex: 'building', lamp: '#ffe0a0', barrier: '#fff0d8', signs: 0.1, lot: '#8a8478', neon: ['#ffcc55', '#fff4d0'], road: '#d8d4d0', roadGloss: 0.3, walk: '#e8e2d8' },
-    },
+    // Authored to docs/districts/06-corporate-spire.md (src/districts/corporateSpire.js).
+    city: SPIRE_CITY,
     events: [
-      { key: 'circuit', type: 'circuit', name: 'Spire Grand Prix', desc: 'Round Spire Plaza between the mega-towers.', route: { kind: 'circuit', seed: 1, cells: 6, around: 'plaza' }, cars: 8, laps: 3, purse: 5200 },
-      { key: 'sprint', type: 'sprint', name: 'Executive Sprint', desc: 'From the Central Park gates across downtown.', route: { kind: 'sprint', seed: 2, length: 3600, from: 'park' }, cars: 8, purse: 4800 },
-      { key: 'arena', type: 'arena', mode: 'takedowns', name: 'Boardroom Brawl', desc: 'The Syncorp forecourt, closed to the public.', route: { kind: 'arena', site: 0 }, cars: 6, timeLimit: 150, purse: 5000, modifiers: ['weaponsLate'] },
-      { key: 'rival', type: 'sprint', name: 'Rival: Final Run', desc: 'Across downtown to Spire Plaza.', route: { kind: 'sprint', seed: 4, length: 3600, to: 'plaza' }, cars: 6, purse: 6000, rival: true },
+      { key: 'circuit', type: 'circuit', name: 'Spire Grand Prix', desc: 'Out along Meridian Avenue, left onto the Inner Ring and round its north and west sides between the mega-towers, in along Dominion Avenue and round the Circus past the foot of the Spire. Shortcut over Spire Plaza: up the ramp, round the tower between the fountains, down the other side. Shorter, but tight.', route: { kind: 'circuit', path: ['c-ne', 'i-ne', 'i-n', 'i-nw', 'i-w', 'i-sw', 'c-sw', 'c-s', 'c-se', 'c-e'], shortcuts: ['spire-plaza'], start: 40 }, cars: 8, laps: 3, purse: 5200 },
+      { key: 'sprint', type: 'sprint', name: 'Executive Sprint', desc: 'From under Sovereign Gate: along the avenue to Grand Boulevard, south through Central Park and down Exchange Street to the Circus, round past the Spire and out along Capital Avenue, round the south of downtown and out to finish under Dominion Gate.', route: { kind: 'sprint', path: ['gate-nw', 'g-nw', 'g-n', 'park-x', 'i-n', 'c-n', 'c-ne', 'c-e', 'c-se', 'g-se', 'g-s', 'g-sw', 'gate-sw'] }, cars: 8, purse: 4800 },
+      { key: 'drag', type: 'drag', name: 'Capital Quarter Mile', desc: 'Inbound on Capital Avenue from Grand Boulevard, four abreast on the inbound carriageway, the Spire dead ahead the whole way. The grandstand is on the Circus.', route: { kind: 'drag', along: 'Capital Avenue', from: [418.6, 418.6], to: [77.8, 77.8], carriageway: true }, cars: 4, purse: 5000, finishS: 414 },
+      { key: 'arena', type: 'arena', mode: 'takedowns', name: 'Boardroom Brawl', desc: 'The Syncorp Forecourt, closed to the public: the fountains and statues, planters and flagpoles, and the grand steps up onto the colonnade. A security van patrols the edge.', route: { kind: 'arena', site: 0 }, cars: 6, timeLimit: 150, purse: 5000, modifiers: ['weaponsLate'] },
+      { key: 'rival', type: 'sprint', name: 'Rival: Final Run', desc: 'From under Meridian Gate: round the east of Grand Boulevard, in along Capital Avenue, round the south and west of the Inner Ring, in along Charter Street and up the ramp onto Spire Plaza. The finish is at the foot of the Spire.', route: { kind: 'sprint', path: ['gate-ne', 'g-ne', 'g-e', 'g-se', 'i-se', 'i-s', 'i-sw', 'i-w', 'c-w', 'plaza'] }, cars: 6, purse: 6000, rival: true },
     ],
-    boss: { key: 'boss', type: 'circuit', name: 'Championship: Nova', desc: 'The championship: the long loop round Central Park.', route: { kind: 'circuit', seed: 5, cells: 9, around: 'park' }, cars: 8, laps: 3, purse: 12000, driver: 'nova' },
+    boss: { key: 'boss', type: 'circuit', name: 'Championship: Nova', desc: 'Three laps of Grand Boulevard, round all of downtown: across all four avenues and past all four gates. Shortcut down Lake Drive through Central Park, narrow and along the lake. Fireworks off the Spire.', route: { kind: 'circuit', path: ['g-s', 'g-sw', 'g-w', 'g-nw', 'g-n', 'g-ne', 'g-e', 'g-se'], shortcuts: ['Lake Drive'], start: 30 }, cars: 8, laps: 3, purse: 12000, driver: 'nova' },
   },
 ];
 

@@ -1,6 +1,6 @@
 # 6. Corporate Spire
 
-**Status:** agreed, ready to build (everything is open to change after
+**Status:** agreed and built (everything is open to change after
 playtesting). **Campaign:** 6th, the finale.
 **Faction:** Syncorp.
 
@@ -353,3 +353,130 @@ the lengths above were measured from it. The ASCII map comes from the same data.
 - **Hazard:** the lockdown bollards.
 
 All of these can change after playtesting.
+
+## Build spec
+
+What the game builds, with the numbers it uses. The data is in
+`src/districts/corporateSpire.js`:
+- **The plan:** the boundary, the rings, nodes, streets, sites and the shop
+  exactly as above.
+- **The rest of the file:** the terrain, the block kinds, the Motorworks and the
+  Exchange, the plaza shortcut and the Final Run's way, the street furniture,
+  Spire Plaza, Central Park, the gate arches, the lockdown, and the Forecourt
+  arena.
+
+The code that builds it:
+- `src/sim/planMap.js`: the octagonal rings (`rings`), the raised plaza in the
+  terrain, Lake Drive as a way through (`way: true`);
+- `src/sim/planSpire.js`: Spire Plaza, Central Park and the gate arches, by
+  fixed rules (called by `src/sim/planLayout.js`, which also plants the medians
+  and the avenues);
+- `src/sim/planRoute.js`: the event routes (the drag on one carriageway, the
+  junctions the lockdown can close) and free roam;
+- `src/sim/lockdown.js`: the security lockdown;
+- `src/render/spireView.js`: draws it all; `src/render/spireLandmark.js` draws
+  the Spire on every other district's skyline.
+
+Metres: x east, z south, origin the Spire. Nothing is random: the same plan
+always builds the same district.
+
+**The ground**
+- A cosine rise of 4 m to the middle over 640 m, so the Grand Boulevard is level
+  and the Circus about 4 m up.
+- **Spire Plaza:** 1 m above the Circus inside its octagon (apothem 80 m). Its
+  edge is a steep half-metre band under a stone balustrade. Eight ramps, 14 m
+  wide and 20 m long, run down to the Circus along the spokes.
+- **The lake's bed:** an ellipse 140 by 88 m at (150, −400), 3 m deep.
+
+**The rings**
+- Regular octagons round the Spire, their corners rounded: the Circus to 90 m
+  (nearly round), the Inner Ring to 130 m, Grand Boulevard to 200 m. Grand
+  Boulevard is 3.8 km round, the Inner Ring 2.0 km.
+- **Medians:** 4 m on the avenues, 3 m on the boulevard, broken 20 m either side
+  of every junction. Trees stand every 16 m along them.
+
+**What stands**
+- **The Spire:** an octagon of apothem 25 m, 420 m tall, in five stepped tiers
+  with a gold band at each step, a crown of gold spikes, a mast and the beacon.
+- **The plaza:** four fountains (7 m radius) 58 m out, between the spokes; the
+  balustrade in sixteen runs, open at the ramps.
+- **Towers:**
+  - mega-towers (150–200 m) in the eight wedges inside the Inner Ring;
+  - banks (48–120 m) with colonnades in the two east wedges;
+  - towers (60–200 m) everywhere else, a third of them glass;
+  - all with arcaded ground floors.
+- **Along the streets:** gold-trimmed lamps every 30 m. Trees every 15 m along
+  the avenues and the boulevard, just inside the lots.
+- **Central Park:**
+  - the lake, which you fall into and respawn from;
+  - trees on a staggered 22 m grid over the lawns, 9 m clear of the drives;
+  - the bandstand at (−150, −400);
+  - stone gate piers where Park Drive and Lake Drive meet the rings, and at the
+    North and West Gates.
+- **The gate arches:** 18 m in from each avenue's end, 32 m high, their piers
+  just beyond the sidewalks and the gate's name on both faces. Each stands on a
+  paved gate plaza.
+
+**Races**
+- **Walls:** a street's lot line, as in the other plan districts. Where the lot
+  line has no building behind it, a gold-trimmed concrete barrier marks it.
+  Where it crosses open road, steel bollards do.
+- **Closed side streets:** black armoured SUVs, behind a row of steel bollards.
+- **The start:** grandstands behind the walls by the start (by the finish for
+  the drag), Syncorp banners on the lamp posts within 200 m, three press drones
+  over the grid, and fireworks off the Spire for the championship.
+- **The Grand Prix's shortcut:** 3.5 m either side of a line up the south-west
+  ramp, round the Spire 42 m out (inside the fountains) and down the north-east
+  ramp.
+- **The drag:** on Capital Avenue's inbound carriageway, 13 m wide, between the
+  kerb and the median. The start line is on Grand Boulevard's line; the finish
+  is 402 m on, 56 m short of the Circus.
+- **The Final Run** ends 6 m from the Spire's foot. The tower is solid past the
+  finish.
+- **The lockdown:** about one minute in five, at a moment set by a hash of the
+  minute. It closes one of the route's junctions, but not within 80 m of the
+  start or 60 m of a sprint's finish. It never happens in the drag.
+  - Two seconds of amber lights flashing across the road.
+  - Then steel bollards rise wall to wall over 0.6 s, leaving one lane open
+    (chosen by the hash). They stay up about ten seconds, and they're solid.
+  - There's no klaxon sound; the game has no hazard audio.
+
+**Arena: the Boardroom Brawl**
+- **The Forecourt:** 260 by 160 m, in front of the Exchange.
+- **Structures:**
+  - two fountains, three statues, six planters and six flagpoles;
+  - the colonnade, a stone deck 3 m up across the Exchange's front;
+  - the grand steps, 90 m wide, up to the colonnade.
+- **Closed off:** armoured SUVs line the three open sides.
+- **The sweeper:** the security van patrols the edge at 6 m/s.
+
+## Built vs this doc
+
+The Corporate Spire was rebuilt from the ground up to this doc on 2026-09-29,
+with every part authored. It was checked against the doc point by point.
+`tests/corporateSpire.test.js` checks that:
+- the build uses no randomness;
+- the ring junctions, the ring lengths, the roads out, the plaza's metre and the
+  rise to it match;
+- the Spire, the balustrade, the fountains, the gate arches, the park, the
+  mega-towers, the banks, the Motorworks and the planted medians are there;
+- the route lengths match, and both shortcuts work (Lake Drive saves about
+  125 m);
+- the drag is 402 m on one carriageway;
+- the Spire is solid at the Final Run's finish;
+- the lockdown is rare, warns first and leaves exactly one lane open;
+- the Forecourt's van, colonnade and steps, the lake's respawn and the raised
+  plaza in free roam all work.
+
+**Decisions made while building, all open to change after playtesting:**
+- **Ring corners** are rounded (Circus 90 m, Inner Ring 130 m, Grand Boulevard
+  200 m). The doc names only the octagons.
+- **Free roam** starts where Treasury Street, the road from home, meets Grand
+  Boulevard.
+- **The fountains** stand between the spokes, so both the Grand Prix shortcut
+  and the Final Run's ramp run clear of them.
+- **The drag** has 56 m of run-off before the Circus.
+- **The lockdown's klaxon** is visual only: the amber lights.
+- **Where the doc gives no numbers:** the tower sizes, the fountains, trees,
+  bandstand, gate arches, barriers, grandstands and the Forecourt's layout are
+  this build's choices.

@@ -10,7 +10,9 @@
 // (a ring road r metres out to its kerb round a planted island), or on its own
 // puts one round the node at c; `loop: { c, r }` ends it in a lollipop loop.
 // `surface: 'dirt'` and `jumps` (fractions along it); `causeway: [z0, z1]` is
-// the level stretch over water. `terrain` shapes the ground.
+// the level stretch over water; `way: true` makes it a way through too (a
+// shortcut down it). `terrain` shapes the ground. `rings` (the Corporate
+// Spire): octagonal ring roads whose side midpoints are named junctions.
 
 import * as G from './geom2d.js';
 import { roofTerrain, densify, helix, roofCrossings } from './planRoofMap.js';
@@ -22,7 +24,9 @@ const ekey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`);
 const STEP = 3; // metres between points along curves
 
 // The ground: a slope (fall), a bowl, hills, dips (a pond's bed: elliptical,
-// falling `depth` over `bank` metres in from the edge) and flattened patches.
+// falling `depth` over `bank` metres in from the edge), flattened patches and
+// raised octagons (Spire Plaza: lifted `h` inside, a steep band round the
+// edge where its balustrade stands, ramps down to the street along the spokes).
 export function planTerrain(P) {
   const T = P.terrain || {};
   const nb = G.polyBounds(P.boundary);
@@ -50,22 +54,71 @@ export function planTerrain(P) {
     const [x0, x1, z0, z1] = f.rect;
     return { ...f, level: f.level ?? (f.levelFrom ? Math.max(...f.levelFrom.map(([x, z]) => base(x, z))) : base((x0 + x1) / 2, (z0 + z1) / 2)) };
   });
+  const ground = (x, z) => {
+    let h = base(x, z);
+    for (const f of flats) {
+      const [x0, x1, z0, z1] = f.rect;
+      const d = Math.hypot(Math.max(x0 - x, 0, x - x1), Math.max(z0 - z, 0, z - z1));
+      const blend = f.blend ?? 10;
+      if (d >= blend) continue;
+      const u = d / blend;
+      const w = 1 - u * u * (3 - 2 * u);
+      h = h * (1 - w) + f.level * w;
+    }
+    return h;
+  };
+  const raised = T.raised || [];
+  // How far a raised octagon lifts (x, z): inside, on a ramp, on the band round its edge.
+  const lift = (x, z, band = true) => {
+    let h = 0;
+    for (const R of raised) {
+      const dx = x - R.c[0];
+      const dz = z - R.c[1];
+      let d = -Infinity;
+      for (let k = 0; k < 8; k++) d = Math.max(d, dx * Math.sin((k * Math.PI) / 4) - dz * Math.cos((k * Math.PI) / 4));
+      if (d <= R.apothem) {
+        h = Math.max(h, R.h);
+        continue;
+      }
+      for (let k = 0; k < 8; k++) {
+        const n = [Math.sin((k * Math.PI) / 4), -Math.cos((k * Math.PI) / 4)];
+        const p = dx * n[0] + dz * n[1];
+        const q = Math.abs(dx * n[1] - dz * n[0]);
+        if (p > R.apothem && p <= R.apothem + R.rampLen && q <= R.rampHalf) h = Math.max(h, R.h * (1 - (p - R.apothem) / R.rampLen));
+      }
+      if (band && d <= R.apothem + R.band) h = Math.max(h, R.h * (1 - (d - R.apothem) / R.band));
+    }
+    return h;
+  };
   return {
     flats,
-    heightAt(x, z) {
-      let h = base(x, z);
-      for (const f of flats) {
-        const [x0, x1, z0, z1] = f.rect;
-        const d = Math.hypot(Math.max(x0 - x, 0, x - x1), Math.max(z0 - z, 0, z - z1));
-        const blend = f.blend ?? 10;
-        if (d >= blend) continue;
-        const u = d / blend;
-        const w = 1 - u * u * (3 - 2 * u);
-        h = h * (1 - w) + f.level * w;
-      }
-      return h;
-    },
+    raised,
+    heightAt: raised.length ? (x, z) => ground(x, z) + lift(x, z) : ground,
+    // (For drawing: the ground without the octagons, and with their ramps but no band.)
+    baseAt: ground,
+    drawAt: (x, z) => ground(x, z) + lift(x, z, false),
   };
+}
+
+// Octagonal ring roads: a loop street round c whose side midpoints are named
+// junctions (`prefix-n`, `prefix-ne`, ... clockwise from north), the corners
+// between them rounded to r.
+export const OCT = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'];
+function ringRoads(list) {
+  const nodes = {};
+  const streets = list.map((R) => {
+    const a = R.ring.apothem;
+    const c = R.ring.c || [0, 0];
+    const rv = a / Math.cos(Math.PI / 8);
+    const path = [];
+    OCT.forEach((d, k) => {
+      const ang = (k * Math.PI) / 4;
+      nodes[`${R.prefix}-${d}`] = [c[0] + Math.sin(ang) * a, c[1] - Math.cos(ang) * a];
+      path.push(`${R.prefix}-${d}`, { via: [c[0] + Math.sin(ang + Math.PI / 8) * rv, c[1] - Math.cos(ang + Math.PI / 8) * rv], r: R.r ?? a / 2 });
+    });
+    return { name: R.name, width: R.width, median: R.median, loop: true, ringRoad: R.ring, path };
+  });
+  return { nodes, streets };
 }
 
 // Centripetal Catmull-Rom through points; a point repeated makes a corner.
@@ -131,7 +184,8 @@ export function planMap(style) {
     nodes.push(n);
     return n;
   };
-  for (const [name, [x, z]] of Object.entries(P.nodes)) byName.set(name, addNode(x, z, { name }));
+  const octs = ringRoads(P.rings || []);
+  for (const [name, [x, z]] of Object.entries({ ...octs.nodes, ...P.nodes })) byName.set(name, addNode(x, z, { name }));
   const node = (name) => {
     const n = byName.get(name);
     if (!n) throw new Error(`${style.id}: no node called ${name}`);
@@ -142,7 +196,7 @@ export function planMap(style) {
   // (Tunnels and cuts have walls, not sidewalks; the storm drain's walls and fence stand in for them.)
   const sidewalkOf = (s) => (s.width === 'lane' || s.surface === 'dirt' || s.tunnel || s.descends ? 0 : s.drain ? 12 : P.sidewalk ?? SIDEWALK);
   // The storm drain is a street too: its bed, from the Culvert to the Outfall.
-  const specs = [...P.streets, ...(P.drain ? [{ name: 'The Drain', width: P.drain.bed, path: ['culvert', 'drain-ramp', 'outfall'], drain: true }] : [])];
+  const specs = [...octs.streets, ...P.streets, ...(P.drain ? [{ name: 'The Drain', width: P.drain.bed, path: ['culvert', 'drain-ramp', 'outfall'], drain: true }] : [])];
   const streets = specs.map((s, k) => {
     const width = typeof s.width === 'number' ? s.width : WIDTHS[s.width || 'street'];
     const sidewalk = sidewalkOf(s);
@@ -272,7 +326,7 @@ export function planMap(style) {
   const bnd = P.boundary;
   const onSeg = bnd.map(() => []);
   // (Only a road named for the next district leaves it; any other end is a dead end.)
-  const OUT = new Set(['rustline', 'strip', 'maple', 'chrome', 'undercity', 'spire']);
+  const OUT = new Set(['rustline', 'strip', 'maple', 'chrome', 'undercity', 'spire', 'home']);
   for (const n of nodes) {
     if (degree[n.id] !== 1 || !OUT.has(n.name)) continue;
     let best = null;
@@ -454,10 +508,12 @@ export function planMap(style) {
   const corridors = [];
   for (const s of sites) if (s.way) corridors.push({ id: s.kind, kind: s.kind, name: s.name, points: s.way, cell: s, ...(s.wayWidth || {}) });
   for (const c of P.corridors || []) corridors.push({ ...c, points: c.points.map((p) => [...p]), cell: null });
-  // A dirt road can be a way through too (a shortcut down it), with its jumps.
+  // A dirt road can be a way through too (a shortcut down it), with its jumps;
+  // so can a street marked `way` (Lake Drive), walled at its lot lines.
   for (const st of streets) {
-    if (st.surface !== 'dirt' || !st.pts) continue;
-    corridors.push({ id: st.name, kind: 'dirt', points: st.pts.map((p) => [...p]), halfWidth: st.half, wallDist: st.half + 2, jumps: st.jumps || [], cell: null, street: st });
+    if ((st.surface !== 'dirt' && !st.way) || !st.pts) continue;
+    const dirt = st.surface === 'dirt';
+    corridors.push({ id: st.name, kind: dirt ? 'dirt' : 'street', points: st.pts.map((p) => [...p]), halfWidth: st.half, wallDist: dirt ? st.half + 2 : st.edge, jumps: st.jumps || [], cell: null, street: st });
   }
 
   // A site a street runs through (the car park's aisle): its way through is that street.
@@ -495,5 +551,7 @@ export function planMap(style) {
     underDeck: terrain.underDeck || null, ceilingAt: terrain.ceilingAt || null, tunnelAt: terrain.tunnelAt || null, natural: terrain.natural || null, cutAt: terrain.cutAt || null, deckEdgeZ: terrain.deckEdgeZ || null,
     opens: P.pit ? [{ kind: 'floor', c: P.pit.c, r: P.pit.floor, y: -P.pit.depth }] : [],
     flood: P.flood ? { ...P.flood, seed: style.seed, drain: P.drain, pit: P.pit } : null,
+    // The Corporate Spire: the security lockdown (its junctions are the route's).
+    lockdown: P.lockdown ? { ...P.lockdown, seed: style.seed } : null,
   };
 }

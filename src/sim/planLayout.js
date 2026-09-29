@@ -12,6 +12,7 @@ import * as G from './geom2d.js';
 import { suburbLayout } from './planSuburb.js';
 import { roofLayout } from './planRoof.js';
 import { underLayout } from './planUnder.js';
+import { spireLayout } from './planSpire.js';
 
 // Building kinds: frontage widths, depth, heights (fixed cycles), setback from
 // the lot edge, gap between buildings, and a second row behind the first.
@@ -27,6 +28,11 @@ export const RULES = {
   // behind; the Old Town's tilted, half-sunk blocks.
   shacks: { widths: [9, 12, 7, 10, 8, 14, 11], depth: 11, heights: [7, 11, 15, 9, 18, 12, 8], setback: 0.5, gap: 1, back: 10 },
   oldtown: { widths: [22, 18, 26, 20], depth: 18, heights: [14, 18, 12, 16], setback: 2, gap: 6 },
+  // The Corporate Spire: stone mega-towers inside the Inner Ring, towers and
+  // monoliths elsewhere, banks in the east sector.
+  megatowers: { widths: [64, 56, 72], depth: 48, heights: [150, 185, 165, 200, 175, 160], setback: 10, gap: 16 },
+  towers: { widths: [46, 36, 54, 40, 50], depth: 36, heights: [60, 110, 84, 150, 72, 200, 96, 130], setback: 6, gap: 8, back: 30 },
+  banks: { widths: [44, 36, 52, 40], depth: 34, heights: [48, 64, 90, 56, 120, 72], setback: 8, gap: 6, back: 30 },
 };
 const STREET_ORDER = (st) => (!st ? 9 : st.name === 'The Strip' ? 0 : st.width >= 20 ? 1 : st.width >= 12 ? 2 : 3);
 const CAR_COLORS = 7;
@@ -123,6 +129,7 @@ export function planLayout(map) {
   if (P.suburb) suburbLayout({ map, P, H, items, obbItem, polyItem, deco, clear, take, reserve, inLot, box, along, baseUnder });
   if (P.decks) roofLayout({ map, P, H, items, obbItem, polyItem, deco, clear, take, reserve });
   if (P.under) underLayout({ map, P, H, items, obbItem, polyItem, deco, clear, take, reserve });
+  if (P.spire) spireLayout({ map, P, H, items, obbItem, polyItem, deco, clear, take, reserve });
 
   // --- Ordinary buildings along every block's frontages ---
   for (const b of map.blocks) {
@@ -204,7 +211,7 @@ export function planLayout(map) {
 
   // Casinos front the Strip; the rest take the block's kind (singular names on items).
   function kindOf(kind, fr) {
-    return { casinos: 'casino', clubs: 'club', hotels: 'hotel', motels: 'motel', chapels: 'chapel', pawn: 'pawn', flats: 'flats', shacks: 'shack', oldtown: 'oldtown' }[kind] || kind;
+    return { casinos: 'casino', clubs: 'club', hotels: 'hotel', motels: 'motel', chapels: 'chapel', pawn: 'pawn', flats: 'flats', shacks: 'shack', oldtown: 'oldtown', megatowers: 'monolith', towers: 'office', banks: 'bank' }[kind] || kind;
   }
 
   // A motel's forecourt: its pole sign by the street and cars in the bays.
@@ -393,8 +400,26 @@ export function planLayout(map) {
         }
       }
     }
-    const strip = map.streets.find((st) => st.median);
-    if (strip) {
+    // Street trees along the widest streets, between the lamps.
+    const T = F.streetTrees;
+    for (const e of T ? map.edgeList : []) {
+      const st = e.street;
+      if (st.width < T.minWidth) continue;
+      const clearEnd = (n) => (map.adj[n].length > 1 ? 24 : 10);
+      for (let t = clearEnd(e.a) + T.pitch / 2; t < e.len - clearEnd(e.b); t += T.pitch) {
+        const p = along(e.pts, t);
+        for (const sd of [-1, 1]) {
+          const lat = st.edge + T.in;
+          const x = p.x - p.dz * sd * lat;
+          const z = p.z + p.dx * sd * lat;
+          if (!inLot(x, z) || map.sites.some((q) => q.poly && G.pointInPoly(x, z, q.poly))) continue;
+          const trunk = { x, z, hw: 0.35, hd: 0.35, yaw: 0 };
+          if (clear(G.obbCorners(trunk), 0.4)) obbItem('streetTree', trunk, 9, { cycle: Math.round(t) });
+        }
+      }
+    }
+    // Every street with a median (the Strip; the Spire's avenues and boulevard).
+    for (const strip of map.streets.filter((st) => st.median)) {
       const junctions = strip.marks.filter((m) => map.adj[m.node.id].length > 2).map((m) => G.nearestOnLine(strip.pts, m.node.x, m.node.z).s);
       const L = G.lineLength(strip.pts);
       const open = (t) => junctions.some((j) => Math.abs(t - j) < F.medianGap) || t < 10 || t > L - 10;
@@ -403,18 +428,25 @@ export function planLayout(map) {
       for (let t = 0; t <= L; t += 2) {
         if (!open(t) && !run) run = t;
         if ((open(t) || t + 2 > L) && run !== null) {
-          const a = along(strip.pts, run);
-          const b = along(strip.pts, t - 2);
-          const len = Math.hypot(b.x - a.x, b.z - a.z);
-          obbItem('median', { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, hw: strip.median / 2, hd: len / 2, yaw: Math.atan2(b.x - a.x, b.z - a.z) }, F.medianH, { y: H((a.x + b.x) / 2, (a.z + b.z) / 2) - 0.2, cycle: 0 });
-          for (let q = run + 6; q < t - 6; q += F.palmPitch) {
+          // (In pieces a few metres long where it curves, so it follows the street.)
+          const n = strip.loop || strip.ringRoad ? Math.max(1, Math.ceil((t - 2 - run) / 8)) : 1;
+          for (let q = 0; q < n; q++) {
+            const a = along(strip.pts, run + ((t - 2 - run) * q) / n);
+            const b = along(strip.pts, run + ((t - 2 - run) * (q + 1)) / n);
+            const len = Math.hypot(b.x - a.x, b.z - a.z) + (n > 1 ? 0.4 : 0);
+            obbItem('median', { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, hw: strip.median / 2, hd: len / 2, yaw: Math.atan2(b.x - a.x, b.z - a.z) }, F.medianH, { y: H((a.x + b.x) / 2, (a.z + b.z) / 2) - 0.2, cycle: 0 });
+          }
+          // Neon palms along it, or (a planted median) trees.
+          const pitch = F.medianTrees || F.palmPitch;
+          for (let q = run + 6; q < t - 6; q += pitch) {
             const p = along(strip.pts, q);
-            deco('palm', { x: p.x, z: p.z, y: H(p.x, p.z) + F.medianH - 0.2, neon: Math.round(q / F.palmPitch) % 3 });
+            if (F.medianTrees) deco('medianTree', { x: p.x, z: p.z, y: H(p.x, p.z) + F.medianH - 0.2, cycle: Math.round(q) });
+            else deco('palm', { x: p.x, z: p.z, y: H(p.x, p.z) + F.medianH - 0.2, neon: Math.round(q / F.palmPitch) % 3 });
           }
           run = null;
         }
       }
-      for (const ax of F.arches) {
+      for (const ax of F.arches || []) {
         const q = G.nearestOnLine(strip.pts, ax, 60);
         const p = along(strip.pts, q.s);
         const lat = strip.edge + 0.8;

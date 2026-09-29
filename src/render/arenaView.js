@@ -220,7 +220,7 @@ const RUBBLE = [[-0.4, -0.3, 0.5, 0.5, 1], [0.35, 0.2, 0.5, 0.55, 0.8], [0.1, -0
 
 export function buildAuthoredStructures(style, tex, heightAt = null) {
   const group = new THREE.Group();
-  const geos = { steel: [], yellow: [], dark: [], concrete: [], grating: [], containers: [], painted: [], lamps: [], mesh: [], fire: [] };
+  const geos = { steel: [], yellow: [], dark: [], concrete: [], grating: [], containers: [], painted: [], lamps: [], mesh: [], fire: [], stone: [], gold: [], water: [] };
   const signs = [];
   const mesh = (list, mat) => list.length && group.add(new THREE.Mesh(mergeGeometries(list), mat));
   const liftPads = [];
@@ -238,7 +238,7 @@ export function buildAuthoredStructures(style, tex, heightAt = null) {
         for (const [fx, fz, fw, fd, fh] of RUBBLE) geos.concrete.push(box(o.hw * 2 * fw, o.h * fh, o.hd * 2 * fd, o.x + o.hw * fx, gy + (o.h * fh) / 2, o.z + o.hd * fz));
       } else if (o.kind === 'craneLeg') {
         geos.yellow.push(box(o.hw * 2, o.h, o.hd * 2, o.x, gy + o.h / 2, o.z));
-      } else if (stadiumPiece(o, gy, geos, signs) || underPiece(o, gy, geos)) {
+      } else if (stadiumPiece(o, gy, geos, signs) || underPiece(o, gy, geos) || spirePiece(o, gy, geos)) {
         // (Hollow High's stadium: drawn by stadiumPiece.)
       } else {
         geos.steel.push(box(o.hw * 2, o.h + 1, o.hd * 2, o.x, gy + (o.h - 1) / 2, o.z));
@@ -248,6 +248,12 @@ export function buildAuthoredStructures(style, tex, heightAt = null) {
     // railings: nothing stops a car going over the side). The homecoming stage
     // is boards on a skirt, bunting along its front.
     for (const p of spec.platforms || []) {
+      if (p.kind === 'colonnade') {
+        // The Exchange's colonnade: a stone deck, gold along its front edge.
+        geos.stone.push(box(p.hw * 2, p.h, p.hd * 2, p.x, gy + p.h / 2, p.z));
+        geos.gold.push(box(p.hw * 2, 0.12, 0.3, p.x, gy + p.h + 0.02, p.z - p.hd + 0.2));
+        continue;
+      }
       if (p.kind === 'stage') {
         geos.painted.push(tint(box(p.hw * 2, p.h - 0.1, p.hd * 2, p.x, gy + (p.h - 0.1) / 2, p.z), '#6a1a2a'));
         geos.painted.push(tint(box(p.hw * 2 + 0.2, 0.1, p.hd * 2 + 0.2, p.x, gy + p.h - 0.05, p.z), '#a88860'));
@@ -264,6 +270,16 @@ export function buildAuthoredStructures(style, tex, heightAt = null) {
       for (const s of [-1, 1]) geos.yellow.push(long ? box(p.hw * 2, 0.04, 0.3, p.x, gy + p.h + 0.01, p.z + s * (p.hd - 0.3)) : box(0.3, 0.04, p.hd * 2, p.x + s * (p.hw - 0.3), gy + p.h + 0.01, p.z));
     }
     for (const r of spec.ramps || []) {
+      if (r.kind === 'steps') {
+        // The grand steps: stone treads (a car drives up them as a ramp).
+        const n = Math.round(r.len / 1.6);
+        for (let q = 0; q < n; q++) {
+          const h = (r.height * (q + 1)) / n;
+          const u = (r.len * (q + 0.5)) / n;
+          geos.stone.push(box(Math.abs(r.dirZ) > 0.5 ? r.width : r.len / n, h, Math.abs(r.dirZ) > 0.5 ? r.len / n : r.width, r.x + r.dirX * u, gy + h / 2, r.z + r.dirZ * u));
+        }
+        continue;
+      }
       geos.grating.push(indexed(rampGeometry(r, heightAt ? heightAt(r.x, r.z) : 0)));
       const yaw = Math.atan2(r.dirX, r.dirZ);
       geos.yellow.push(new THREE.BoxGeometry(r.width, 0.04, 0.5).rotateY(yaw).translate(r.x + r.dirX * (r.len - 0.4), gy + (r.base || 0) + r.height + 0.01, r.z + r.dirZ * (r.len - 0.4)));
@@ -288,6 +304,9 @@ export function buildAuthoredStructures(style, tex, heightAt = null) {
   mesh(geos.lamps, glowMaterial({ color: '#fff4dc', intensity: 3 }));
   mesh(geos.mesh, litMaterial({ color: '#3a3a44', transparent: true, opacity: 0.45, side: THREE.DoubleSide, depthWrite: false }));
   mesh(geos.fire, glowMaterial({ color: '#ff7a20', intensity: 3 }));
+  mesh(geos.stone, litMaterial({ map: tex.wallConcrete || tex.wall, color: '#e8e0cc' }));
+  mesh(geos.gold, glowMaterial({ color: '#ffc850', intensity: 2 }));
+  mesh(geos.water, standardMaterial({ color: '#1a3a40', roughness: 0.15, metalness: 0.5 }));
   for (const [str, color, x, y, z, fx, fz, w] of signs) {
     const t = textTexture(str, color, '#141018');
     const h = (w * t.image.height) / t.image.width;
@@ -380,6 +399,29 @@ function stadiumPiece(o, gy, geos, signs) {
   return false;
 }
 
+// The Corporate Spire's Forecourt: fountains, statues on plinths, flagpoles
+// with Syncorp's flags. Returns false for anything else.
+function spirePiece(o, gy, geos) {
+  if (o.kind === 'fountain') {
+    geos.stone.push(new THREE.CylinderGeometry(o.hw, o.hw + 0.3, o.h, 20).translate(o.x, gy + o.h / 2, o.z));
+    geos.water.push(new THREE.CylinderGeometry(o.hw - 0.4, o.hw - 0.4, 0.1, 20).translate(o.x, gy + o.h - 0.1, o.z));
+    geos.stone.push(new THREE.CylinderGeometry(0.6, 1, 2.4, 10).translate(o.x, gy + o.h + 1.2, o.z));
+    geos.lamps.push(new THREE.CylinderGeometry(0.15, 0.4, 4, 8).translate(o.x, gy + o.h + 4, o.z));
+    return true;
+  }
+  if (o.kind === 'statue') {
+    geos.stone.push(box(o.hw * 2, o.h * 0.4, o.hd * 2, o.x, gy + o.h * 0.2, o.z));
+    geos.gold.push(box(o.hw, o.h * 0.6, o.hd * 0.8, o.x, gy + o.h * 0.7, o.z), new THREE.SphereGeometry(o.hw * 0.4, 8, 6).translate(o.x, gy + o.h + 0.3, o.z));
+    return true;
+  }
+  if (o.kind === 'flagpole') {
+    geos.steel.push(new THREE.CylinderGeometry(0.12, 0.18, o.h, 8).translate(o.x, gy + o.h / 2, o.z));
+    geos.painted.push(tint(box(0.06, 2, 3, o.x, gy + o.h - 1.2, o.z + 1.6), '#101014'), tint(box(0.07, 0.3, 3, o.x, gy + o.h - 1.2, o.z + 1.6), '#ffc850'));
+    return true;
+  }
+  return false;
+}
+
 // The Undercity's pieces: oil drums with fires in them (Pillar Hall), site
 // cabins. Returns false for anything else.
 function underPiece(o, gy, geos) {
@@ -452,8 +494,9 @@ function authoredArenaView(group, def, tex, look) {
   // Chrome Heights with Kessler car transporters.)
   const watch = look?.closures === 'watch';
   const transporter = look?.closures === 'transporters';
-  // (The Undercity: burnt-out wrecks.)
+  // (The Undercity: burnt-out wrecks; the Corporate Spire: Syncorp's armoured SUVs.)
   const wrecks = look?.closures === 'wrecks';
+  const suvs = look?.closures === 'suvs';
   const WRECK = ['#4a2a1e', '#3a3432', '#5a3a24', '#2e2a2c', '#6a4a2a'];
   const WATCH = ['#e8e4dc', '#7a8a9a', '#8a2a2a', '#2a4a6a', '#c8b890'];
   const mesh = (list, mat) => list.length && group.add(new THREE.Mesh(mergeGeometries(list), mat));
@@ -472,7 +515,7 @@ function authoredArenaView(group, def, tex, look) {
   for (const [ax, az, bx, bz] of def.limos || []) {
     const len = Math.hypot(bx - ax, bz - az);
     const yaw = Math.atan2(bx - ax, bz - az);
-    const n = Math.max(1, Math.ceil(len / (watch ? 5 : 7.2)));
+    const n = Math.max(1, Math.ceil(len / (watch ? 5 : suvs ? 5.4 : 7.2)));
     for (let q = 0; q < n; q++) {
       const t = (q + 0.5) / n;
       const x = ax + (bx - ax) * t;
@@ -484,6 +527,11 @@ function authoredArenaView(group, def, tex, look) {
         geos.limo.push(box(2.6, 1.2, seg - 0.6, x, y + 1, z, yaw));
         for (const dy of [1.9, 4.1]) geos.chrome.push(box(2.7, 0.15, seg - 0.4, x, y + dy, z, yaw));
         for (const [q, dy] of [[-0.25, 2.5], [0.25, 2.5], [-0.25, 4.7], [0.25, 4.7]]) geos.watch.push(tint(box(1.8, 1, 4, x + along[0] * q * seg, y + dy, z + along[1] * q * seg, yaw), ['#c8ccd4', '#05d9e8', '#1a1a20', '#e8e8f0'][(q > 0 ? 1 : 0) + (dy > 3 ? 2 : 0)]));
+        continue;
+      }
+      if (suvs) {
+        geos.limo.push(box(2.1, 1.3, 5.1, x, y + 1.05, z, yaw));
+        geos.glass.push(box(1.95, 0.55, 3, x, y + 1.95, z, yaw));
         continue;
       }
       if (wrecks) {
@@ -517,6 +565,14 @@ function authoredArenaView(group, def, tex, look) {
       const lamps = [box(0.4, 0.3, 0.4, -m.hw, 1.6, m.hd), box(0.4, 0.3, 0.4, m.hw, 1.6, m.hd), box(0.4, 0.4, 0.4, 0, m.h + 0.5, 0)];
       bus.add(new THREE.Mesh(mergeGeometries(steel), litMaterial({ color: '#c8ccd4' })));
       bus.add(new THREE.Mesh(mergeGeometries(lamps), glowMaterial({ color: '#ffb040', intensity: 2.6 })));
+      group.add(bus);
+      return { m, bus };
+    }
+    if (m.kind === 'van') {
+      // Syncorp security: a black van, a gold stripe, amber lights on the roof.
+      bus.add(new THREE.Mesh(box(m.hw * 2, m.h - 0.4, m.hd * 2, 0, 0.4 + (m.h - 0.4) / 2, 0), litMaterial({ color: '#101014' })));
+      bus.add(new THREE.Mesh(box(m.hw * 2 + 0.04, 0.2, m.hd * 2 + 0.04, 0, 1.2, 0), glowMaterial({ color: '#ffc850', intensity: 1.8 })));
+      bus.add(new THREE.Mesh(box(m.hw * 1.4, 0.2, 0.4, 0, m.h + 0.1, 0.4), glowMaterial({ color: '#ffa020', intensity: 3 })));
       group.add(bus);
       return { m, bus };
     }

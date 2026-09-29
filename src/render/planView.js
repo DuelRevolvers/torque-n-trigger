@@ -11,6 +11,7 @@ import * as G from '../sim/geom2d.js';
 import { suburbView } from './suburbView.js';
 import { buildRoofDistrictView } from './roofView.js';
 import { underView } from './underView.js';
+import { spireView } from './spireView.js';
 
 // A plan district (the Neon Strip on): its ground in layers (sidewalk
 // everywhere, the lots on top, then the site surfaces, the roads along their
@@ -87,7 +88,7 @@ export function buildPlanDistrictView(map, tex) {
   const neonMat = [...Array(neonN).keys()].map((k) => glowMaterial({ color: look.neon[k], intensity: 2.6 }));
   // A suburb (Maple Hollow) has its own ground and house kit; so has the Undercity.
   const kitArgs = { map, tex, H, group, items: layout.items, text, clipToConvex, merged };
-  const kit = look.suburb ? suburbView(kitArgs) : look.under ? underView(kitArgs) : null;
+  const kit = look.suburb ? suburbView(kitArgs) : look.under ? underView(kitArgs) : look.spire ? spireView(kitArgs) : null;
 
   // Buckets, merged into one mesh per material at the end.
   const B = { building: [], glass: [], painted: [], dark: [], steel: [], concrete: [], containers: [], gold: [], white: [], lamp: [], pool: [], screen: [], plant: [], trunk: [], signs: [], water: [] };

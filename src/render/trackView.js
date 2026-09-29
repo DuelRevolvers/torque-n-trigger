@@ -2,6 +2,10 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
 import { PALETTE, makeRng, textTexture } from './textures.js';
+import { lockdownAt } from '../sim/lockdown.js';
+import { districtLayout } from '../sim/cityLayout.js';
+import { SIM_DT } from '../config.js';
+import * as G from '../sim/geom2d.js';
 
 const BARRIER_HEIGHT = 1.1;
 const LAMP_SPACING = 36;
@@ -43,7 +47,7 @@ export function buildTrackView(track, tex, opts = {}) {
   // barriers (the property lines are the walls).
   // (The same on the rooftops: the decks, bridges and kickers are the district's.)
   // (And in the Undercity: its streets, cuts, tunnel and drain are the road.)
-  const suburb = !!opts.look?.suburb || opts.look?.closures === 'transporters' || !!opts.look?.under;
+  const suburb = !!opts.look?.suburb || opts.look?.closures === 'transporters' || !!opts.look?.under || !!opts.look?.spire;
   if (!suburb) buildRoad(group, track, mats, groundY, { wallSkip: branches.length ? inBranch : null });
   for (const br of branches) {
     if (!suburb) buildRoad(group, br.track, mats, groundY, { lift: 0.03, wallSkip: inMain, roadMat: branchMaterial(br.kind, tex, mats) });
@@ -69,8 +73,9 @@ export function buildTrackView(track, tex, opts = {}) {
     const limos = opts.look?.closures === 'limos';
     const watch = opts.look?.closures === 'watch';
     const wrecks = opts.look?.closures === 'wrecks';
+    const suvs = opts.look?.closures === 'suvs';
     for (const [k, c] of (track.closures || []).entries()) {
-      if (limos || watch || wrecks) {
+      if (limos || watch || wrecks || suvs) {
         tops.push({ c, y: c.y + (wrecks ? 1.5 : c.bus ? 3.4 : 1.5), bus: c.bus });
         continue;
       }
@@ -94,6 +99,7 @@ export function buildTrackView(track, tex, opts = {}) {
     if (limos) group.add(limoClosures(track.closures || []));
     if (watch) group.add(watchCars(track.closures || [], track.watchCars || [], tex));
     if (wrecks) group.add(wreckClosures(track.closures || []));
+    if (suvs) group.add(suvClosures(track.closures || []));
     const i0 = track.closed ? 0 : 0;
     const masts = [];
     const heads = [];
@@ -114,6 +120,11 @@ export function buildTrackView(track, tex, opts = {}) {
     }
     if (opts.look?.startDressing === 'under') {
       const dressing = underDressing(track, tex, at, opts, tops);
+      group.add(dressing);
+      group.userData.animate = dressing.userData.animate;
+    }
+    if (opts.look?.startDressing === 'spire') {
+      const dressing = spireDressing(track, tex, at, opts, tops);
       group.add(dressing);
       group.userData.animate = dressing.userData.animate;
     }
@@ -251,6 +262,225 @@ function limoClosures(closures) {
   group.add(new THREE.Mesh(mergeGeometries(body), litMaterial({ color: '#15121c' })));
   group.add(new THREE.Mesh(mergeGeometries(glass), litMaterial({ color: '#2a2440' })));
   group.add(new THREE.Mesh(mergeGeometries(lit), glowMaterial({ color: '#ff5ab8', intensity: 2.2 })));
+  return group;
+}
+
+// The Corporate Spire's closed streets: Syncorp security's black armoured SUVs
+// nose to tail across them, behind a row of raised steel bollards.
+function suvClosures(closures) {
+  const body = [];
+  const glass = [];
+  const steel = [];
+  const lit = [];
+  for (const c of closures) {
+    const across = [Math.cos(c.yaw), -Math.sin(c.yaw)];
+    const back = [Math.sin(c.yaw), Math.cos(c.yaw)];
+    const k = Math.max(1, Math.ceil(c.width / 5.4));
+    for (let q = 0; q < k; q++) {
+      const off = -c.width / 2 + (c.width * (q + 0.5)) / k;
+      const x = c.x + across[0] * off + back[0] * 1.5;
+      const z = c.z + across[1] * off + back[1] * 1.5;
+      const yaw = c.yaw + Math.PI / 2;
+      body.push(new THREE.BoxGeometry(2.1, 1.3, 5.1).rotateY(yaw).translate(x, c.y + 1.05, z));
+      glass.push(new THREE.BoxGeometry(1.95, 0.55, 3).rotateY(yaw).translate(x, c.y + 1.95, z));
+      lit.push(new THREE.BoxGeometry(2.14, 0.08, 5.14).rotateY(yaw).translate(x, c.y + 0.75, z));
+    }
+    for (let t = -c.width / 2; t <= c.width / 2; t += 1.4) steel.push(new THREE.CylinderGeometry(0.14, 0.14, 1, 8).translate(c.x + across[0] * t - back[0] * 1.4, c.y + 0.5, c.z + across[1] * t - back[1] * 1.4));
+  }
+  const group = new THREE.Group();
+  if (!body.length) return group;
+  group.add(new THREE.Mesh(mergeGeometries(body), litMaterial({ color: '#0e0e12' })));
+  group.add(new THREE.Mesh(mergeGeometries(glass), litMaterial({ color: '#1a1a24' })));
+  group.add(new THREE.Mesh(mergeGeometries(steel), litMaterial({ color: '#8a8a94' })));
+  group.add(new THREE.Mesh(mergeGeometries(lit), glowMaterial({ color: '#ffc850', intensity: 2 })));
+  return group;
+}
+
+// The Corporate Spire's race: its edges (a building's frontage behind the
+// lot line; gold-trimmed concrete barriers where there's none; steel bollards
+// where the wall crosses open road), temporary grandstands and Syncorp's
+// banners on the lamp posts by the start, press drones over the grid,
+// fireworks off the Spire for the championship, and the lockdown's bollards
+// and amber lights at every junction it can close.
+function spireDressing(track, tex, at, opts, tops) {
+  const group = new THREE.Group();
+  const map = opts.planMap;
+  const items = map ? districtLayout(map).items : [];
+  const barrier = [];
+  const cap = [];
+  const posts = [];
+  const painted = [];
+  const tinted = (g, color) => {
+    const c = new THREE.Color(color);
+    const cols = new Float32Array(g.attributes.position.count * 3);
+    for (let k = 0; k < cols.length; k += 3) cols.set([c.r, c.g, c.b], k);
+    g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+    return g;
+  };
+  const medians = items.filter((it) => it.t === 'median');
+  const onMedian = (x, z) => medians.some((m) => {
+    const o = m.obb;
+    const dx = Math.sin(o.yaw);
+    const dz = Math.cos(o.yaw);
+    const u = (x - o.x) * dz - (z - o.z) * dx;
+    const v = (x - o.x) * dx + (z - o.z) * dz;
+    return Math.abs(u) < o.hw + 0.4 && Math.abs(v) < o.hd + 0.4;
+  });
+  const onRoad = (x, z) => !!map && map.streets.some((st) => G.nearestOnLine(st.pts, x, z).d < st.half - 0.3) && !onMedian(x, z);
+  const clear = opts.clear || (() => true);
+  // The edges, both sides, every 3 m.
+  const W = (s) => (track.localWall ? track.localWall(s) : track.wallDist);
+  for (const side of [-1, 1]) {
+    let run = null;
+    const flush = (s1) => {
+      if (!run) return;
+      const a = at(track.indexAtDistance(run.s0), side * (run.w + 0.35));
+      const b = at(track.indexAtDistance(s1), side * (run.w + 0.35));
+      const L = Math.hypot(b[0] - a[0], b[2] - a[2]);
+      if (L > 1) {
+        const yaw = Math.atan2(b[0] - a[0], b[2] - a[2]);
+        const y = Math.min(a[1], b[1]);
+        barrier.push(new THREE.BoxGeometry(0.6, 1.1, L + 0.3).rotateY(yaw).translate((a[0] + b[0]) / 2, y + 0.55, (a[2] + b[2]) / 2));
+        cap.push(new THREE.BoxGeometry(0.64, 0.1, L + 0.3).rotateY(yaw).translate((a[0] + b[0]) / 2, y + 1.12, (a[2] + b[2]) / 2));
+      }
+      run = null;
+    };
+    const end = track.closed ? track.length : track.length - 1;
+    for (let s = 0; s <= end; s += 3) {
+      const w = W(s);
+      const i = track.indexAtDistance(s);
+      const [x, y, z] = at(i, side * (w + 0.3));
+      const road = onRoad(x, z);
+      const far = at(i, side * (w + 12));
+      const fronted = !clear(far[0], far[2]) || !clear(...(([p, , q]) => [p, q])(at(i, side * (w + 20))));
+      const median = onMedian(x, z);
+      if (road) for (let q = 0; q < 2; q++) posts.push(new THREE.CylinderGeometry(0.13, 0.13, 1, 8).translate(...(([p, py, pz]) => [p, py + 0.5, pz])(at(track.indexAtDistance(s + q * 1.5), side * (w + 0.3)))));
+      if (road || median || fronted || (run && Math.abs(run.w - w) > 0.5)) flush(s);
+      if (!road && !median && !fronted && !run) run = { s0: s, w };
+      if (s + 3 > end) flush(s);
+    }
+  }
+  const M = (list, mat) => list.length && group.add(new THREE.Mesh(mergeGeometries(list), mat));
+  M(barrier, litMaterial({ map: tex.wallConcrete || tex.wall, color: '#f0e8d8' }));
+  M(cap, glowMaterial({ color: '#ffc850', intensity: 1.6 }));
+  M(posts, litMaterial({ color: '#9a9aa4' }));
+
+  // Grandstands behind the wall near the start (by the finish for a drag, on the Circus).
+  const stands = [];
+  const standAt = opts.drag ? (track.finishS ?? track.length - 60) : 40;
+  for (const side of [-1, 1]) {
+    const s = standAt + side * 6;
+    const w = W(s);
+    const c = at(track.indexAtDistance(s), side * (w + 7));
+    if (!clear(c[0], c[2])) continue;
+    const a = at(track.indexAtDistance(s - 1), 0);
+    const b = at(track.indexAtDistance(s + 1), 0);
+    const yaw = Math.atan2(b[0] - a[0], b[2] - a[2]);
+    for (let r = 0; r < 6; r++) {
+      const lat = w + 3 + r * 1.2;
+      const [x, y, z] = at(track.indexAtDistance(s), side * lat);
+      stands.push(tinted(new THREE.BoxGeometry(1.2, 0.5 + r * 0.6, 30).rotateY(yaw).translate(x, y + (0.5 + r * 0.6) / 2, z), r % 2 ? '#1a1a20' : '#2a2a30'));
+      for (let q = -13; q <= 13; q += 1.6) {
+        const col = ['#1a1a20', '#ffc850', '#e8e2d8', '#2a3a5a'][(r * 7 + Math.round(q * 3)) % 4];
+        painted.push(tinted(new THREE.BoxGeometry(0.45, 0.9, 0.35).rotateY(yaw).translate(x + Math.sin(yaw) * q, y + 0.5 + r * 0.6 + 0.45, z + Math.cos(yaw) * q), col));
+      }
+    }
+    stands.push(tinted(new THREE.BoxGeometry(0.3, 2.2, 30).rotateY(yaw).translate(...(([x, y, z]) => [x, y + 5.6, z])(at(track.indexAtDistance(s), side * (w + 10.5)))), '#ffc850'));
+  }
+  M(stands, litMaterial({ vertexColors: true }));
+  M(painted, litMaterial({ vertexColors: true }));
+
+  // Syncorp's banners on the lamp posts within 200 m of the start.
+  const [sx, , sz] = at(0, 0);
+  const banners = [];
+  for (const it of items) {
+    if (it.t !== 'lamp' || Math.hypot(it.x - sx, it.z - sz) > 200) continue;
+    const [tx, tz] = it.toward || [0, 1];
+    const y = it.y + (it.h || 7);
+    banners.push(new THREE.PlaneGeometry(1.1, 2.6).rotateY(Math.atan2(tz, -tx)).translate(it.x - tx * 0.6, y - 2.6, it.z - tz * 0.6));
+  }
+  if (banners.length) group.add(new THREE.Mesh(mergeGeometries(banners), litMaterial({ map: textTexture('SYNCORP', '#ffc850', '#101014'), side: THREE.DoubleSide })));
+
+  // Press drones over the grid.
+  const drones = [];
+  for (let q = 0; q < 3; q++) {
+    const d = new THREE.Group();
+    d.add(new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.25, 0.8), litMaterial({ color: '#1a1a20' })));
+    d.add(new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.15).translate(0, -0.2, 0.3), glowMaterial({ color: q === 1 ? '#ff3030' : '#ffffff', intensity: 3 })));
+    const [x, y, z] = at(track.indexAtDistance(10 + q * 14), (q - 1) * 5);
+    d.userData.base = [x, y + 7 + q, z, q];
+    group.add(d);
+    drones.push(d);
+  }
+
+  // Fireworks off the Spire, for the championship.
+  const bursts = [];
+  if (opts.fireworks) {
+    const colors = ['#ffc850', '#ffffff', '#ff5040', '#60c0ff'];
+    for (let q = 0; q < 6; q++) {
+      const g = new THREE.SphereGeometry(1, 10, 8);
+      const m = new THREE.Mesh(g, additiveMaterial({ map: tex.glow, color: colors[q % 4], opacity: 0.8 }));
+      m.material.fog = false;
+      m.userData.q = q;
+      group.add(m);
+      bursts.push(m);
+    }
+  }
+
+  // The lockdown: bollards in the road at each junction it can close, lane by
+  // lane (the open lane's stay down), and amber lights across the road.
+  const L = track.lockdown;
+  const sets = [];
+  for (const j of L?.junctions || []) {
+    const lanes = [...Array(j.lanes + 1)].map(() => []);
+    const width = (2 * j.half) / j.lanes;
+    for (let lat = -j.wall; lat <= j.wall; lat += 1.2) {
+      const lane = Math.abs(lat) < j.half ? Math.min(j.lanes - 1, Math.floor((lat + j.half) / width)) : j.lanes;
+      lanes[lane].push(new THREE.CylinderGeometry(0.22, 0.22, 1.1, 8).translate(j.x + j.rx * lat, j.y + 0.55, j.z + j.rz * lat));
+    }
+    const meshes = lanes.map((list) => {
+      if (!list.length) return null;
+      const m = new THREE.Mesh(mergeGeometries(list), litMaterial({ color: '#c8c8d0' }));
+      m.visible = false;
+      group.add(m);
+      return m;
+    });
+    const amber = [];
+    for (const off of [-4, 4]) {
+      const a = [j.x - j.rz * off, j.z + j.rx * off];
+      amber.push(new THREE.BoxGeometry(0.4, 0.06, 2 * j.wall).rotateY(Math.atan2(j.rx, j.rz)).translate(a[0], j.y + 0.04, a[1]));
+    }
+    const light = new THREE.Mesh(mergeGeometries(amber), glowMaterial({ color: '#ffa020', intensity: 3.5 }));
+    light.visible = false;
+    group.add(light);
+    sets.push({ j, meshes, light, width });
+  }
+
+  group.userData.animate = (t, real = t) => {
+    for (const d of drones) {
+      const [x, y, z, q] = d.userData.base;
+      d.position.set(x + Math.sin(real * 0.7 + q) * 2, y + Math.sin(real * 1.9 + q * 2) * 0.4, z + Math.cos(real * 0.5 + q) * 2);
+    }
+    for (const m of bursts) {
+      const q = m.userData.q;
+      const phase = (real * 0.45 + q / bursts.length) % 1;
+      const a = q * 2.4;
+      m.position.set(Math.cos(a) * 30, 440 + (q % 3) * 25, Math.sin(a) * 30);
+      m.scale.setScalar(4 + phase * 40);
+      m.material.opacity = Math.max(0, 0.9 * (1 - phase));
+    }
+    const on = L ? lockdownAt(L, Math.round(t / SIM_DT)) : null;
+    sets.forEach(({ meshes, light }, k) => {
+      const here = on && on.k === k;
+      light.visible = here && Math.floor(real * 4) % 2 === 0;
+      const gapLane = here ? Math.round((on.gap + on.j.half) / (2 * on.gapHalf) - 0.5) : -1;
+      meshes.forEach((m, lane) => {
+        if (!m) return;
+        m.visible = here && on.rise > 0 && lane !== gapLane;
+        m.position.y = here ? -1.1 * (1 - on.rise) : 0;
+      });
+    });
+  };
   return group;
 }
 

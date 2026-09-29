@@ -156,6 +156,7 @@ export function planTrack(map, style, route) {
   const circuit = route.kind === 'circuit';
   let line;
   let pieces;
+  let baseLine = null; // (a drag moved across its street: its line before the move)
   if (route.kind === 'drag') {
     // Along a street between two points on it (or two x positions: the Strip Quarter Mile).
     const st = map.streets.find((q) => q.name === route.along);
@@ -165,6 +166,17 @@ export function planTrack(map, style, route) {
     line = streetRun(st, a, b);
     // (Moved across the street: the drain's drag runs beside the low-flow trench.)
     if (route.shift) line = line.map(([x, z]) => [x + route.shift[0], z + route.shift[1]]);
+    // (On one carriageway of a street with a median: along its middle, to the right.)
+    if (route.carriageway) {
+      baseLine = line;
+      const off = st.median / 2 + (st.half - st.median / 2) / 2;
+      line = line.map((p, k) => {
+        const a = line[Math.max(0, k - 1)];
+        const b = line[Math.min(line.length - 1, k + 1)];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        return [p[0] - ((b[1] - a[1]) / L) * off, p[1] + ((b[0] - a[0]) / L) * off];
+      });
+    }
     pieces = [{ pts: line, st, from: 0, to: line.length - 1 }];
   } else ({ line, pieces } = routeLine(map, circuit ? [...route.path, route.path[0]] : route.path));
   // Each piece as a range of arc length along the line.
@@ -255,6 +267,12 @@ export function planTrack(map, style, route) {
     sections[sections.length - 1].s1 = probe.length + 1;
     for (let k = 1; k < sections.length; k++) sections[k].s0 = sections[k - 1].s1;
   }
+  // A drag on one carriageway: the kerb on one side, the median on the other.
+  if (route.carriageway) {
+    const st = map.streets.find((q) => q.name === route.along);
+    const cw = (st.half - st.median / 2) / 2;
+    for (const sec of sections) Object.assign(sec, { half: cw, wall: cw, walk: 0, carriageway: true });
+  }
   def.sections = sections;
 
   const on = (x, z, tol = 3) => {
@@ -326,11 +344,12 @@ export function planTrack(map, style, route) {
       if (s !== null) def.jumps.push({ s: s - 6, len: 6, height: 1.2, mound: true });
     }
   }
-  def.closures = route.kind === 'drag' ? dragClosures(map, probe, line, route) : planClosures(map, line, pieces, circuit, def.branches, probe, sections);
+  def.closures = route.kind === 'drag' ? dragClosures(map, probe, baseLine || line, route) : planClosures(map, line, pieces, circuit, def.branches, probe, sections);
   if (map.truck) def.truck = map.truck;
   if (map.rv) def.rv = map.rv;
   if (suburb) suburbRace(map, def, layout);
   if (map.under) underRace(map, style, def, layout);
+  if (P.spire) spireRace(map, route, def, layout);
   return def;
 }
 
@@ -607,10 +626,9 @@ function drainProfile(map, probe, s) {
   return { bank: { c: Math.round(c * 10) / 10, flat: d.bed / 2, rise: d.depth, slope: d.depth / run }, trench: { c: Math.round(c * 10) / 10, half: (d.trench || 0) / 2, depth: 0.6 }, off: SURFACE.ROAD };
 }
 
-// An Undercity race: what stands inside the walls is solid (the deck's
-// pillars along the kerbs, stalls, a shack at a corner); the flood and what's
-// overhead (for the chase camera).
-function underRace(map, style, def, layout) {
+// What the layout stands inside a race's walls (or, past an open end, within
+// `reach` metres of it: the Spire at the end of the Final Run) is solid.
+function solidsInside(map, def, layout, reach = 0) {
   const track = buildTrack(def);
   const tracks = [track, ...(track.branches || []).map((b) => b.track)];
   const inside = (x, z) => tracks.some((t) => {
@@ -626,16 +644,49 @@ function underRace(map, style, def, layout) {
     }
     return false;
   };
+  const ends = track.closed ? [] : [[track.x[0], track.z[0]], [track.x[track.count - 1], track.z[track.count - 1]]];
+  const nearEnd = (x, z) => ends.some(([ex, ez]) => Math.hypot(x - ex, z - ez) < reach);
   const obstacles = [];
   for (const it of layout.items) {
     if (!it.solid || !Array.isArray(it.r) || !nearRoute(it.r)) continue;
     const o = layoutObstacle(it, 0, 0);
     const pts = it.obb ? G.obbCorners(it.obb) : it.poly || [[it.r[0], it.r[2]], [it.r[1], it.r[2]], [it.r[1], it.r[3]], [it.r[0], it.r[3]]];
-    if ([...pts, [o.x, o.z]].some(([x, z]) => inside(x, z))) obstacles.push(o);
+    if ([...pts, [o.x, o.z]].some(([x, z]) => inside(x, z) || nearEnd(x, z))) obstacles.push(o);
   }
-  def.obstacles = obstacles;
+  return { track, obstacles };
+}
+
+// An Undercity race: what stands inside the walls is solid (the deck's
+// pillars along the kerbs, stalls, a shack at a corner); the flood and what's
+// overhead (for the chase camera).
+function underRace(map, style, def, layout) {
+  def.obstacles = solidsInside(map, def, layout).obstacles;
   if (map.flood) def.flood = map.flood;
   if (map.ceilingAt) def.ceilingAt = map.ceilingAt;
+}
+
+// A Corporate Spire race: what stands inside the walls (and the Spire, past
+// the Final Run's finish) is solid. Every junction on the route is marked (the
+// dressing's bollards), and the security lockdown can close any of them but
+// the ones by the start and the finish: steel bollards across it, one lane open.
+function spireRace(map, route, def, layout) {
+  const { track, obstacles } = solidsInside(map, def, layout, 14);
+  def.obstacles = obstacles;
+  const junctions = [];
+  for (const n of map.nodes) {
+    if (!n.name || n.exit || map.adj[n.id].length < 3) continue;
+    const q = track.queryMain(n.x, n.z);
+    if (Math.abs(q.lateral) > 14 || q.overrun > 1) continue;
+    const i = track.indexAtDistance(q.s);
+    const half = track.localHalf ? track.localHalf(q.s) : track.halfWidth;
+    const wall = track.localWall ? track.localWall(q.s) : track.wallDist;
+    junctions.push({ name: n.name, s: q.s, x: track.x[i], z: track.z[i], y: track.y[i], rx: track.rx[i], rz: track.rz[i], half, wall, lanes: Math.max(2, Math.round((2 * half) / 4)) });
+  }
+  junctions.sort((a, b) => a.s - b.s);
+  def.junctions = junctions;
+  if (!map.lockdown || route.kind === 'drag') return;
+  const open = junctions.filter((j) => j.s > 80 && j.s < track.length - (track.closed ? 40 : 60));
+  if (open.length) def.lockdown = { ...map.lockdown, junctions: open };
 }
 
 // Every street leaving the route is closed off: limos (buses across the wide

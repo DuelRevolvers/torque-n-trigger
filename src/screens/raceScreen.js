@@ -117,6 +117,9 @@ export class RaceScreen {
           trees: def.city.look.suburb ? districtLayout(map).items.filter((it) => it.t === 'tree' && it.kind === 'maple').map((it) => ({ x: it.x, z: it.z })) : null,
           pond: map.sites?.find((s) => s.pond)?.pond || null,
           heightAt: map.heightAt,
+          // The Corporate Spire: its streets (the race's edges), fireworks for the championship.
+          planMap: map.plan ? map : null,
+          fireworks: def.key === 'boss' && !!def.city.look.spire,
           // The rooftops: the East Terrace bridge, where the drag's crowd stands.
           crowdBridge: map.roof ? map.crossings.find((c) => c.st.name === 'Terrace Line' && c.deckB?.name === 'Skyline Straight') || null : null,
         });

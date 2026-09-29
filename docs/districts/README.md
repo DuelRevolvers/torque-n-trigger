@@ -54,8 +54,7 @@ A district doc covers:
 ## Status
 
 The table is in campaign order. **All six docs are agreed.** They're being built
-in campaign order. Rustline Docks, the Neon Strip, Maple Hollow, Chrome Heights
-and the Undercity are done. Next is the Corporate Spire.
+in campaign order. All six are built.
 
 | # | District | Theme | Status |
 |---|----------|-------|--------|
@@ -64,7 +63,7 @@ and the Undercity are done. Next is the Corporate Spire.
 | 3 | [Maple Hollow](03-maple-hollow.md) | Suburbs: curving loops and cul-de-sacs | Agreed and built: everything authored to the doc, a `city.plan` district with terrain, house plots and breakable props (see its "Build spec"). |
 | 4 | [Chrome Heights](04-chrome-heights.md) | Skyscraper rooftops: roof decks in three tiers, skybridges, ramp bridges and gap jumps over the street canyons | Agreed and built: everything authored to the doc, the first rooftop `city.plan` district, its crossings built from the roof roads (see its "Build spec"). |
 | 5 | [The Undercity](05-the-undercity.md) | A sinkhole city, half under the upper city's deck: twisting streets round the pit, and a storm drain along the south | Agreed and built: everything authored to the doc, a `city.plan` district with the pit, the drain, road cuts, a tunnel and the deck overhead (see its "Build spec"). |
-| 6 | [Corporate Spire](06-corporate-spire.md) | Radial downtown: the Spire on a central roundabout, diagonal avenues, two octagonal rings, Central Park. The finale | Agreed, ready to build |
+| 6 | [Corporate Spire](06-corporate-spire.md) | Radial downtown: the Spire on a central roundabout, diagonal avenues, two octagonal rings, Central Park. The finale | Agreed and built: everything authored to the doc, a `city.plan` district with octagonal ring roads, the raised Spire Plaza and the security lockdown (see its "Build spec"). |
 
 **City map positions:**
 - **Top row:** Corporate Spire (left, just up the road from home), Maple Hollow
@@ -101,9 +100,8 @@ In `src/career/districts.js`, each district has:
   box, clipped to the outline);
 - `label`: where its name plate goes.
 
-Rustline, the Neon Strip, Maple Hollow, Chrome Heights and the Undercity are
-built to their docs, fully authored: streets, lots, arenas, shortcuts, set
-pieces and race dressing. The Corporate Spire still uses the old generator, which makes a grid with
+All six districts are built to their docs, fully authored: streets, lots,
+arenas, shortcuts, set pieces and race dressing. None uses the old generator, which makes a grid with
 randomly placed sites. That's what the docs replace.
 
 ## Owner decisions that apply everywhere

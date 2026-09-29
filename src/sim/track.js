@@ -8,6 +8,7 @@ export const SURFACE = Object.freeze({ ROAD: 0, CURB: 1, OFFROAD: 2, SAND: 3, WE
 import { wetAt } from './sprinklers.js';
 import { pointInPoly as inPoly } from './geom2d.js';
 import { floodAt, inSurge, sumpWetAt } from './flood.js';
+import { lockdownBoxes } from './lockdown.js';
 
 // Wet from the flood: in the surge on the drain's bed, or on the Sump's floor.
 const floodWet = (f, x, z, y, t) => {
@@ -64,6 +65,8 @@ export function buildTrack(def) {
   track.breakables = def.breakables?.length ? def.breakables : null; // fences, mailboxes, bins
   track.gusts = def.gusts || null;
   track.flood = def.flood || null; // the flash flood (the Undercity)
+  track.lockdown = def.lockdown || null; // the security lockdown (the Corporate Spire)
+  track.junctions = def.junctions || null; // the junctions on the route (for its dressing)
   track.ceilingAt = def.ceilingAt || null; // what's overhead (the deck, a tunnel's roof), for the camera // the river gusts (Chrome Heights): exposed on bridges, gaps, the Straight
   // Ground in the run-off that isn't grass: sand bunkers, paved car parks ({ poly, surface }).
   track.patches = def.patches?.length ? def.patches.map((p) => ({ ...p, box: p.box || bounds2(p.poly) })) : null;
@@ -267,7 +270,7 @@ class Track {
   query(x, z, hint = -1, y) {
     const r = this.queryMain(x, z, hint);
     const best = this.branches ? this.queryBranches(x, z, r) : r;
-    return this.obstacles || this.sprinklers || this.patches || this.flood ? this.solidAt(x, z, y, best) : best;
+    return this.obstacles || this.sprinklers || this.patches || this.flood || this.lockdown ? this.solidAt(x, z, y, best) : best;
   }
 
   // The lawns under a sprinkler are wet; an obstacle inside the walls is a wall.
@@ -279,9 +282,11 @@ class Track {
     }
     if (this.sprinklers && out.surface === SURFACE.OFFROAD && this.wetAt(x, z)) out = { ...out, surface: SURFACE.WET };
     if (this.flood && floodWet(this.flood, x, z, y ?? g.height, this.time || 0)) out = { ...out, surface: SURFACE.WET };
-    if (!this.obstacles) return out;
-    const list = this.obstacleGrid.get(Math.floor(x / 16) * 100003 + Math.floor(z / 16));
-    if (!list) return out;
+    // (The lockdown's bollards, while they're up.)
+    const risen = this.lockdown ? lockdownBoxes(this.lockdown, Math.round((this.time || 0) * 60), x, z) : [];
+    const fixed = this.obstacles ? this.obstacleGrid.get(Math.floor(x / 16) * 100003 + Math.floor(z / 16)) : null;
+    if (!fixed && !risen.length) return out;
+    const list = risen.length ? [...(fixed || []), ...risen] : fixed;
     let pen = Math.abs(g.lateral) - this.wallDist;
     let hit = null;
     for (const o of list) {
