@@ -8,6 +8,7 @@ import { buildDistrictView } from '../render/districtView.js';
 import { docFromDistrict, districtFromDoc, serializeDoc, parseDoc, baseChanged } from '../content/mapDoc.js';
 import { canMove, LINKED } from '../sim/layoutEdits.js';
 import { brokenEvents } from './checks.js';
+import { TYPES, MODES, MODIFIER_LABELS, DRIVERS, newEvent, nextKey, routePoint, shortcutOptions, arenaSites, routePreview, aiTestRun } from './events.js';
 import { Session, footBox } from './session.js';
 import { catalogue, CATEGORIES } from './catalogue.js';
 import { brush } from './brush.js';
@@ -70,6 +71,10 @@ let roadPts = []; // the road tool's points so far
 let lineFrom = null; // placing along a line: where it starts
 let scatter = null; // placing by scatter: [[x, z, yaw]] so far
 let feature = null; // a street, junction or site selected (sdk/roads.js featureAt)
+let evKey = null; // the event being edited (Events tool), and its working copy
+let evDraft = null;
+let evPreview = null;
+let evRun = null; // an AI test run: { progress } while it runs, then its results
 let rebuildTimer = 0;
 const cam = { x: 0, y: 300, z: 400, yaw: Math.PI, pitch: -0.6, top: null };
 const keys = new Set();
@@ -139,7 +144,7 @@ function scheduleBuild() {
   rebuildTimer = setTimeout(buildView, 250);
 }
 
-function changed() {
+function changed(rebuild = true) {
   if (selected && !session.item(selected)) selected = null;
   try {
     localStorage.setItem(AUTOSAVE, serializeDoc(session.doc));
@@ -148,7 +153,7 @@ function changed() {
   }
   refresh();
   showOverlay();
-  scheduleBuild();
+  if (rebuild) scheduleBuild();
 }
 
 function save() {
@@ -188,6 +193,7 @@ async function publish() {
   if (!doc.base || doc.base !== doc.id) return window.alert('Only an edited built-in district can be published for now.');
   // Every event in it has to work: the career plays a published district.
   const broken = brokenEvents(districtFromDoc(JSON.parse(serializeDoc(doc))));
+  if (evDraft && evKey && JSON.stringify(evDraft) !== JSON.stringify(savedEvent(evKey))) return window.alert(`Save or revert ${evDraft.name} first (Events).`);
   if (broken.length) return window.alert(`${doc.name} can't be published: these events don't work with it as it is.\n\n${broken.map((b) => `• ${b.name}: ${b.error}`).join('\n')}\n\nPut back what they use (Ctrl+Z), or fix the events.`);
   if (!window.confirm(`Publish ${doc.name}? It ships with the game in place of its district file, career included.`)) return;
   try {
@@ -236,13 +242,13 @@ function renderStart() {
     .join('');
 }
 
-function testDrive() {
+function testDrive(eventKey = null) {
   // From where the middle of the view meets the ground, heading the way the camera looks.
   ray.setFromCamera(new THREE.Vector2(0, 0), camera);
   const g = groundHit();
   const spawn = { x: g ? g.x : cam.x, z: g ? g.z : cam.z, yaw: cam.yaw + Math.PI };
   try {
-    localStorage.setItem(DRIVE, JSON.stringify({ doc: session.doc, spawn }));
+    localStorage.setItem(DRIVE, JSON.stringify({ doc: session.doc, spawn, event: eventKey }));
   } catch (err) {
     window.alert(`Couldn't hand the map to the game: ${err.message}`);
     return;
@@ -360,6 +366,10 @@ function setTool(t) {
   $('brush-opts').hidden = !BRUSHES.has(t);
   $('kind-row').hidden = t !== 'paint';
   $('road-opts').hidden = t !== 'road';
+  $('events-panel').hidden = t !== 'events';
+  $('inspector').hidden = t === 'events';
+  if (t === 'events') renderEvents();
+  else showEventLine();
   $('lot-opts').hidden = t !== 'lot';
   if (t === 'lot') $('lot-kind').innerHTML = lotKinds(session.district.city.plan || { lots: session.district.city.grid?.lots }).map((k) => `<option>${esc(k)}</option>`).join('');
   showRoad();
@@ -633,12 +643,12 @@ function rebuildDistrict(label, mutate, done) {
   setBusy(label);
   setTimeout(() => {
     try {
-      const before = session.broken ?? brokenEvents(session.district);
+      const before = session.broken ?? brokenEvents(session.withEvents());
       if (!session.change(mutate)) {
         setBusy(null);
         return;
       }
-      const after = brokenEvents(session.district);
+      const after = brokenEvents(session.withEvents());
       const newly = after.filter((b) => !before.some((q) => q.key === b.key));
       const list = newly.map((b) => `• ${b.name}: ${b.error}`).join('\n');
       if (newly.length && !window.confirm(`This stops ${newly.length === 1 ? 'an event' : 'these events'} working:\n\n${list}\n\nKeep the change anyway? (They'll need fixing before this district can be published.)`)) {
@@ -705,6 +715,279 @@ function endStroke() {
     if (s.commit()) changed();
     else setBusy(null);
   }, 30);
+}
+
+// --- Events ------------------------------------------------------------------------
+
+const eventLine = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x05d9e8, depthTest: false, transparent: true, fog: false }));
+eventLine.renderOrder = 12;
+eventLine.visible = false;
+scene.add(eventLine);
+const stuckMarks = new THREE.Group();
+scene.add(stuckMarks);
+
+const allEvents = () => {
+  const { events, boss } = session.events();
+  return [...events, ...(boss ? [boss] : [])];
+};
+const savedEvent = (key) => allEvents().find((e) => e.key === key) || null;
+const isBoss = () => evKey === 'boss';
+
+function editEvent(key, draft) {
+  evKey = key;
+  evDraft = draft ? JSON.parse(JSON.stringify(draft)) : null;
+  evRun = null;
+  clearGroup(stuckMarks);
+  previewEvent();
+  renderEvents();
+}
+
+// The route the game would build for the draft, drawn on the map.
+let previewTimer = 0;
+function previewEvent() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => {
+    const r = evDraft?.route;
+    const needs = r && ((r.kind === 'sprint' || r.kind === 'circuit') ? r.path.length >= 2 : r.kind === 'drag' ? !!r.along && !!r.to : true);
+    evPreview = needs ? routePreview({ ...session.withEvents(), events: [] }, r) : null;
+    showEventLine();
+    const box = $('ev-preview');
+    if (box) box.innerHTML = previewText();
+  }, 150);
+}
+
+function showEventLine() {
+  if (tool !== 'events' || !evPreview || evPreview.error) {
+    eventLine.visible = false;
+    return;
+  }
+  setLine(eventLine, evPreview.rect ? densify([...evPreview.rect, evPreview.rect[0]]) : evPreview.pts);
+}
+
+function previewText() {
+  const r = evDraft?.route;
+  if (!r) return '';
+  if (!evPreview) return r.kind === 'drag' ? '<p class="note">Click where it starts, then where it finishes, on one street.</p>' : '<p class="note">Click junctions on the map in order (at least two). Ways through sites and lots can be clicked too.</p>';
+  if (evPreview.error) return `<p class="note warn">Can't be set up: ${esc(evPreview.error)}</p>`;
+  if (evPreview.rect) return `<p class="note ok">Arena: ${evPreview.sizeX.toFixed(0)} × ${evPreview.sizeZ.toFixed(0)} m.</p>`;
+  const laps = evDraft.type === 'circuit' ? evDraft.laps || 1 : 1;
+  return `<p class="note ok">${(evPreview.length / 1000).toFixed(2)} km${evPreview.closed ? ` a lap × ${laps} = ${((evPreview.length * laps) / 1000).toFixed(2)} km` : ''}; ${evPreview.shortcuts} shortcut${evPreview.shortcuts === 1 ? '' : 's'} open.</p>`;
+}
+
+// A click on the map while editing an event's route.
+function routeClick(g) {
+  const r = evDraft?.route;
+  if (!r) return;
+  if (r.kind === 'sprint' || r.kind === 'circuit') {
+    const p = routePoint(session, g.x, g.z);
+    if (!p) return toast('Click on a junction, or on a way through a site or lot.');
+    if (r.path[r.path.length - 1] !== p.name) r.path.push(p.name);
+  } else if (r.kind === 'drag') {
+    const f = featureAt(session, g.x, g.z);
+    const street = f?.type === 'street' || f?.type === 'gridStreet' ? f.name : null;
+    if (!r.along || r.to !== null) {
+      if (!street) return toast('Start the drag on a street.');
+      Object.assign(r, { along: street, from: [Math.round(g.x), Math.round(g.z)], to: null });
+      renderEvents();
+      return;
+    }
+    r.to = [Math.round(g.x), Math.round(g.z)];
+  } else return;
+  renderEvents();
+  previewEvent();
+}
+
+function renderEvents() {
+  const panel = $('events-panel');
+  if (!session || tool !== 'events') return;
+  const list = allEvents();
+  const row = (e) => `<div class="evrow${e.key === evKey ? ' on' : ''}" data-key="${esc(e.key)}"><span>${esc(e.name)}</span><i>${e.key === 'boss' ? 'boss' : TYPES[e.type] || e.type}${e.rival ? ', rival' : ''}</i></div>`;
+  let html = `<h3>Events</h3>${list.map(row).join('')}
+    <div class="row" style="margin-top:6px">${Object.entries(TYPES).map(([t, n]) => `<button data-new="${t}">+ ${n}</button>`).join('')}</div>`;
+  const d = evDraft;
+  if (d) {
+    const r = d.route;
+    const field = (id, label, value, type = 'number', step = 1) => `<label for="${id}">${label}</label><input id="${id}" type="${type}" step="${step}" value="${esc(value ?? '')}" />`;
+    html += `
+      <h4>${evKey && savedEvent(evKey) ? 'Editing' : 'New'}: ${esc(TYPES[d.type] || d.type)}</h4>
+      <div class="grid">
+        ${field('ev-name', 'name', d.name, 'text')}
+        ${field('ev-cars', 'cars', d.cars)}
+        ${field('ev-purse', 'purse ($)', d.purse, 'number', 50)}
+        ${d.type === 'circuit' ? field('ev-laps', 'laps', d.laps) + field('ev-start', 'start (m)', r.start ?? 0, 'number', 10) : ''}
+        ${d.type === 'drag' ? field('ev-finish', 'length (m)', d.finishS ?? 414, 'number', 10) : ''}
+        ${d.type === 'arena' ? `<label for="ev-mode">mode</label><select id="ev-mode">${Object.entries(MODES).map(([k, n]) => `<option value="${k}"${d.mode === k ? ' selected' : ''}>${n}</option>`).join('')}</select>${field('ev-time', 'time (s)', d.timeLimit, 'number', 10)}<label for="ev-site">ground</label><select id="ev-site">${arenaSites(session).map((a) => `<option value="${a.site}"${r.site === a.site ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
+        ${isBoss() ? `<label for="ev-driver">boss</label><select id="ev-driver">${DRIVERS.map((q) => `<option value="${q.id}"${d.driver === q.id ? ' selected' : ''}>${esc(q.name)}</option>`).join('')}</select>` : ''}
+      </div>
+      <textarea id="ev-desc" placeholder="What the event is, for the event list">${esc(d.desc || '')}</textarea>
+      <div class="checks">
+        ${isBoss() ? '' : `<label><input type="checkbox" id="ev-rival"${d.rival ? ' checked' : ''} /> Rival race (the district's rival drives it)</label>`}
+        ${Object.entries(MODIFIER_LABELS).map(([k, n]) => `<label><input type="checkbox" data-mod="${k}"${(d.modifiers || []).includes(k) ? ' checked' : ''} /> ${esc(n)}</label>`).join('')}
+      </div>
+      <h4>Route</h4>
+      ${r.kind === 'sprint' || r.kind === 'circuit' ? `<div class="chips">${r.path.map((p, k) => `<span class="chip">${esc(p)}<b data-drop="${k}" title="Take it out">×</b></span>`).join('') || '<span class="note">No junctions yet.</span>'}</div>
+        <div class="row"><button id="ev-clear">Clear route</button></div>
+        <div class="checks">${shortcutOptions(session).map((c) => `<label><input type="checkbox" data-cut="${esc(c)}"${(r.shortcuts || []).includes(c) ? ' checked' : ''} /> Shortcut: ${esc(c)}</label>`).join('')}</div>` : ''}
+      ${r.kind === 'drag' ? `<p class="note">${r.along ? `Along ${esc(r.along)}, from ${r.from.join(', ')}${r.to ? ` to ${r.to.join(', ')}` : ' (click where it finishes)'}` : 'Click where it starts on a street.'}</p>` : ''}
+      <div id="ev-preview">${previewText()}</div>
+      <div class="row">
+        <button id="ev-save">Save event</button>
+        ${savedEvent(evKey) ? '<button id="ev-revert">Revert</button>' : ''}
+        ${!isBoss() && savedEvent(evKey) ? '<button id="ev-del" class="danger">Delete</button>' : ''}
+      </div>
+      <div class="row">
+        <button id="ev-test" title="Shift+P">▶ Race it in the game</button>
+        <button id="ev-ai">AI test run</button>
+      </div>
+      <div id="ev-run">${runText()}</div>`;
+  }
+  panel.innerHTML = html;
+  bindEvents();
+}
+
+function runText() {
+  if (!evRun) return '';
+  if (evRun.progress !== undefined) return `<p class="note">AI test run: ${Math.round(evRun.progress * 100)}%…</p>`;
+  if (evRun.error) return `<p class="note warn">${esc(evRun.error)}</p>`;
+  const r = evRun.result;
+  const rows = r.rows.map((q, k) => `<div>${k + 1}. ${esc(q.name)}: ${r.arena ? `${q.takedowns} takedowns${q.hp > 0 ? '' : ', wrecked'}` : q.finished ? `${q.time.toFixed(1)} s` : 'did not finish'}</div>`).join('');
+  return `<h4>AI test run (${r.seconds.toFixed(0)} s raced)</h4><div class="note">${rows}</div>
+    <p class="note${r.stuck.length ? ' warn' : ''}">${r.stuck.length ? `Stuck ${r.stuck.length} time${r.stuck.length > 1 ? 's' : ''} (red rings on the map).` : 'Nobody got stuck.'} ${r.wrecks} wreck${r.wrecks === 1 ? '' : 's'}.</p>`;
+}
+
+function readEvent() {
+  const d = evDraft;
+  const num = (id, fallback) => (Number.isFinite(Number($(id)?.value)) && $(id)?.value !== '' ? Number($(id).value) : fallback);
+  d.name = $('ev-name').value.trim() || d.name;
+  d.desc = $('ev-desc').value;
+  d.cars = Math.max(2, Math.min(8, Math.round(num('ev-cars', d.cars))));
+  d.purse = Math.max(0, Math.round(num('ev-purse', d.purse)));
+  if (d.type === 'circuit') {
+    d.laps = Math.max(1, Math.round(num('ev-laps', d.laps)));
+    d.route.start = num('ev-start', d.route.start ?? 0);
+  }
+  if (d.type === 'drag') d.finishS = Math.max(100, num('ev-finish', d.finishS));
+  if (d.type === 'arena') {
+    d.mode = $('ev-mode').value;
+    d.timeLimit = Math.max(30, Math.round(num('ev-time', d.timeLimit)));
+    d.route.site = Number($('ev-site').value);
+  }
+  if (isBoss()) d.driver = $('ev-driver').value;
+  else if ($('ev-rival')?.checked) d.rival = true;
+  else delete d.rival;
+  const mods = [...document.querySelectorAll('[data-mod]')].filter((b) => b.checked).map((b) => b.dataset.mod);
+  if (mods.length) d.modifiers = mods;
+  else delete d.modifiers;
+  if (d.route.path) {
+    const cuts = [...document.querySelectorAll('[data-cut]')].filter((b) => b.checked).map((b) => b.dataset.cut);
+    if (cuts.length) d.route.shortcuts = cuts;
+    else delete d.route.shortcuts;
+  }
+}
+
+function saveEvent() {
+  readEvent();
+  const { key: _k, ...spec } = evDraft;
+  if (session.change((e) => ((e.events ||= {})[evKey] = spec))) {
+    session.broken = null;
+    changed(false);
+  }
+  toast(`${evDraft.name} saved.`);
+  renderEvents();
+}
+
+function bindEvents() {
+  const panel = $('events-panel');
+  panel.querySelectorAll('.evrow').forEach((el) => el.addEventListener('click', () => editEvent(el.dataset.key, savedEvent(el.dataset.key))));
+  panel.querySelectorAll('[data-new]').forEach((el) =>
+    el.addEventListener('click', () => {
+      const all = allEvents();
+      editEvent(nextKey(all), newEvent(el.dataset.new));
+    }));
+  if (!evDraft) return;
+  for (const el of panel.querySelectorAll('input, select, textarea')) {
+    el.addEventListener('change', () => {
+      readEvent();
+      previewEvent();
+    });
+  }
+  panel.querySelectorAll('[data-drop]').forEach((el) =>
+    el.addEventListener('click', () => {
+      evDraft.route.path.splice(Number(el.dataset.drop), 1);
+      renderEvents();
+      previewEvent();
+    }));
+  $('ev-clear')?.addEventListener('click', () => {
+    evDraft.route.path = [];
+    renderEvents();
+    previewEvent();
+  });
+  $('ev-save').addEventListener('click', saveEvent);
+  $('ev-revert')?.addEventListener('click', () => editEvent(evKey, savedEvent(evKey)));
+  $('ev-del')?.addEventListener('click', () => {
+    if (!window.confirm(`Delete ${evDraft.name}?`)) return;
+    const base = session.district.events.some((e) => e.key === evKey);
+    session.change((e) => {
+      e.events ||= {};
+      if (base) e.events[evKey] = null;
+      else delete e.events[evKey];
+    });
+    session.broken = null;
+    editEvent(null, null);
+    changed(false);
+  });
+  $('ev-test').addEventListener('click', testEvent);
+  $('ev-ai').addEventListener('click', runAi);
+}
+
+// Saves the draft if it's changed, then checks it can be set up.
+function readyEvent() {
+  readEvent();
+  if (JSON.stringify(evDraft) !== JSON.stringify(savedEvent(evKey))) saveEvent();
+  const broken = brokenEvents(session.withEvents()).find((b) => b.key === evKey);
+  if (broken) {
+    window.alert(`${evDraft.name} can't be set up: ${broken.error}`);
+    return false;
+  }
+  return true;
+}
+
+function testEvent() {
+  if (evDraft && readyEvent()) testDrive(evKey);
+}
+
+function runAi() {
+  if (!readyEvent() || evRun?.progress !== undefined) return;
+  clearGroup(stuckMarks);
+  evRun = { progress: 0 };
+  renderEvents();
+  let result;
+  try {
+    result = aiTestRun(session.withEvents(), evKey, (p) => {
+      evRun = { progress: p };
+      const box = $('ev-run');
+      if (box) box.innerHTML = runText();
+    });
+  } catch (err) {
+    evRun = { error: `The AI test run couldn't start: ${err.message}` };
+    renderEvents();
+    return;
+  }
+  result.then((r) => {
+    evRun = { result: r };
+    for (const p of r.stuck) {
+      const ring = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xff2a6d, depthTest: false, transparent: true, fog: false }));
+      ring.renderOrder = 13;
+      ring.geometry.setAttribute('position', new THREE.Float32BufferAttribute([...Array(24).keys()].flatMap((k) => {
+        const a = (k / 24) * Math.PI * 2;
+        const x = p.x + Math.cos(a) * 5;
+        const z = p.z + Math.sin(a) * 5;
+        return [x, H(x, z) + 0.6, z];
+      }), 3));
+      stuckMarks.add(ring);
+    }
+    renderEvents();
+  });
 }
 
 // --- Selection and editing ---------------------------------------------------
@@ -854,7 +1137,9 @@ function refresh() {
 function hint() {
   $('hint').textContent = !session
     ? 'Open a built-in district or a .ttmap file to start'
-    : tool === 'road'
+    : tool === 'events'
+      ? 'Events: pick one or make one, click junctions on the map for its route · Save event · Shift+P races it · 1 back to Select'
+      : tool === 'road'
       ? 'Road: click along the way · Enter or double-click to build · Backspace takes a point back · Esc cancels · 1 back to Select'
       : tool === 'lot'
         ? 'Lot: click a block to make it the chosen kind · 1 back to Select · Ctrl+Z undo'
@@ -967,6 +1252,11 @@ canvas.addEventListener('mousedown', (e) => {
   if (tool === 'lot') {
     const g = groundHit();
     if (g) setLot(g);
+    return;
+  }
+  if (tool === 'events') {
+    const g = groundHit();
+    if (g) routeClick(g);
     return;
   }
   if (tool !== 'select') {
@@ -1170,6 +1460,9 @@ window.addEventListener('keydown', (e) => {
     case 'Digit9':
       setTool(['select', 'raise', 'lower', 'smooth', 'flatten', 'paint', 'erase', 'road', 'lot'][Number(e.code.slice(5)) - 1]);
       break;
+    case 'Digit0':
+      setTool('events');
+      break;
     case 'BracketLeft':
     case 'BracketRight':
       $('radius').value = Number($('radius').value) + (e.code === 'BracketLeft' ? -2 : 2);
@@ -1203,7 +1496,8 @@ window.addEventListener('keydown', (e) => {
       toggleTop();
       break;
     case 'KeyP':
-      testDrive();
+      if (e.shiftKey && evKey) testEvent();
+      else testDrive();
       break;
     case 'KeyG':
       $('snap').checked = !$('snap').checked;

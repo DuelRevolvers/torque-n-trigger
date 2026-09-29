@@ -80,6 +80,17 @@
       #right .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       #right .note { color: var(--dim); margin: 6px 0; line-height: 1.4; }
       #right .warn { color: var(--pink); }
+      .evrow { display: flex; justify-content: space-between; gap: 6px; padding: 3px 6px; border-radius: 3px; cursor: pointer; }
+      .evrow:hover { background: #2a1a48; }
+      .evrow.on { background: #3a1a40; outline: 1px solid var(--pink); }
+      .evrow i { color: var(--dim); font-style: normal; white-space: nowrap; }
+      #events-panel h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+      #events-panel textarea { width: 100%; min-height: 48px; font: inherit; color: var(--ink); background: var(--night); border: 1px solid var(--line); border-radius: 3px; }
+      .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+      .chip { padding: 1px 6px; border: 1px solid var(--line); border-radius: 10px; font-size: 12px; }
+      .chip b { cursor: pointer; color: var(--pink); margin-left: 4px; }
+      .checks { display: grid; gap: 2px; font-size: 12px; }
+      .ok { color: var(--cyan); }
       #edits { border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px; color: var(--dim); line-height: 1.5; }
 
       #status { grid-area: status; display: flex; gap: 16px; align-items: center; padding: 0 10px; background: var(--panel); border-top: 1px solid var(--line); color: var(--dim); font-size: 12px; white-space: nowrap; overflow: hidden; }
@@ -123,6 +134,7 @@
         <button data-tool="erase" title="Erase paint (7)">Erase</button>
         <button data-tool="road" title="Draw a new street (8)">Road</button>
         <button data-tool="lot" title="Set what a block is (9)">Lot</button>
+        <button data-tool="events" title="Make and edit this district's events (0)">Events</button>
       </div>
       <div id="road-opts" class="opts" hidden>
         <label>Name <input id="road-name" value="New Street" /></label>
@@ -169,6 +181,7 @@
       </div>
     </div>
     <div id="right">
+      <div id="events-panel" hidden></div>
       <div id="inspector"></div>
       <div id="edits"></div>
     </div>

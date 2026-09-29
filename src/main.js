@@ -15,7 +15,7 @@ import { SettingsMenu } from './ui/settingsMenu.js';
 import { setCrtWarp } from './ui/crtWarp.js';
 import { PadNav } from './ui/padNav.js';
 import { loadCareer, clearCareer, saveCareer, unlockAll, relockAll, activeCar } from './career/career.js';
-import { roamEvent } from './career/districts.js';
+import { roamEvent, districtEvents } from './career/districts.js';
 import { districtFromDoc, migrateDoc } from './content/mapDoc.js';
 import { getVenue } from './sim/tracks/venues.js';
 import { generateStarters } from './parts/starters.js';
@@ -207,13 +207,22 @@ app.go = (...args) => {
 syncUnlockAll();
 
 // A test drive from the T&T SDK (sdk.html): free roam in the map it has open,
-// starting where its camera was looking, in the active car (or a starter).
+// starting where its camera was looking (or one of its events), in the active
+// car (or a starter).
 function testDrive() {
   if (!new URLSearchParams(window.location.search).has('testdrive')) return null;
   try {
-    const { doc, spawn } = JSON.parse(localStorage.getItem('tt-sdk:testdrive'));
-    const event = { ...roamEvent(districtFromDoc(migrateDoc(doc))), name: `Test drive: ${doc.name}` };
-    if (spawn) getVenue(event.venue, event).def.spawnAt = spawn;
+    const { doc, spawn, event: key } = JSON.parse(localStorage.getItem('tt-sdk:testdrive'));
+    const district = districtFromDoc(migrateDoc(doc));
+    let event;
+    if (key) {
+      // One of its events, raced against the AI (never counted in the career).
+      const def = districtEvents(district).find((e) => e.key === key);
+      event = { ...def, name: `Test: ${def.name}`, career: false, entryFee: 0 };
+    } else {
+      event = { ...roamEvent(district), name: `Test drive: ${doc.name}` };
+      if (spawn) getVenue(event.venue, event).def.spawnAt = spawn;
+    }
     const build = app.career ? activeCar(app.career).build : generateStarters(1)[0].build;
     return { build, car: null, event };
   } catch (err) {

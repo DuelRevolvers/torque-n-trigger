@@ -53,8 +53,9 @@ export function docFromDistrict(d, now = new Date().toISOString()) {
   }
   const edits = { ...emptyEdits(), ...district.city?.edits };
   if (district.city) delete district.city.edits;
-  delete edits.plan; // (a published district has its street edits made already)
+  delete edits.plan; // (a published district has its street and event edits made already)
   delete edits.grid;
+  delete edits.events;
   return {
     format: FORMAT,
     version: VERSION,
@@ -73,7 +74,21 @@ export const baseChanged = (doc, d) => !!doc.base && hashOf(districtData(d)) !==
 
 // Is there anything edited?
 export const hasEdits = (e) =>
-  !!e && ((e.remove?.length || 0) + Object.keys(e.move || {}).length + (e.add?.length || 0) + Object.keys(e.terrain?.dh || {}).length + Object.keys(e.paint?.s || {}).length + (hasPlanEdits(e.plan) ? 1 : 0) + (hasGridEdits(e.grid) ? 1 : 0) > 0);
+  !!e && ((e.remove?.length || 0) + Object.keys(e.move || {}).length + (e.add?.length || 0) + Object.keys(e.terrain?.dh || {}).length + Object.keys(e.paint?.s || {}).length + (hasPlanEdits(e.plan) ? 1 : 0) + (hasGridEdits(e.grid) ? 1 : 0) + Object.keys(e.events || {}).length > 0);
+
+// A district's events with the SDK's event edits made: { events, boss }.
+// edits.events: { key: spec | null } (a new key adds an event; 'boss' is the boss).
+export function applyEventEdits(d, E) {
+  if (!E || !Object.keys(E).length) return { events: d.events, boss: d.boss };
+  const own = d.events || [];
+  const events = [];
+  for (const e of own) {
+    if (!(e.key in E)) events.push(e);
+    else if (E[e.key]) events.push({ ...E[e.key], key: e.key });
+  }
+  for (const [key, e] of Object.entries(E)) if (e && key !== 'boss' && !own.some((q) => q.key === key)) events.push({ ...e, key });
+  return { events, boss: E.boss ? { ...E.boss, key: 'boss' } : d.boss };
+}
 
 // Problems with a document (an empty list if it's fine to open).
 export function validateDoc(doc) {
@@ -119,6 +134,7 @@ export function districtFromDoc(doc) {
   if (!districts.has(doc)) {
     const d = json(doc.district);
     if (hasEdits(doc.edits)) d.city.edits = json(doc.edits);
+    if (doc.edits?.events) Object.assign(d, applyEventEdits(d, json(doc.edits.events)));
     if (d.city.plan && hasPlanEdits(doc.edits?.plan)) {
       d.city.plan = applyPlanEdits(d.city.plan, doc.edits.plan);
       const R = doc.edits.plan.renames;

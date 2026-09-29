@@ -4,7 +4,8 @@
 import { districtMap } from '../sim/city.js';
 import { baseLayout, setEdits } from '../sim/cityLayout.js';
 import { itemCentre } from '../sim/layoutEdits.js';
-import { districtFromDoc, emptyEdits, hasEdits } from '../content/mapDoc.js';
+import { districtFromDoc, emptyEdits, hasEdits, applyEventEdits } from '../content/mapDoc.js';
+import { renameStreets } from '../sim/planEdits.js';
 import { CELL, sculptAt } from '../sim/ground.js';
 
 const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -172,6 +173,18 @@ export class Session {
       if (!best || a < best.a) best = { a, it };
     }
     return best?.it.key ?? null;
+  }
+
+  // The district's events as edited ({ events, boss }, renamed streets and all),
+  // and the district with them.
+  events() {
+    const out = applyEventEdits(this.district, JSON.parse(JSON.stringify(this.doc.edits.events || {})));
+    const R = this.doc.edits.plan?.renames;
+    return R && Object.keys(R).length ? { events: renameStreets(out.events, R), boss: renameStreets(out.boss, R) } : out;
+  }
+
+  withEvents() {
+    return { ...this.district, ...this.events() };
   }
 
   // A ground brush stroke: works on copies of the sculpt and paint layers,

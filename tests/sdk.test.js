@@ -233,6 +233,27 @@ test('sdk: a renamed street is renamed in its events; a deleted one shows which 
   assert.ok(r.change((e) => (e.grid = R.gridLotEdit(r, lot.grid, 'tanks'))));
 });
 
+test('sdk: a new sprint and a replaced circuit are the career events of a published district', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const E = await import('../src/sdk/events.js');
+  const { brokenEvents } = await import('../src/sdk/checks.js');
+  const { districtEvents } = await import('../src/career/districts.js');
+  const s = new Session(docFromDistrict(byId('strip')));
+  const sprint = { ...E.newEvent('sprint'), name: 'Test Sprint' };
+  sprint.route.path = ['marquee-lucky', 'marquee-palace', 'marquee-seven', 'strip-seven', 'strip-pawn'];
+  const circuit = { ...s.events().events.find((e) => e.key === 'circuit'), name: 'New Casino Circuit', laps: 2 };
+  circuit.route = { kind: 'circuit', path: ['marquee-palace', 'marquee-seven', 'strip-seven', 'strip-palace'], start: 30 };
+  const key = E.nextKey(s.events().events);
+  assert.ok(s.change((e) => (e.events = { [key]: sprint, circuit })));
+  assert.deepEqual(brokenEvents(s.withEvents()), []);
+  const d = districtFromDoc(parseDoc(serializeDoc(s.doc)));
+  const defs = districtEvents(d);
+  assert.equal(defs.find((e) => e.key === key).name, 'Test Sprint');
+  assert.equal(defs.find((e) => e.key === 'circuit').name, 'New Casino Circuit');
+  assert.equal(defs.length, byId('strip').events.length + 2, 'one more event, and the boss');
+  assert.ok(!E.routePreview(d, defs.find((e) => e.key === key).route).error);
+});
+
 test('sdk: street and ground pieces move too, and edits that lost their object are reported', () => {
   const strip = byId('strip');
   const map = districtMap(strip.city);
