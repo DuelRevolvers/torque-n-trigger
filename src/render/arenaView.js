@@ -103,7 +103,7 @@ export function buildArenaView(arena, tex, { outdoor = false, look = null } = {}
   }
 
   // Live power couplings on the floor.
-  for (const hz of def.hazards) {
+  for (const hz of def.hazards.filter((q) => !q.gadget)) {
     const plate = new THREE.Mesh(new THREE.CircleGeometry(hz.r, 24).rotateX(-Math.PI / 2), additiveMaterial({ map: tex.glow, color: '#ffd000', opacity: 0.9 }));
     plate.position.set(hz.x, 0.03, hz.z);
     group.add(plate);
@@ -141,7 +141,7 @@ export function buildArenaView(arena, tex, { outdoor = false, look = null } = {}
   if (edges.length) group.add(new THREE.Mesh(mergeGeometries(edges), glowMaterial({ color: accent, intensity: 2.6 })));
 
   // Lift pads that rise and fall, with warning lights on their posts.
-  const liftPads = def.lifts.map((l) => {
+  const liftPads = def.lifts.filter((q) => !q.gadget).map((l) => {
     const posts = [];
     for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) posts.push(new THREE.BoxGeometry(0.4, l.hMax + 2, 0.4).translate(l.x + sx * (l.hw + 0.4), (l.hMax + 2) / 2, l.z + sz * (l.hd + 0.4)));
     group.add(new THREE.Mesh(mergeGeometries(posts), litMaterial({ color: '#4a4858' })));
@@ -157,7 +157,7 @@ export function buildArenaView(arena, tex, { outdoor = false, look = null } = {}
   });
 
   // Sweepers: a pivot with an electrified bar that rotates at car height.
-  const bars = def.sweepers.map((s) => {
+  const bars = def.sweepers.filter((q) => !q.gadget).map((s) => {
     const pivot = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.1, 2.4, 10), litMaterial({ color: '#3a3848' }));
     pivot.position.set(s.x, 1.2, s.z);
     group.add(pivot);
@@ -172,8 +172,9 @@ export function buildArenaView(arena, tex, { outdoor = false, look = null } = {}
   // Moving parts follow the simulation clock (seconds).
   group.userData.animate = (t) => {
     for (const { l, pad } of liftPads) {
-      const top = l.hMax * (0.5 - 0.5 * Math.cos((2 * Math.PI * t) / l.period + l.phase));
-      pad.position.set(l.x, top - 0.3, l.z);
+      // (The sim's own height: a gate follows its trigger pad.)
+      const top = l.gate ? arena.liftTop(l) : l.hMax * (0.5 - 0.5 * Math.cos((2 * Math.PI * t) / l.period + l.phase));
+      pad.position.set(l.x, (l.base || 0) + top - 0.3, l.z);
     }
     for (const { s, bar } of bars) bar.rotation.y = -(s.phase + s.speed * t);
   };

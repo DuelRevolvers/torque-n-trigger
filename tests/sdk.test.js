@@ -254,6 +254,28 @@ test('sdk: a new sprint and a replaced circuit are the career events of a publis
   assert.ok(!E.routePreview(d, defs.find((e) => e.key === key).route).error);
 });
 
+test('sdk: gadgets: a gate opens while its trigger pad is driven over, and lifts stand on the ground', async () => {
+  const { newGadget } = await import('../src/sim/gadgets.js');
+  const { createWorld, stepWorld } = await import('../src/sim/world.js');
+  const { TEST_CAR } = await import('../src/sim/carParams.js');
+  const doc = docFromDistrict(byId('strip'));
+  doc.edits.gadgets = [newGadget('trigger', 'g1', 10, 60), { ...newGadget('gate', 'g2', 60, 60, Math.PI / 2), link: 'g1' }, newGadget('lift', 'g3', -60, 60)];
+  const d = districtFromDoc(parseDoc(serializeDoc(doc)));
+  const def = cityVenue(d.city, { kind: 'roam' }).def;
+  const arena = buildArena(def);
+  const gate = def.lifts.find((l) => l.gadget === 'g2');
+  assert.equal(arena.liftTop(gate), gate.hMax, 'shut');
+  const world = createWorld({ track: arena, cars: [{ params: TEST_CAR }], poses: [{ pos: { x: 10, y: def.heightAt(10, 60) + 0.9, z: 60 }, yaw: 0 }] });
+  stepWorld(world, []);
+  assert.notEqual(world.state.triggered.g1, undefined, 'the pad went off');
+  stepWorld(world, []);
+  assert.equal(arena.liftTop(gate), 0, 'open');
+  arena.setTime(arena.time + gate.gate.openFor + 1);
+  assert.equal(arena.liftTop(gate), gate.hMax, 'shut again');
+  const lift = def.lifts.find((l) => l.gadget === 'g3');
+  assert.ok(near(lift.base, def.heightAt(-60, 60)));
+});
+
 test('sdk: street and ground pieces move too, and edits that lost their object are reported', () => {
   const strip = byId('strip');
   const map = districtMap(strip.city);

@@ -17,7 +17,7 @@ import { PadNav } from './ui/padNav.js';
 import { loadCareer, clearCareer, saveCareer, unlockAll, relockAll, activeCar } from './career/career.js';
 import { roamEvent, districtEvents } from './career/districts.js';
 import { districtFromDoc, migrateDoc } from './content/mapDoc.js';
-import { sdkGet } from './content/library.js';
+import { sdkGet, sdkPut } from './content/library.js';
 import { getVenue } from './sim/tracks/venues.js';
 import { generateStarters } from './parts/starters.js';
 import { StarterScreen } from './screens/starterScreen.js';
@@ -232,8 +232,33 @@ function testDrive() {
   }
 }
 const drive = testDrive();
-if (drive) app.go('race', drive);
+if (drive) {
+  app.go('race', drive);
+  recordPlaytest(drive.event.district);
+}
 else app.go('menu');
 
 // Handy for poking at the game from the browser console.
 window.tt = app;
+
+// A test drive's playtest marks, for the T&T SDK: where the car was wrecked,
+// got stuck (6 s barely moving) or was put back on the road, checked every
+// second and kept for the SDK (it shows them when you're back).
+function recordPlaytest(district) {
+  const marks = [];
+  let last = null;
+  let still = 0;
+  setInterval(() => {
+    const race = app.screens.race;
+    const car = app.current === race ? race.world?.state.cars[0] : null;
+    if (!car) return;
+    const at = { x: Math.round(car.pos.x), z: Math.round(car.pos.z) };
+    const speed = Math.hypot(car.vel.x, car.vel.z);
+    if (car.wrecked && !last?.wrecked) marks.push({ kind: 'wreck', ...at });
+    else if (last && !car.wrecked && Math.hypot(at.x - last.x, at.z - last.z) > last.speed * 1.5 + 30) marks.push({ kind: 'respawn', x: last.x, z: last.z });
+    still = speed < 1 && !car.wrecked ? still + 1 : 0;
+    if (still === 6) marks.push({ kind: 'stuck', ...at });
+    last = { ...at, speed, wrecked: car.wrecked };
+    sdkPut('playtest', { district, at: Date.now(), marks }).catch(() => {});
+  }, 1000);
+}

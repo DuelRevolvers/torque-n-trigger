@@ -17,6 +17,7 @@ import { districtLayout } from './cityLayout.js';
 import { authoredGridMap } from './authoredMap.js';
 import { planMap } from './planMap.js';
 import { sculptMap, paintOf } from './ground.js';
+import { addGadgets } from './gadgets.js';
 import { planTrack, planRoam } from './planRoute.js';
 
 export const STREET = { halfWidth: 8, curbWidth: 1.2, shoulderWidth: 4 };
@@ -1382,13 +1383,14 @@ export function cityVenue(style, route) {
     // Painted ground: its grip, and water to fall into.
     const paint = paintOf(map.paint);
     if (paint) Object.assign(def, { paintAt: paint.paintAt, waterAt: paint.waterAt });
+    addGadgets(def, style.edits?.gadgets, map.heightAt); // (the SDK's gadgets)
     return { kind: 'arena', def };
   }
   if (route.kind === 'arena') {
     const site = route.site || 0;
     const spec = style.arenas?.[map.arenas[site]?.name];
-    if (spec) return { kind: 'arena', def: authoredArena(map, map.arenas[site], spec) };
-    return { kind: 'arena', def: cityArena(map, makeRng(style.seed * 17 + 3 + site * 101), map.arenas[site] || map.arena) };
+    const def = spec ? authoredArena(map, map.arenas[site], spec) : cityArena(map, makeRng(style.seed * 17 + 3 + site * 101), map.arenas[site] || map.arena);
+    return { kind: 'arena', def: addGadgets(def, style.edits?.gadgets, map.heightAt, true) };
   }
   if (map.plan) return { kind: 'track', def: planTrack(map, style, route) };
   const name = `${style.name} ${route.kind}`;

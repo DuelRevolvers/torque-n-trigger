@@ -19,6 +19,7 @@ import { PALETTE } from '../render/textures.js';
 import { buildTrackView } from '../render/trackView.js';
 import { buildCityView } from '../render/cityView.js';
 import { buildArenaView } from '../render/arenaView.js';
+import { gadgetView } from '../render/gadgetView.js';
 import { buildDistrictView, districtClear } from '../render/districtView.js';
 import { buildTrainView, updateTrainView } from '../render/trainView.js';
 import { buildTruckView, updateTruckView } from '../render/truckView.js';
@@ -111,6 +112,16 @@ export class RaceScreen {
         const view = buildArenaView(track, tex, { outdoor: !!def.city, look: def.city?.look });
         animate = view.userData.animate;
         group.add(view);
+      }
+      // The SDK's gadgets (a district's own moving parts).
+      const gadgets = gadgetView(track, tex);
+      if (gadgets) {
+        group.add(gadgets);
+        const inner = animate;
+        animate = (t) => {
+          inner?.(t);
+          gadgets.userData.animate(t);
+        };
       }
     } else {
       track = buildTrack(v.def);

@@ -7,6 +7,7 @@ import { itemCentre } from '../sim/layoutEdits.js';
 import { districtFromDoc, emptyEdits, hasEdits, applyEventEdits } from '../content/mapDoc.js';
 import { renameStreets } from '../sim/planEdits.js';
 import { CELL, sculptAt } from '../sim/ground.js';
+import { newGadget } from '../sim/gadgets.js';
 
 const r3 = (v) => Math.round(v * 1000) / 1000;
 
@@ -137,6 +138,31 @@ export class Session {
     const id = `a${n}`;
     this.change((e) => e.add.push({ id, from, x: r3(x), z: r3(z), yaw: r3(yaw) }));
     return `+${id}`;
+  }
+
+  // Gadgets (sim/gadgets.js): placed, changed, taken out (a gate linked to a
+  // trigger pad that goes is unlinked).
+  gadgets() {
+    return this.doc.edits.gadgets || [];
+  }
+
+  addGadget(type, x, z, yaw = 0) {
+    let n = this.gadgets().length + 1;
+    while (this.gadgets().some((g) => g.id === `g${n}`)) n++;
+    const id = `g${n}`;
+    this.change((e) => (e.gadgets ||= []).push(newGadget(type, id, r3(x), r3(z), r3(yaw))));
+    return id;
+  }
+
+  setGadget(id, patch) {
+    return this.change((e) => Object.assign(e.gadgets.find((g) => g.id === id), patch));
+  }
+
+  removeGadget(id) {
+    return this.change((e) => {
+      e.gadgets = e.gadgets.filter((g) => g.id !== id);
+      for (const g of e.gadgets) if (g.link === id) g.link = '';
+    });
   }
 
   // Copies of district item `from` at each [x, z, yaw], as one step.

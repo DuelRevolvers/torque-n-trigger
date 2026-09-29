@@ -12,6 +12,10 @@ import { TYPES, MODES, MODIFIER_LABELS, DRIVERS, newEvent, nextKey, routePoint, 
 import { Session, footBox } from './session.js';
 import { catalogue, CATEGORIES } from './catalogue.js';
 import { brush } from './brush.js';
+import { GADGETS, addGadgets } from '../sim/gadgets.js';
+import { buildArena } from '../sim/arena.js';
+import { gadgetView } from '../render/gadgetView.js';
+import { readStore } from '../content/idb.js';
 import { roadEdit, gridRoadEdit, lotEdit, gridLotEdit, lotAt, lotKinds, linePoints, featureAt, deleteStreet, setStreet, moveNode, removeNode, deleteSite, gridRemove, gridMoveLine } from './roads.js';
 import * as G from '../sim/geom2d.js';
 import { saveOverride, listOverrides, removeOverride, setOverrideOn, shippedMap } from '../content/store.js';
@@ -77,7 +81,9 @@ let brushAt = null; // where the brush is on the ground
 let roadPts = []; // the road tool's points so far
 let lineFrom = null; // placing along a line: where it starts
 let scatter = null; // placing by scatter: [[x, z, yaw]] so far
-let feature = null; // a street, junction or site selected (sdk/roads.js featureAt)
+let feature = null; // a street, junction, site or gadget selected (sdk/roads.js featureAt)
+let placingGadget = null; // a gadget type being placed
+let gadgetGroup = null; // the gadgets as the game draws them, running
 let evKey = null; // the event being edited (Events tool), and its working copy
 let evDraft = null;
 let evPreview = null;
@@ -113,6 +119,8 @@ function open(doc) {
     cam.y = H(cam.x, b.maxZ) + 320;
     applyFog();
     buildView();
+    rebuildGadgets();
+    refreshMarks();
     renderCatalogue();
     refresh();
   }, 30);
@@ -154,6 +162,7 @@ function scheduleBuild() {
 function changed(rebuild = true) {
   if (selected && !session.item(selected)) selected = null;
   autosave();
+  rebuildGadgets();
   refresh();
   showOverlay();
   if (rebuild) scheduleBuild();
@@ -567,7 +576,7 @@ function showFeature() {
     return;
   }
   const pts =
-    f.type === 'node' ? [...Array(25).keys()].map((k) => [f.x + Math.cos((k / 24) * Math.PI * 2) * 6, f.z + Math.sin((k / 24) * Math.PI * 2) * 6])
+    f.type === 'node' || f.type === 'gadget' ? [...Array(25).keys()].map((k) => [f.x + Math.cos((k / 24) * Math.PI * 2) * (f.r || 6), f.z + Math.sin((k / 24) * Math.PI * 2) * (f.r || 6)])
       : f.type === 'site' ? [...f.poly, f.poly[0]]
         : f.pts;
   setLine(featLine, densify(pts));
@@ -593,6 +602,11 @@ function editFeature(label, make, at) {
 function deleteFeature() {
   const f = feature;
   if (!f) return;
+  if (f.type === 'gadget') {
+    session.removeGadget(f.id);
+    feature = null;
+    return changed(false);
+  }
   const make =
     f.type === 'street' ? () => ({ plan: deleteStreet(session, f) })
       : f.type === 'node' ? () => ({ plan: removeNode(session, f.name) })
@@ -603,6 +617,7 @@ function deleteFeature() {
 
 function featureInspector(ins) {
   const f = feature;
+  if (f.type === 'gadget') return gadgetInspector(ins, f);
   const warn = '<p class="note">Events that use it may stop working: check them before publishing.</p>';
   if (f.type === 'street') {
     ins.innerHTML = `
@@ -1049,9 +1064,12 @@ function turn(dir, fine) {
   if (drag) {
     drag.yaw = snapTurn(drag.yaw + d, fine);
     showOverlay();
-  } else if (placing) {
+  } else if (placing || placingGadget) {
     placeYaw = snapTurn(placeYaw + d, fine);
     showOverlay();
+  } else if (feature?.type === 'gadget') {
+    const g = session.gadgets().find((q) => q.id === feature.id);
+    if (g && session.setGadget(g.id, { yaw: snapTurn((g.yaw || 0) + d, fine) })) changed(false);
   } else if (selected && canMove(session.item(selected))) {
     const p = session.pose(selected);
     if (session.place(selected, p.x, p.z, snapTurn(p.yaw + d, fine))) changed();
@@ -1185,7 +1203,9 @@ function hint() {
         ? 'Lot: click a block to make it the chosen kind · 1 back to Select · Ctrl+Z undo'
         : tool !== 'select'
           ? `${TOOL_NAMES[tool]}: hold the left button and move · [ ] size · 1 back to Select · Ctrl+Z undo`
-          : placing && $('place-mode').value === 'line'
+          : placingGadget
+            ? `Placing a ${GADGETS[placingGadget].name.toLowerCase()}: click where it goes (Shift: keep placing) · wheel or Q/E to turn · Esc to stop`
+            : placing && $('place-mode').value === 'line'
             ? `Placing ${placing.name} along a line: click ${lineFrom ? 'where it ends' : 'where it starts'} · wheel or Q/E to turn · Esc to stop`
             : placing && $('place-mode').value === 'scatter'
               ? `Scattering ${placing.name}: hold the left button and brush (spacing sets how far apart) · Esc to stop`
@@ -1207,7 +1227,9 @@ function renderCatalogue() {
       .map((e) => `<div class="entry${placing === e ? ' on' : ''}" draggable="true" data-id="${esc(e.id)}" title="${e.count} in this district · ${e.size.map((v) => v.toFixed(1)).join(' × ')} m"><span>${esc(e.name)}</span><i>${e.count}</i></div>`)
       .join('')}`;
   }).join('');
-  $('cat').innerHTML = html || '<p class="none">Nothing matches.</p>';
+  const gadgets = Object.entries(GADGETS).filter(([, g]) => !q || g.name.toLowerCase().includes(q));
+  const gadgetHtml = gadgets.length ? `<h4>Gadgets</h4>${gadgets.map(([t, g]) => `<div class="entry${placingGadget === t ? ' on' : ''}" data-gadget="${t}" title="${esc(g.about)}"><span>${esc(g.name)}</span></div>`).join('')}` : '';
+  $('cat').innerHTML = gadgetHtml + (html || '<p class="none">Nothing matches.</p>');
   $('place-opts').hidden = !placing;
 }
 
@@ -1227,13 +1249,25 @@ for (const id of ['radius', 'strength']) {
   show();
 }
 $('kind').addEventListener('change', showBrush);
+$('road-build').addEventListener('click', buildRoad);
 $('place-mode').addEventListener('change', () => {
   lineFrom = null;
   hint();
 });
 $('cat').addEventListener('click', (e) => {
+  const gEl = e.target.closest('[data-gadget]');
+  if (gEl && session) {
+    if (tool !== 'select') setTool('select');
+    placingGadget = placingGadget === gEl.dataset.gadget ? null : gEl.dataset.gadget;
+    placing = null;
+    placeYaw = 0;
+    renderCatalogue();
+    hint();
+    return;
+  }
   const el = e.target.closest('.entry');
   if (!el || !session) return;
+  placingGadget = null;
   const entry = cat.find((c) => c.id === el.dataset.id);
   if (tool !== 'select') setTool('select');
   placing = placing === entry ? null : entry;
@@ -1308,6 +1342,16 @@ canvas.addEventListener('mousedown', (e) => {
     brushAt = g;
     return;
   }
+  if (placingGadget) {
+    const g = groundHit();
+    if (!g) return;
+    const id = session.addGadget(placingGadget, snap(g.x, e), snap(g.z, e), placeYaw);
+    if (!e.shiftKey) placingGadget = null;
+    renderCatalogue();
+    changed(false);
+    selectFeature(gadgetFeature(id));
+    return;
+  }
   if (placing) {
     const g = groundHit();
     if (!g) return;
@@ -1322,7 +1366,15 @@ canvas.addEventListener('mousedown', (e) => {
     hint();
     return;
   }
-  // An object; else a junction, street or site.
+  // A gadget (drawn on its own); else an object; else a junction, street or site.
+  const gp = groundHit();
+  const gid = gp ? gadgetAt(gp.x, gp.z) : null;
+  if (gid) {
+    const f = gadgetFeature(gid);
+    selectFeature(f);
+    drag = { feature: f, sx: e.clientX, sy: e.clientY, ox: f.x - gp.x, oz: f.z - gp.z, x: f.x, z: f.z, yaw: 0, moved: false };
+    return;
+  }
   const hit = meshHit();
   const key = hit ? session.pick(hit.x, hit.z, hit.y) : null;
   const f = !key && hit ? featureAt(session, hit.x, hit.z) : null;
@@ -1425,6 +1477,12 @@ window.addEventListener('mouseup', (e) => {
   if (e.button === 0 && drag) {
     const d = drag;
     drag = null;
+    if (d.moved && d.feature?.type === 'gadget') {
+      if (session.setGadget(d.feature.id, { x: Math.round(d.x * 100) / 100, z: Math.round(d.z * 100) / 100 })) changed(false);
+      feature = gadgetFeature(d.feature.id);
+      showOverlay();
+      return;
+    }
     if (d.moved && d.feature) {
       editFeature('Moving the junction…', () => ({ plan: moveNode(session, d.feature.name, d.x, d.z) }), [d.x, d.z]);
       return;
@@ -1546,6 +1604,7 @@ window.addEventListener('keydown', (e) => {
       placing = null;
       ghostAt = null;
       lineFrom = null;
+      placingGadget = null;
       drag = null;
       renderCatalogue();
       select(null);
@@ -1602,6 +1661,7 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  pollPad(dt);
   if (flying && session) {
     const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 4 : 1) * (20 + altitude() * 0.6) * dt;
     const f = forward();
@@ -1633,6 +1693,7 @@ function frame(now) {
   camera.position.set(cam.x, cam.y, cam.z);
   camera.lookAt(cam.x + f.x, cam.y + f.y, cam.z + f.z);
   view?.userData.animate?.(now / 1000, now / 1000);
+  gadgetGroup?.userData.animate(now / 1000);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
@@ -1748,3 +1809,207 @@ if (CREATOR) {
     });
   }
 }
+
+// --- Gadgets ---------------------------------------------------------------------------
+
+// The gadgets as the game draws them, running on their own clock (a gate
+// linked to a trigger pad stays shut here: drive over the pad to see it open).
+function rebuildGadgets() {
+  if (gadgetGroup) {
+    scene.remove(gadgetGroup);
+    dispose(gadgetGroup);
+    gadgetGroup = null;
+  }
+  if (!session?.gadgets().length) return;
+  const def = addGadgets({ cx: 0, cz: 0, y: 0, size: 1e6, obstacles: [], ramps: [], lifts: [], sweepers: [], hazards: [], movers: [] }, session.gadgets(), H);
+  gadgetGroup = gadgetView(buildArena(def), tex, { ownClock: true });
+  if (gadgetGroup) scene.add(gadgetGroup);
+}
+
+// How far a gadget reaches from its middle (for picking it and outlining it).
+const reachOf = (g) =>
+  g.type === 'lift' ? Math.hypot(g.w, g.d) / 2 : g.type === 'gate' ? g.width / 2 : g.type === 'sweeper' ? g.len : g.type === 'mover' ? g.travel + Math.hypot(g.w, g.d) / 2 : g.r;
+
+function gadgetAt(x, z) {
+  let best = null;
+  for (const g of session.gadgets()) {
+    const d = Math.hypot(g.x - x, g.z - z);
+    if (d < Math.max(3, reachOf(g)) && (!best || d < best.d)) best = { d, g };
+  }
+  return best?.g.id || null;
+}
+
+function gadgetFeature(id) {
+  const g = session.gadgets().find((q) => q.id === id);
+  return g ? { type: 'gadget', id, name: GADGETS[g.type].name, x: g.x, z: g.z, r: reachOf(g) } : null;
+}
+
+function gadgetInspector(ins, f) {
+  const g = session.gadgets().find((q) => q.id === f.id);
+  if (!g) return;
+  const LABELS = { w: 'width (m)', d: 'depth (m)', width: 'width (m)', hMax: 'height (m)', period: 'every (s)', openFor: 'open for (s)', r: 'radius (m)', len: 'arm (m)', speed: 'speed', travel: 'travel (m)', dps: 'burn' };
+  const nums = Object.keys(LABELS).filter((k) => typeof g[k] === 'number');
+  const triggers = session.gadgets().filter((q) => q.type === 'trigger');
+  ins.innerHTML = `
+    <h3>${esc(GADGETS[g.type].name)}</h3><div class="key">gadget ${esc(g.id)}</div>
+    <p class="note">${esc(GADGETS[g.type].about)}</p>
+    <div class="grid">
+      <label for="gd-turn">turn (°)</label><input id="gd-turn" type="number" step="15" value="${Math.round(((g.yaw || 0) * 180) / Math.PI)}" />
+      ${nums.map((k) => `<label for="gd-${k}">${LABELS[k]}</label><input id="gd-${k}" data-k="${k}" type="number" step="${k === 'speed' ? 0.1 : 1}" value="${g[k]}" />`).join('')}
+      ${g.type === 'gate' ? `<label for="gd-link">opened by</label><select id="gd-link"><option value="">its timer</option>${triggers.map((t) => `<option value="${t.id}"${g.link === t.id ? ' selected' : ''}>trigger pad ${t.id}</option>`).join('')}</select>` : ''}
+    </div>
+    <div class="row"><button id="f-del" class="danger">Delete</button></div>
+    <p class="note">Drag it to move it; Q/E turn it. Gadgets work in free roam and in arena events.</p>`;
+  const apply = () => {
+    const patch = { yaw: (Number($('gd-turn').value) * Math.PI) / 180 };
+    for (const el of ins.querySelectorAll('[data-k]')) if (Number.isFinite(Number(el.value)) && el.value !== '') patch[el.dataset.k] = Math.max(0.1, Number(el.value));
+    if ($('gd-link')) patch.link = $('gd-link').value;
+    if (session.setGadget(g.id, patch)) changed(false);
+    feature = gadgetFeature(g.id);
+    showOverlay();
+  };
+  for (const el of ins.querySelectorAll('input, select')) el.addEventListener('change', apply);
+  $('f-del').addEventListener('click', deleteFeature);
+}
+
+// --- Playtest marks ------------------------------------------------------------------
+// A test drive (src/main.js) records where the car was wrecked, got stuck or
+// was put back on the road; back here, they're pins on the map.
+
+const marksGroup = new THREE.Group();
+scene.add(marksGroup);
+const MARK_COLOR = { wreck: 0xff2a6d, stuck: 0xffb000, respawn: 0x05d9e8 };
+let marks = [];
+
+async function refreshMarks() {
+  if (!session) return;
+  let pt = null;
+  try {
+    pt = (await readStore('sdk')).get('playtest') || null;
+  } catch {
+    pt = null;
+  }
+  marks = pt && pt.district === session.doc.id ? pt.marks : [];
+  drawMarks();
+}
+
+function drawMarks() {
+  clearGroup(marksGroup);
+  for (const m of marks) {
+    const y = H(m.x, m.z);
+    const mat = new THREE.LineBasicMaterial({ color: MARK_COLOR[m.kind] || 0xffffff, depthTest: false, transparent: true, fog: false });
+    const pin = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(m.x, y, m.z), new THREE.Vector3(m.x, y + 14, m.z)]), mat);
+    const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([...Array(16).keys()].map((k) => new THREE.Vector3(m.x + Math.cos((k / 16) * Math.PI * 2) * 3, y + 14, m.z + Math.sin((k / 16) * Math.PI * 2) * 3))), mat);
+    pin.renderOrder = ring.renderOrder = 13;
+    marksGroup.add(pin, ring);
+  }
+  const count = (k) => marks.filter((m) => m.kind === k).length;
+  $('marks').hidden = !marks.length;
+  $('marks').textContent = `Playtest: ${count('wreck')} wrecked, ${count('stuck')} stuck, ${count('respawn')} put back ×`;
+}
+
+window.addEventListener('focus', refreshMarks);
+$('marks').addEventListener('click', () => {
+  marks = [];
+  drawMarks();
+  sdkPut('playtest', null).catch(() => {});
+});
+
+// --- Gamepad ---------------------------------------------------------------------------
+// Sticks fly (left moves, right looks, triggers down and up, left stick in:
+// faster); A acts at the crosshair as a click would; B cancels; X deletes;
+// Y copies; LB/RB turn; the d-pad nudges; Back looks down; Start test drives.
+
+let padPrev = [];
+function pollPad(dt) {
+  const pad = [...(navigator.getGamepads?.() || [])].find((p) => p && p.connected);
+  $('crosshair').hidden = !pad || !session;
+  if (!pad || !session) return;
+  const r = canvas.getBoundingClientRect();
+  const [mx, my] = [r.left + r.width / 2, r.top + r.height / 2];
+  Object.assign($('crosshair').style, { left: `${mx}px`, top: `${my}px` });
+  const axis = (i) => (Math.abs(pad.axes[i] || 0) > 0.15 ? pad.axes[i] : 0);
+  const held = (i) => !!pad.buttons[i]?.pressed;
+  const now = pad.buttons.map((b) => b.pressed);
+  const hit = (i) => now[i] && !padPrev[i];
+  padPrev = now;
+  const speed = (held(10) ? 4 : 1) * (20 + altitude() * 0.6) * dt;
+  const f = forward();
+  const [rx, rz] = right();
+  cam.yaw -= axis(2) * 2.2 * dt;
+  cam.pitch = Math.max(-1.55, Math.min(1.4, cam.pitch - axis(3) * 1.6 * dt));
+  cam.x += (f.x * -axis(1) + rx * axis(0)) * speed;
+  cam.y += (f.y * -axis(1) + (held(7) ? 1 : 0) - (held(6) ? 1 : 0)) * speed;
+  cam.z += (f.z * -axis(1) + rz * axis(0)) * speed;
+  const at = { clientX: mx, clientY: my, button: 0, bubbles: true };
+  if (hit(0)) {
+    canvas.dispatchEvent(new MouseEvent('mousedown', at));
+    canvas.dispatchEvent(new MouseEvent('mouseup', at));
+  }
+  if (hit(1)) window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' }));
+  if (hit(2)) removeSelected();
+  if (hit(3)) duplicate();
+  if (hit(4)) turn(1, false);
+  if (hit(5)) turn(-1, false);
+  const step = gridSize();
+  const [fx, fz] = flat();
+  if (hit(12)) nudge(fx * step, fz * step);
+  if (hit(13)) nudge(-fx * step, -fz * step);
+  if (hit(14)) nudge(-rx * step, -rz * step);
+  if (hit(15)) nudge(rx * step, rz * step);
+  if (hit(8)) toggleTop();
+  if (hit(9)) testDrive();
+}
+
+// --- Touch ----------------------------------------------------------------------------
+// One finger works as the mouse (tap to select or place, drag to move, brush
+// or draw); dragging where there's nothing to move looks around. Two fingers
+// pan, and pinch to zoom.
+
+let touch = null;
+const mouseAt = (type, t, target = canvas) => target.dispatchEvent(new MouseEvent(type, { clientX: t.clientX, clientY: t.clientY, button: 0, bubbles: true }));
+const mid = (a, b) => [(a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)];
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  if (!session) return;
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    mouseAt('mousedown', t);
+    const looking = tool === 'select' && !drag && !placing && !placingGadget;
+    touch = { mode: looking ? 'look' : 'mouse', x: t.clientX, y: t.clientY };
+  } else if (e.touches.length === 2) {
+    if (touch?.mode === 'mouse') mouseAt('mouseup', e.touches[0]);
+    const [x, y, dist] = mid(e.touches[0], e.touches[1]);
+    touch = { mode: 'two', x, y, dist };
+  }
+}, { passive: false });
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (!touch) return;
+  if (touch.mode === 'two' && e.touches.length >= 2) {
+    const [x, y, dist] = mid(e.touches[0], e.touches[1]);
+    const s = altitude() * 0.0018;
+    const [rx, rz] = right();
+    const [fx, fz] = flat();
+    cam.x += -rx * (x - touch.x) * s + fx * (y - touch.y) * s;
+    cam.z += -rz * (x - touch.x) * s + fz * (y - touch.y) * s;
+    const f = forward();
+    const step = (dist - touch.dist) * altitude() * 0.004;
+    cam.x += f.x * step;
+    cam.y += f.y * step;
+    cam.z += f.z * step;
+    Object.assign(touch, { x, y, dist });
+    return;
+  }
+  const t = e.touches[0];
+  if (touch.mode === 'look') {
+    cam.yaw -= (t.clientX - touch.x) * 0.005;
+    cam.pitch = Math.max(-1.55, Math.min(1.4, cam.pitch - (t.clientY - touch.y) * 0.005));
+  } else mouseAt('mousemove', t);
+  Object.assign(touch, { x: t.clientX, y: t.clientY });
+}, { passive: false });
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  if (touch?.mode === 'mouse' && e.changedTouches[0]) mouseAt('mouseup', e.changedTouches[0]);
+  if (!e.touches.length) touch = null;
+}, { passive: false });

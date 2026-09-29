@@ -55,7 +55,7 @@ export const SDK_CSS = `
       .entry i { color: var(--dim); font-style: normal; }
       .none { color: var(--dim); }
 
-      #view { grid-area: view; width: 100%; height: 100%; display: block; min-width: 0; min-height: 0; }
+      #view { touch-action: none; grid-area: view; width: 100%; height: 100%; display: block; min-width: 0; min-height: 0; }
       #start { grid-area: view; align-self: center; justify-self: center; width: min(420px, 90%); padding: 20px 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; z-index: 1; }
       #start h2 { margin: 0 0 4px; color: var(--pink); letter-spacing: 2px; }
       #start p { margin: 0 0 14px; color: var(--dim); }
@@ -72,6 +72,7 @@ export const SDK_CSS = `
       #start .note { margin: -2px 0 8px; font-size: 12px; line-height: 1.4; }
       .warn { color: var(--pink); }
       #toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); max-width: 70%; padding: 8px 14px; background: var(--panel); border: 1px solid var(--cyan); color: var(--cyan); border-radius: 3px; pointer-events: none; }
+      #crosshair { position: fixed; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid var(--cyan); border-radius: 50%; pointer-events: none; }
       #busy { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); padding: 6px 14px; background: var(--panel); border: 1px solid var(--amber); color: var(--amber); border-radius: 3px; pointer-events: none; }
 
       #right h3 { margin: 0 0 2px; color: var(--amber); font-size: 14px; }
@@ -122,6 +123,7 @@ export const SDK_HTML = `
       <button id="drive" class="go" title="Drive this map in the game, from where you're looking (P)">▶ Test drive</button>
       <button id="play" title="Play these edits in the game's free roam (this browser only; the career keeps the official district)">Play in game</button>
       <button id="publish" title="Studio: ship this map with the game in place of its district, career included (writes src/content/maps)">Publish</button>
+      <button id="marks" hidden title="Where the last test drive was wrecked (red), stuck (amber) or put back on the road (blue). Click to clear them."></button>
       <span id="title"></span>
     </div>
     <div id="left">
@@ -141,6 +143,7 @@ export const SDK_HTML = `
         <label>Name <input id="road-name" value="New Street" /></label>
         <label>Width <select id="road-width"><option value="lane">Lane (7 m)</option><option value="street" selected>Street (12 m)</option><option value="avenue">Avenue (20 m)</option></select></label>
         <label>Surface <select id="road-surface"><option value="asphalt">Asphalt</option><option value="dirt">Dirt (off-road, a shortcut)</option></select></label>
+        <button id="road-build">Build street</button>
         <p class="tip">Click along the way; it joins any street it starts, ends or crosses on. Enter or double-click to build it, Backspace takes a point back, Esc cancels.</p>
       </div>
       <div id="lot-opts" class="opts" hidden>
@@ -194,5 +197,6 @@ export const SDK_HTML = `
     </div>
     <div id="status"><span id="coords"></span><span id="hint"></span></div>
     <div id="busy" hidden></div>
+    <div id="crosshair" hidden></div>
     <div id="toast" hidden></div>
 `;

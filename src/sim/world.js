@@ -1,6 +1,7 @@
 // The game world: static data (track, per-car params) plus a plain, serialisable
 // `state` that the fixed-timestep loop advances one tick at a time.
 
+import { hitTriggers } from './gadgets.js';
 import { SIM_DT } from '../config.js';
 import { createCarState, placeCar, stepCar, carUp, carSpeed } from './vehicle.js';
 import { yawFromDirection } from './math.js';
@@ -42,6 +43,7 @@ export function createWorld({ track, cars, respawnOnWreck = true, poses = null, 
 export function stepWorld(world, inputs) {
   const { track, params, state } = world;
   track.setTime?.(state.tick * SIM_DT); // moving arena parts follow the tick
+  if (track.triggers) track.triggered = state.triggered ||= {}; // gates follow their trigger pads
   const effective = state.cars.map((c, i) => {
     if (c.wrecked) return NEUTRAL;
     const raw = inputs[i] || NEUTRAL;
@@ -61,6 +63,7 @@ export function stepWorld(world, inputs) {
   if (track.truck) hitByTruck(world);
   if (track.rv) hitByRv(world);
   if (track.breakables) hitBreakables(world);
+  if (track.triggers) hitTriggers(world);
   if (track.gusts) applyGusts(world);
   if (track.flood) applyFlood(world);
   updateCombat(world, effective, SIM_DT, respawnCar);

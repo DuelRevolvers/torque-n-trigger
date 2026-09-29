@@ -111,6 +111,8 @@ class Arena {
     this.gusts = def.gusts || null; // the river gusts (Chrome Heights)
     this.flood = def.flood || null; // the flash flood (the Undercity)
     this.ceilingAt = def.ceilingAt || null; // what's overhead, for the camera
+    this.triggers = def.triggers?.length ? def.triggers : null; // gadgets' trigger pads (world coordinates)
+    this.triggered = {}; // when each last went off (world state, set each tick)
     if (def.gustExposure) this.gustExposure = (car) => def.gustExposure(car.pos.x, car.pos.z);
     if (def.obstacles.length > 64) {
       this.grid = new Map();
@@ -139,8 +141,18 @@ class Arena {
     this.time = t;
   }
 
+  // (A gate is a lift standing up as a wall: down flush while open.)
   liftTop(l) {
+    if (l.gate) return this.gateOpen(l.gate) ? 0 : l.hMax;
     return l.hMax * (0.5 - 0.5 * Math.cos((2 * Math.PI * this.time) / l.period + l.phase));
+  }
+
+  gateOpen(g) {
+    if (g.link) {
+      const at = this.triggered[g.link];
+      return at !== undefined && this.time - at < g.openFor;
+    }
+    return (this.time / g.period) % 1 < 0.5;
   }
 
   sweeperAngle(s) {
@@ -372,7 +384,7 @@ class Arena {
       else boxWall(p.x, p.z, p.hw, p.hd);
     };
     for (const p of this.def.platforms) deck(p, p.h);
-    for (const l of this.def.lifts) deck(l, this.liftTop(l));
+    for (const l of this.def.lifts) deck(l, (l.base || 0) + this.liftTop(l));
     // Movers: a heavy block at car height (clear it by jumping).
     for (const m of this.def.movers) {
       if (ly !== undefined && (ly > m.y0 + m.h + 0.3 || ly < m.y0 - 1.5)) continue;
@@ -383,7 +395,7 @@ class Arena {
     }
     // Sweepers: rotating bars at car height (clear them by jumping).
     for (const s of this.def.sweepers) {
-      if (ly !== undefined && ly > s.height + 0.3) continue;
+      if (ly !== undefined && ly > (s.base || 0) + s.height + 0.3) continue;
       const a = this.sweeperAngle(s);
       const c = Math.cos(a);
       const sn = Math.sin(a);
@@ -461,12 +473,10 @@ class Arena {
     const x = wx - this.cx;
     const z = wz - this.cz;
     const ly = y === undefined ? 0.6 : y - this.y0;
-    if (ly < 1.5) {
-      const plate = this.def.hazards.find((h) => Math.hypot(x - h.x, z - h.z) < h.r);
-      if (plate) return plate;
-    }
+    const plate = this.def.hazards.find((h) => ly - (h.base || 0) < 1.5 && Math.hypot(x - h.x, z - h.z) < h.r);
+    if (plate) return plate;
     for (const s of this.def.sweepers) {
-      if (ly > s.height + 0.5) continue;
+      if (ly > (s.base || 0) + s.height + 0.5) continue;
       const a = this.sweeperAngle(s);
       const lx = Math.cos(a) * (x - s.x) + Math.sin(a) * (z - s.z);
       const lz = -Math.sin(a) * (x - s.x) + Math.cos(a) * (z - s.z);
