@@ -27,12 +27,13 @@ const BRANCH_HALF = 6.5;
 export const ekey = (a, b) => (a < b ? `${a}-${b}` : `${b}-${a}`);
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
-const maps = new Map();
+const maps = new WeakMap();
 
-// The district's street network, lots and landmarks (cached per district).
+// The district's street network, lots and landmarks (cached per district: an
+// edited copy of a district is a new style, with its own map).
 export function districtMap(style) {
-  if (!maps.has(style.id)) maps.set(style.id, generateMap(style));
-  return maps.get(style.id);
+  if (!maps.has(style)) maps.set(style, generateMap(style));
+  return maps.get(style);
 }
 
 function generateMap(style) {

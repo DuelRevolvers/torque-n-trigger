@@ -7,6 +7,7 @@ import { districtLayout } from '../sim/cityLayout.js';
 import { buildAuthoredStructures } from './arenaView.js';
 import { gustAt } from '../sim/gusts.js';
 import * as G from '../sim/geom2d.js';
+import { itemDrawer } from './itemCapture.js';
 
 // A rooftop district (Chrome Heights): the city far below (its streets,
 // lamps, traffic and the river), the glass towers up to their decks, the roof
@@ -26,7 +27,8 @@ export function buildRoofDistrictView(map, tex) {
   const street = R.street ?? 0;
   const group = new THREE.Group();
   const add = (m) => m && group.add(m);
-  const items = districtLayout(map).items;
+  const layout = districtLayout(map);
+  const items = layout.items;
   const flags = []; // flag mounts (lamp masts), windsocks, crane jibs: gathered as the items are drawn
   const socks = [];
   const jibList = [];
@@ -124,7 +126,8 @@ export function buildRoofDistrictView(map, tex) {
   cityBelow();
   towers();
   roofRoads();
-  for (const it of items) draw(it);
+  const drawItem = itemDrawer(B, texts, blink, flags, socks, jibList, group);
+  for (const it of layout.draw) drawItem(it, draw);
   const props = breakables();
   const traffic = trafficMeshes();
   const gustFx = gustEffects();

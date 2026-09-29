@@ -41,6 +41,7 @@ src/
     event.js          event rules: countdown/launch, finishing, laps, pit, arena scoring, drag rules, style bonuses
     arena.js          enclosed arena venue (same query interface as tracks)
     city.js           district street grids (lots, landmarks, arena lot) and event routes over them, with shortcuts
+    layoutEdits.js    T&T SDK edits to a district's objects (keys, remove/move/turn/copy)
     trackgen.js       seeded generators (legacy venues), validation, jumps and pickup spots
     ai.js             AI drivers: racing line, overtaking, weapons, utility, recovery (same InputFrames as players)
     vehicle.js        raycast vehicle physics
@@ -49,6 +50,7 @@ src/
     carParams.js      hand-tuned reference car used by the physics tests
     tracks/           track and arena definitions (venues.js)
   career/             career save, districts, shops, garage operations, rewards and salvage
+  content/            T&T SDK map documents (docs/tt-sdk-design.md)
   screens/            starter selection, garage, city map, race/results
   parts/              part catalog, named AI drivers, starter generation,, quality/traits/condition, fitting rules, stats + PR, physics params, generator
   core/fixedLoop.js   fixed-timestep loop with render interpolation

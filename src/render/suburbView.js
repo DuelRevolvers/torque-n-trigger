@@ -943,7 +943,9 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
 
   // Items the ground needs (patches, driveways, fairways, paths, the pond).
   for (const it of items) if (['patch', 'fairway', 'driveway', 'footpath', 'pondWater', 'hazard'].includes(it.t)) districtItems.push(it);
-  return { ground, drawers, finish };
+  // What the drawers add to (for drawing edited items, render/itemCapture.js).
+  const buckets = [B, trees, props, sprinklers, mistMeshes];
+  return { ground, drawers, finish, buckets };
 }
 
 function ellipsePts(cx, cz, rx, rz, n = 16) {

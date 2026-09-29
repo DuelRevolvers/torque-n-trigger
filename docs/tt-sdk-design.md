@@ -1,8 +1,13 @@
-# Map Editor: design doc
+# T&T SDK: design doc
 
-**Status:** agreed design; the owner answered the open questions (§15).
-Nothing is built yet. E0 waits until the districts are built to their docs
-(§15 decision 2).
+The **T&T SDK** is Torque & Trigger's map editor: the owner's tool for
+building the game's districts and events, and (simplified) the players'
+Creator mode.
+
+**Status:** agreed design; the owner answered the open questions (§15). The
+districts were rebuilt to their docs first (decision 2), and the architecture
+below is written for that code. **E0 (foundation) is done**; E1 (the SDK's
+first usable version) is next. See §13.
 
 **If you're picking this up in a new session**, read §1–§4 first. They cover the goals, the two
 editions, the principles and the architecture. §13 is the build order.
@@ -36,7 +41,7 @@ play-test in one button).
 
 | | **Studio** (owner / dev) | **Creator** (in-game, for players) |
 |---|---|---|
-| Opened from | `editor.html` (like `texture-lab.html`) and the dev build | Main menu → Creator, available from the start |
+| Opened from | `sdk.html` (like `texture-lab.html`) and the dev build | Main menu → Creator, available from the start |
 | Assets | All | A kit or asset becomes available when the player unlocks it in the career (§6.4) |
 | Makes | Venues, events and whole districts (new districts can join the city map and career) | Venues, events and whole custom districts (never in the career) |
 | Saves to | Project files (`src/content/maps/*.json`) via a dev-server endpoint | Browser storage (IndexedDB), plus export/import of `.ttmap` files |
@@ -76,131 +81,136 @@ a separate program, so fixes reach both editions.
 
 ## 4. Architecture
 
+How the game builds a district (since the district rebuild):
+
 ```
-            ┌──────────── map file (JSON, §5) ────────────┐
-            │ terrain · roads · objects · fills · sites ·  │
-            │ events · look/theme · meta                   │
-            └──────┬───────────────────────────┬───────────┘
-      loadMap()    │ (sim, deterministic)      │ buildMapView() (render)
-                   ▼                           ▼
-   venue: ground (heightmap), holes,     chunked, merged meshes per
-   compound/rotated obstacles, ramps,    material; asset builders from
-   platforms, lifts, sweepers, hazards,  the render registry
-   triggers; tracks built from event
-   routes over the road network
-                   ▲                           ▲
-            asset registry (sim half)   asset registry (render half)
+src/districts/<district>.js    the district's data: its plan (boundary, named nodes,
+      │                        streets as paths, sites as polygons, terrain), lots,
+      │                        set pieces and look. Plain data.
+      │  planMap / authoredGridMap           fixed rules, nothing random
+      ▼
+map: streets, blocks, sites, the ground's height, decks, tunnels ...
+      │  planLayout / authoredLayout         fixed rules, nothing random
+      ▼
+layout items: every object in the district, { t, footprint (r | obb | poly), y, h,
+solid, ... }: 3,000–15,000 per district, about 250 types
+      ├──► simulation: free roam, races and arenas collide with exactly these
+      │    (layoutObstacle); breakables, sprinklers, holes, ramps and decks come from them
+      └──► renderer: the district's view draws each item with its type's drawer
+           (planView and its suburb/under/spire kits, roofView, districtView)
 ```
 
-### 4.1 New modules
+The SDK edits a district at two levels:
 
-| Path | Purpose |
-|---|---|
-| `src/content/assets/*.js` | Sim half of each asset: id, category, kits, params, collision shapes, snap rules, behaviour, budget cost. No three.js. |
-| `src/render/assets/*.js` | Render half: `build(params, look)` → geometry per material. Code moved out of `districtView.js`. |
-| `src/content/mapFormat.js` | Schema, version, migrations, compact encode/decode, validation. |
-| `src/sim/mapLoader.js` | Map JSON → venue (free roam, arena, track events). Must be deterministic. |
-| `src/render/mapView.js` | Map JSON → scene. Chunked; rebuilds only dirty chunks. |
-| `src/content/importDistrict.js` | Bakes a generated district (`districtMap` + `districtLayout` + routes) into a map file. |
-| `src/content/store.js` | Built-in, override and custom content layers (§9). |
-| `src/editor/*` | The editor app: viewport, camera, tools, gizmo, history, panels, validation, test drive. |
-| `editor.html` | Studio entry point. Creator is opened from `menuScreen.js`. |
+1. **Objects** (E0, E1). Edits sit on top of the layout items: remove, move,
+   turn, copy (`src/sim/layoutEdits.js`). Items are named by stable keys. The
+   simulation reads the edited items. The renderer draws each edited item
+   from its original data with its own drawer, and moves (or throws away)
+   exactly what that drawer added (`src/render/itemCapture.js`). So all ~250
+   object types can be edited with no per-type code, and what's drawn is what
+   collides.
+2. **The plan** (E3, E4). Streets, sites, lots and terrain are already data in
+   the district file. The road, lot and terrain tools edit that data, and the
+   district's own rules rebuild it. Object edits on top are kept by key; any
+   whose object no longer exists are reported (never silently lost).
 
-### 4.2 Engine changes the editor needs
+This replaces the first draft's plan (bake every district into a new object
+format with its own renderer): each district's own rules and drawers stay the
+single source of how things look and collide, so there is nothing to convert
+and nothing to drift.
 
-These are prerequisites, all in the sim, all testable in Node:
+### 4.1 Modules
 
-1. **Rotated and compound collision** (`arena.js`). Obstacles today are
-   axis-aligned `{x, z, hw, hd, y, h}`. Add `yaw` (oriented boxes) and let one
-   asset contribute several shapes (box, cylinder approximated by a box ring,
-   wedge/ramp, deck/platform, hole, hazard zone, trigger volume). Keep the
-   spatial grid, so free roam stays fast with thousands of shapes.
-2. **Heightmap ground.** Replace the analytic `heightAt` (sine waves) with a
-   sampled grid (default 4 m cells, bilinear). Importing samples the old
-   formula into the grid, so existing districts keep their hills. `ground()`
-   is already the single entry point for car physics.
-3. **Road network as data.** Today streets are a grid of nodes and straight
-   edges with fixed widths from `STREET`. They become road nodes and segments,
-   each with a type, a width and optional curve control points (§7.3). Event
-   routes produce a spline `Track` over the network exactly as now, so
-   `track.js`, `ai.js` and lap logic keep working.
-4. **Surface types from paint.** The terrain paint layer maps onto the existing
-   `SURFACE` grip classes (ROAD / CURB / OFFROAD) and new ones if needed.
-5. **Chunked rendering.** `districtView.js` merges a whole district into a few
-   meshes. The editor needs per-object selection, so render in ~64 m chunks,
-   merged per material. The object being dragged or selected renders as its
-   own mesh until you release it.
+| Path | Purpose | When |
+|---|---|---|
+| `src/sim/layoutEdits.js` | Object keys, fixed types, the move maths, `applyEdits` | E0 ✓ |
+| `src/sim/cityLayout.js` | `baseLayout(map)` (keyed, cached), `districtLayout(map)` (with the style's edits: `items` for the sim, `draw` for the renderer), `setEdits(map, edits)` (the SDK re-applying edits without rebuilding the district) | E0 ✓ |
+| `src/render/itemCapture.js` | `itemDrawer(buckets)`: draws edited items with a view's own drawers; moves or drops what they drew | E0 ✓ |
+| `src/content/mapDoc.js` | Map documents (§5): from a district, validate, migrate, parse/serialize, fingerprint, `districtFromDoc` | E0 ✓ |
+| `src/sim/tracks/venues.js` | Venues cached per district style, so an edited copy gets its own | E0 ✓ |
+| `src/content/store.js` | Built-in, override and custom layers (§9) | E2 |
+| `src/sdk/*`, `sdk.html` | The SDK app: viewport, camera, tools, gizmo, history, panels, validation, test drive | E1 |
+
+### 4.2 What the engine already has, and what's left
+
+1. **Rotated and shaped collision: already there.** `arena.js` handles rotated
+   boxes, convex polygons, decks (drive on top, under bridges), tunnels,
+   spiral ramps and moving objects.
+2. **Terrain: a sculpt layer, not a heightmap.** Each district's ground is a
+   function built from its plan (slopes, bowls, hills, dips, flats, decks,
+   pits, drains), with sharp features (deck edges, pit walls) a coarse grid
+   can't hold. Terrain brushes (E3) add a sculpt layer (a height grid added
+   to the district's own ground). The plan's terrain features stay editable
+   as data.
+3. **Roads: already data.** Streets are named nodes and paths with curves,
+   widths, surfaces and medians. The road tool (E4) edits them.
+4. **Surfaces: already there.** `patch` items and the plan's surfaces map
+   onto the grip classes.
+5. **Editing speed.** A district view takes 0.3–3 s to build: fine for
+   opening a map, too slow while dragging. In E1 the dragged object is drawn
+   on its own as a preview. While a view is built, `itemCapture` sees exactly
+   what each item adds, so it can record each item's vertex ranges in the
+   merged meshes. Moving or hiding an object then updates those vertices in
+   place, with a full rebuild only on save or test drive.
 
 ## 5. Map file format
 
-A versioned JSON file. Big arrays (heights, paint) are base64 typed arrays.
-Objects use short keys to keep files small, because built-in maps are bundled
-into the single-file build.
+A versioned JSON document (`src/content/mapDoc.js`), file extension `.ttmap`.
 
 ```jsonc
 {
   "format": "tt-map", "version": 1,
-  "id": "rustline", "name": "Rustline Docks",
-  "origin": "builtin",            // builtin | override | custom
-  "base": "rustline@<hash>",      // overrides: which built-in version this was made from
-  "kit": "docks",                 // default asset set shown first in the browser
-  "look":  { "building": "#b09a88", "lamp": "#ffae50", "neon": ["#ff7a1a", "#ffb000"], ... }, // as districts.js `look`
-  "theme": { "haze": "#20140f", "fog": 0.0042, "rain": false, "time": "night" },
-  "bounds": [-900, 900, -560, 620],
-  "edge": "filler",               // what walls the map in: filler buildings | water | wall | cliff
-  "terrain": { "cell": 4, "origin": [-900, -560], "size": [451, 296],
-               "heights": "<int16 b64, cm>", "paint": "<u8 b64>",
-               "water": { "level": -1.5, "areas": [[[x, z], ...]] } },
-  "roads": {
-    "nodes":    [{ "id": 1, "x": -740, "z": -420, "y": null }],   // y null = follows terrain
-    "segments": [{ "id": 1, "a": 1, "b": 2, "type": "street", "ctrl": [], "street": "Gate Road",
-                   "deck": null, "tunnel": false, "closed": false }],
-    "streets":  [{ "name": "Gate Road", "short": "gate" }]
+  "id": "strip", "name": "Neon Strip",
+  "base": "strip",          // the built-in district it was made from (null: a new district)
+  "baseHash": "9f3c01aa",   // that district's fingerprint when made: a game update that changes it shows up
+  "district": {             // the district, as in src/career/districts.js
+    "id": "strip", "name": "Neon Strip", "tier": 1, "faction": "...", "color": "#ff2a6d", "blurb": "...",
+    "theme": { "haze": "#1e0d30", "fog": 0.0045 },
+    "map": [[x, y], ...], "frame": [...], "label": [x, y],   // its place on the city map
+    "city": { /* the district file's data: plan (or grid), look, arenas ... */ },
+    "events": [ /* §8 */ ], "boss": { }
   },
-  "sites":   [{ "id": 3, "kind": "arena", "name": "Dry Dock Yard", "poly": [[x, z], ...] }],
-  "fills":   [{ "id": 9, "kind": "lot.housing", "poly": [[x, z], ...], "seed": 4471, "style": "warehouse" }],
-  "objects": [{ "id": 120, "a": "container.stack", "p": [x, y, z], "yaw": 1.57, "s": 1,
-                "v": { "tiers": 3, "color": 2 }, "g": 7, "lock": 0 }],
-  "groups":  [{ "id": 7, "name": "Terminal stacks" }],
-  "spawn":   { "x": 40, "z": -80, "yaw": 0 },                  // free roam start
-  "events":  [ /* §8 */ ],
-  "logic":   [ /* §7.9, Studio */ ],
-  "cityMap": { "outline": [[x, y], ...], "frame": [...], "label": [x, y] }, // Studio: placement on the city map screen
-  "meta":    { "author": "", "created": "", "modified": "", "editor": "1.0", "thumb": "<png b64>" }
+  "edits": {
+    "remove": ["car@120,-44"],
+    "move":   { "bldg.hotel@-210,88": { "dx": 4, "dz": 0, "yaw": 0.26, "dy": 0 } },
+    "add":    [{ "id": "a1", "from": "lamp@33,61", "x": 40, "z": 61, "yaw": 0 }]
+  },
+  "meta": { "created": "...", "modified": "...", "editor": "T&T SDK 0.1" }
 }
 ```
 
-- **Fills** are lots filled by the existing generator from a seed (buildings,
-  housing, plaza, parking, park, quad, yard, tanks, construction, alley). They
-  keep files small. **Break apart** turns a fill into ordinary objects you can
-  edit one by one.
-- **Migrations:** every version bump ships a migration, so old map files and
-  exports always load.
-- **Size budget:** a baked district should be ≤ 300 KB. Use gzip for hosted
-  builds. Measure this in E2.
+- **Keys** name objects: `type[.kind]@x,z`, where the object stands to the
+  metre, plus `~2`, `~3`... when several share a spot. They're the same
+  every time the district is built.
+- **Moves** are relative to where the district's rules put the object. yaw
+  turns it about its middle. It keeps its height above the ground, plus dy.
+- **Copies** (`add`) copy an existing object (`from`) to a new place, with
+  its collision, behaviour and look.
+- **Later versions** add the terrain sculpt layer (E3), plan edits (E4),
+  copies from other districts, and a thumbnail. Every version bump ships a
+  migration, so old documents and exports always open.
+- **Size:** a district's data is 6–250 KB (Chrome Heights' decks are the
+  biggest), and edits are a few KB.
 
 ## 6. Asset system
 
-### 6.1 Asset definition (sim half)
+### 6.1 What an asset is
 
-```js
-defineAsset({
-  id: 'container.stack', name: 'Container Stack', category: 'Industrial',
-  kits: ['docks', 'undercity'], tags: ['container', 'cover', 'stackable'],
-  params: { tiers: { min: 1, max: 4, def: 2 }, color: { palette: 'container' } },
-  scale: 'none',                        // none | uniform [min,max] | per-axis ranges
-  shapes: (p) => [obb(0, 0, 0, 6.1, 1.3 * p.tiers, 1.2)],   // collision, derived, never user-edited
-  snap: { ground: true, sockets: ['container.top', 'container.end'], align: ['lot-edge', 'road-side'] },
-  behaviour: null,                      // or 'ramp' | 'lift' | 'sweeper' | 'hazard' | 'pickup' | 'gate' ...
-  cost: { tris: 48, draws: 0 },         // for the performance meter
-});
-```
+An asset is an object type the districts already use: a layout item type
+(about 250 of them, e.g. `car`, `lamp`, `tree`, `bldg` and its kinds, `stack`,
+`stall`, `brk` fence panels). Each comes with everything already working:
 
-The render half registers `build(params, look)` under the same id and gets the
-district's `look` colours, so assets take on each district's palette
-automatically.
+- its **collision** is its footprint (`layoutObstacle`);
+- its **behaviour** is the simulation's (breakables break, sprinklers water,
+  ramps launch, holes swallow);
+- its **look** is its district's drawer.
 
-### 6.2 Catalogue (first pass, from what the game already draws)
+Placing one copies an existing object (`edits.add` with `from`), so the
+owner's requirement 4 holds by construction. The SDK's catalogue
+(`src/sdk/catalogue.js`, E1) gives each type a name, category, thumbnail and a
+representative object to copy from.
+
+### 6.2 Catalogue (first pass: E1 maps these onto the item types)
 
 | Category | Assets |
 |---|---|
@@ -222,14 +232,19 @@ used anywhere.
 
 ### 6.3 Asset rules
 
-- Every asset must have sim shapes that match its visuals. A test renders each
-  asset's shapes over its mesh bounds and fails if they differ by more than a
-  tolerance.
+- **Fixed types** (`FIXED` in `layoutEdits.js`) can be removed but not moved
+  or copied. These are street, ground and water pieces, and set pieces tied to
+  a district's moving parts (the runaway RV, the flash flood, the cash truck,
+  the rooftop crossings).
+- **Copies of breakables and sprinklers get their own ids.** The world state
+  tells them apart by id, so each copy breaks or waters on its own.
+- **Using an asset in another district** (a Maple Hollow tree in the
+  Undercity) needs the district kits' drawers available in every view. This
+  is a Studio feature for E4: kit drawers depend on kit materials, so they'll
+  be set up on demand.
 - Decorative assets with no collision (signs high on walls, cables overhead)
   must sit above car height or on another asset's surface. Otherwise
   placement warns: "looks solid, isn't".
-- Behaviour assets carry their full logic in the sim (lifts use `setTime`,
-  sweepers damage, hazards deal DPS), so they work without any setup.
 
 ### 6.4 Unlocks (Creator)
 
@@ -512,28 +527,21 @@ instead of generating it (see §15 decision 2).
   and prefabs), and multiplayer. There is no online map browser (§15
   decision 4).
 
-## 10. Importing the existing districts
+## 10. Opening the existing districts
 
-`importDistrict(style)`:
+A built-in district opens as a map document that holds its own data
+(`docFromDistrict`). The district's own rules then build it, with the same
+code the game uses, so there is nothing to convert and nothing that can drift.
 
-1. Runs the current generator (`districtMap`, `districtLayout`) and samples
-   `heightAt` into the heightmap.
-2. Writes the street grid as road nodes and segments, with names from the
-   authored `grid.cols` / `grid.rows`.
-3. Writes sites and landmarks as site and landmark objects.
-4. Writes everything else as **explicit objects** (not fills), so the imported
-   district looks and plays *exactly* like the generated one.
-5. Converts the district's events and boss to event records.
-6. Imports the stand-alone venues (`DATA_CENTRE`, the drag strip, the
-   test loop) the same way.
+Tests (`tests/sdk.test.js`, `tests/sdkRender.test.js`) check that:
 
-**Regression test:** a district's free-roam venue from the generator and from
-its imported map produce the same obstacles, holes, ramps and ground (to a
-tolerance). Every built-in map must load, validate and round-trip
-(save → load → equal).
-
-Import can be re-run until a district is first saved from Studio. The
-district docs remain the spec: Studio is how districts get built to them.
+- every district goes through a document and back unchanged;
+- every object has a unique key, the same on every build;
+- edits are what free roam collides with (moved, turned, removed, copied), and
+  an edited copy of a district never changes the built-in one;
+- edits are what's drawn. In every district, every movable object is moved far
+  away: nothing of it is left behind, and everything arrives. A turned object
+  is drawn turned the same way it collides.
 
 ## 11. Saving and storage
 
@@ -568,9 +576,9 @@ Each milestone ends in something the owner can try.
 
 | # | Milestone | Done when |
 |---|---|---|
-| **E0** | Engine prep: rotated/compound collision, heightmap ground, asset registry for existing props (sim + render halves split out of `districtView.js`), map format + loader for arenas and free roam, chunked render | Tests pass; the Data Centre arena loads from a map file and plays the same |
-| **E1** | Editor shell: `editor.html`, camera, asset browser, drag-drop placement, snapping, gizmo, inspector, undo/redo, save/load, test drive, performance meter | Owner builds a small arena from presets and drives it |
-| **E2** | Import: all districts and venues baked to map files; overrides layer; game loads maps | Rustline opens in the editor looking and playing identical; moving a building shows up in the game; Revert works |
+| **E0** ✓ | Foundation: object keys; the edit layer (remove, move, turn, copy) in the sim and the renderer; map documents; venues per edited copy; tests | Done 2026-09-29: every district opens as a document unchanged, and edits are what's drawn and what collides (§10) |
+| **E1** | The SDK's first version: `sdk.html`, open a district, fly camera, top-down view, select any object, move/turn with a gizmo, delete, copy, drag objects from a catalogue, snapping, undo/redo, save/load `.ttmap`, test drive | Owner opens Neon Strip, rearranges a block and drives through it |
+| **E2** | Overrides: the store (built-in, override, custom); the game plays overrides in free roam, custom events and multiplayer (never the career); Studio's "save as built-in" to `src/content/maps/`; the "base changed" notice | Moving a building in the SDK shows up in the game's free roam; Revert works |
 | **E3** | Terrain: brushes, paint/surfaces, water, gaps, conform | Owner reshapes a hill and paints a dirt shortcut that drives as off-road |
 | **E4** | Roads and lots: draw/edit roads, junctions, road types, auto dressing, street names, lot fills, sites, line tool, scatter, prefabs | Owner adds a new street with a junction and fills its blocks |
 | **E5** | Events: route builder for all types, auto closures/shortcuts/jumps, validation, AI test run, career fields | Owner makes a new sprint and replaces an existing circuit in the career |
@@ -582,10 +590,8 @@ Each milestone ends in something the owner can try.
 | Risk | Mitigation |
 |---|---|
 | Road junctions (curved roads meeting at any angle) are hard to mesh cleanly | Start with a limited set of junction shapes (T, cross, Y, merge) with snap angles; free angles later |
-| Baked districts are large in the single-file build | Compact encoding, fills for new content, size check in tests |
 | Rendering speed drops as users add objects | Performance meter, Creator hard cap, chunk merging, instancing for repeated props |
-| Import doesn't match the generated district exactly | Regression test (§10) before any district switches to its map file |
-| The district rebuild (docs process) is still in progress | Keep import re-runnable; switch a district to its map file only when the owner says so (§15 decision 2) |
+| A district's rules change and object keys shift (an edit's object moves or disappears) | Edits are kept by key; any that lose their object are reported, and the SDK offers to re-attach them to the nearest object of the same type |
 | Custom maps desync online | Loading is deterministic from JSON; hash check in the lobby |
 | Players make impossible events | Validation errors block play; AI test run |
 

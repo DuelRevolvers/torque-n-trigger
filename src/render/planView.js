@@ -12,6 +12,7 @@ import { suburbView } from './suburbView.js';
 import { buildRoofDistrictView } from './roofView.js';
 import { underView } from './underView.js';
 import { spireView } from './spireView.js';
+import { itemDrawer } from './itemCapture.js';
 
 // A plan district (the Neon Strip on): its ground in layers (sidewalk
 // everywhere, the lots on top, then the site surfaces, the roads along their
@@ -195,13 +196,13 @@ export function buildPlanDistrictView(map, tex) {
   const speakers = [];
   const sprays = [];
   const DRAW = makeDrawers({ B, neon, flicker, speakers, sprays, text, sign, frontOf, buildingBox, H, look });
-  for (const it of layout.items) {
-    if (it.hidden) continue;
+  const drawItem = itemDrawer(B, ...neon, texts, flicker, speakers, sprays, group, ...(kit?.buckets || []));
+  const drawOne = (it) => {
     const own = kit?.drawers[it.t];
-    if (own && own(it) !== false) continue;
-    const draw = DRAW[it.t];
-    if (draw) draw(it);
-  }
+    if (own && own(it) !== false) return;
+    DRAW[it.t]?.(it);
+  };
+  for (const it of layout.draw) if (!it.hidden) drawItem(it, drawOne);
   const sub = kit?.finish();
 
   // --- Merge ---

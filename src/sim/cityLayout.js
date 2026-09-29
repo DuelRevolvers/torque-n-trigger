@@ -5,18 +5,48 @@
 // fences, posts, pillars and rooftop clutter.
 //
 // Item: { t: type, r: [x0, x1, z0, z1] footprint, h: height above the ground,
-// solid, hidden (collision only: the renderer draws it its own way), ...data }.
+// solid, hidden (collision only: the renderer draws it its own way), key (its
+// name for edits), ...data }.
+//
+// A district edited in the T&T SDK carries its edits (style.edits, see
+// layoutEdits.js): the layout is then the district's own with the edits made,
+// items for the simulation and draw for the renderer.
 
 import { makeRng } from '../parts/generate.js';
 import { SETBACK, quadRing, splitLot, nearPath, edgeSpans, TUNNEL_HALF } from './city.js';
 import { authoredLayout } from './authoredLayout.js';
 import { planLayout } from './planLayout.js';
+import { assignKeys, applyEdits } from './layoutEdits.js';
 
+const bases = new WeakMap();
 const cache = new WeakMap();
 
+// The district's own layout, before any edits (items keyed).
+export function baseLayout(map) {
+  if (!bases.has(map)) {
+    const layout = map.plan ? planLayout(map) : map.authored ? authoredLayout(map) : buildLayout(map);
+    assignKeys(layout.items);
+    bases.set(map, layout);
+  }
+  return bases.get(map);
+}
+
+// The layout with the district's edits made: { items, draw, orphans }.
 export function districtLayout(map) {
-  if (!cache.has(map)) cache.set(map, map.plan ? planLayout(map) : map.authored ? authoredLayout(map) : buildLayout(map));
+  if (!cache.has(map)) {
+    const base = baseLayout(map);
+    cache.set(map, map.style.edits ? { ...base, ...applyEdits(base.items, map.style.edits, map.heightAt) } : { ...base, draw: base.items, orphans: [] });
+  }
   return cache.get(map);
+}
+
+// The SDK changing a district's edits: made again on the district's own layout
+// (kept), without building the district again. Only for a district the SDK
+// has open (its own copy), never a built-in one.
+export function setEdits(map, edits) {
+  map.style.edits = edits || undefined;
+  cache.delete(map);
+  return districtLayout(map);
 }
 
 // Neon arches span these streets (fixed per street, shared with the renderer).

@@ -351,5 +351,7 @@ export function spireView({ map, tex, H, group, items, text, clipToConvex, merge
     };
   }
 
-  return { ground, drawers, finish };
+  // What the drawers add to (for drawing edited items, render/itemCapture.js).
+  const buckets = [B, beacons];
+  return { ground, drawers, finish, buckets };
 }

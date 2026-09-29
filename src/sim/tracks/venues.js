@@ -64,12 +64,16 @@ export const VENUES = {
 
 const generated = new Map();
 // City venues are named 'city:<district>:<route>' and built from the event's
-// district style and route spec (passed as def).
+// district style and route spec (passed as def), kept per style: a district
+// edited in the T&T SDK is its own style, with its own venues.
+const cityVenues = new WeakMap();
 export function getVenue(id, def = null) {
   if (VENUES[id]) return VENUES[id];
   if (id.startsWith('city:')) {
-    if (!generated.has(id)) generated.set(id, cityVenue(def.city, def.route));
-    return generated.get(id);
+    if (!cityVenues.has(def.city)) cityVenues.set(def.city, new Map());
+    const own = cityVenues.get(def.city);
+    if (!own.has(id)) own.set(id, cityVenue(def.city, def.route));
+    return own.get(id);
   }
   if (!generated.has(id)) {
     const [, kind, seedText] = id.split('-');

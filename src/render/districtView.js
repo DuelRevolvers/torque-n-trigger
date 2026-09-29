@@ -10,6 +10,7 @@ import { rampGeometry } from './shapes.js';
 import { buildAuthoredStructures } from './arenaView.js';
 import { buildPlanDistrictView } from './planView.js';
 import { distantSpire } from './spireLandmark.js';
+import { itemDrawer } from './itemCapture.js';
 
 // A whole city district, built once and shared by every event held there:
 // streets and sidewalks in the district's own surface (roof decks with gaps to
@@ -407,8 +408,9 @@ function districtViewOf(map, tex) {
   };
 
   // --- Everything in the layout ---
-  for (const it of layout.items) {
-    if (it.hidden) continue;
+  const drawItem = itemDrawer(bGeos, darkGeos, signGeos, steelGeos, yellowGeos, coneGeos, barrierGeos, paintedGeos, containerGeos, plantGeos, glowGeos, waterGeos, windowGeos, shackGeos, beaconGeos, shutterGeos, crossingGeos, quayCranes, group);
+  for (const it of layout.draw) if (!it.hidden) drawItem(it, drawLayoutItem);
+  function drawLayoutItem(it) {
     const { x, z } = it;
     switch (it.t) {
       case 'bldg':

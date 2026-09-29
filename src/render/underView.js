@@ -615,5 +615,7 @@ export function underView({ map, tex, H, group, items, text, clipToConvex, merge
     };
   }
 
-  return { ground, drawers, finish };
+  // What the drawers add to (for drawing edited items, render/itemCapture.js).
+  const buckets = [B, ...N, sirens, strobes, gushes];
+  return { ground, drawers, finish, buckets };
 }
