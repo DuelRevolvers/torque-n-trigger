@@ -46,6 +46,10 @@
       #brush-opts label { display: grid; grid-template-columns: 62px 1fr 34px; gap: 6px; }
       #brush-opts select { grid-column: 2 / 4; }
       #brush-opts input[type=range] { width: 100%; }
+      .opts { display: grid; gap: 6px; margin-bottom: 10px; padding: 6px; border: 1px solid var(--line); border-radius: 3px; }
+      .opts label { display: grid; grid-template-columns: 62px 1fr; gap: 6px; }
+      .opts input, .opts select { width: 100%; }
+      .opts .tip { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.4; }
       #search { width: 100%; margin-bottom: 6px; }
       #cat h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
       .entry { display: flex; justify-content: space-between; gap: 6px; padding: 3px 6px; border-radius: 3px; cursor: grab; }
@@ -117,6 +121,22 @@
         <button data-tool="flatten" title="Flatten to the height where you start (5)">Flatten</button>
         <button data-tool="paint" title="Paint the ground: grip in free roam (6)">Paint</button>
         <button data-tool="erase" title="Erase paint (7)">Erase</button>
+        <button data-tool="road" title="Draw a new street (8)">Road</button>
+        <button data-tool="lot" title="Set what a block is (9)">Lot</button>
+      </div>
+      <div id="road-opts" class="opts" hidden>
+        <label>Name <input id="road-name" value="New Street" /></label>
+        <label>Width <select id="road-width"><option value="lane">Lane (7 m)</option><option value="street" selected>Street (12 m)</option><option value="avenue">Avenue (20 m)</option></select></label>
+        <label>Surface <select id="road-surface"><option value="asphalt">Asphalt</option><option value="dirt">Dirt (off-road, a shortcut)</option></select></label>
+        <p class="tip">Click along the way; it joins any street it starts, ends or crosses on. Enter or double-click to build it, Backspace takes a point back, Esc cancels.</p>
+      </div>
+      <div id="lot-opts" class="opts" hidden>
+        <label>Block <select id="lot-kind"></select></label>
+        <p class="tip">Click a block to make it this kind: the district fills it its own way.</p>
+      </div>
+      <div id="place-opts" class="opts" hidden>
+        <label>Place <select id="place-mode"><option value="one">One at a time</option><option value="line">Along a line</option><option value="scatter">Scatter (hold and brush)</option></select></label>
+        <label>Spacing <input type="number" id="spacing" min="1" max="100" step="1" value="8" /></label>
       </div>
       <div id="brush-opts" hidden>
         <label>Size <input type="range" id="radius" min="2" max="60" value="12" /><span id="radius-v"></span></label>

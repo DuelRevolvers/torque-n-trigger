@@ -20,6 +20,7 @@
 export const FORMAT = 'tt-map';
 export const VERSION = 1;
 export const EDITOR = 'T&T SDK 0.1';
+import { applyPlanEdits, hasPlanEdits } from '../sim/planEdits.js';
 
 const KEYS = ['id', 'name', 'tier', 'faction', 'color', 'blurb', 'theme', 'map', 'frame', 'label', 'city', 'events', 'boss'];
 
@@ -46,6 +47,7 @@ export function docFromDistrict(d, now = new Date().toISOString()) {
   const district = districtData(d);
   const edits = { ...emptyEdits(), ...district.city?.edits };
   if (district.city) delete district.city.edits;
+  delete edits.plan; // (a published plan has its street edits made already)
   return {
     format: FORMAT,
     version: VERSION,
@@ -64,7 +66,7 @@ export const baseChanged = (doc, d) => !!doc.base && hashOf(districtData(d)) !==
 
 // Is there anything edited?
 export const hasEdits = (e) =>
-  !!e && ((e.remove?.length || 0) + Object.keys(e.move || {}).length + (e.add?.length || 0) + Object.keys(e.terrain?.dh || {}).length + Object.keys(e.paint?.s || {}).length > 0);
+  !!e && ((e.remove?.length || 0) + Object.keys(e.move || {}).length + (e.add?.length || 0) + Object.keys(e.terrain?.dh || {}).length + Object.keys(e.paint?.s || {}).length + (hasPlanEdits(e.plan) ? 1 : 0) > 0);
 
 // Problems with a document (an empty list if it's fine to open).
 export function validateDoc(doc) {
@@ -110,6 +112,7 @@ export function districtFromDoc(doc) {
   if (!districts.has(doc)) {
     const d = json(doc.district);
     if (hasEdits(doc.edits)) d.city.edits = json(doc.edits);
+    if (d.city.plan && hasPlanEdits(doc.edits?.plan)) d.city.plan = applyPlanEdits(d.city.plan, doc.edits.plan);
     districts.set(doc, d);
   }
   return districts.get(doc);

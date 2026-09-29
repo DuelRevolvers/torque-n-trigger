@@ -23,10 +23,10 @@ export class Session {
     // The district's own copy, built on its sculpted ground (again only when
     // the ground changes: 0.1-2 s); object edits are made on it.
     const e = this.doc.edits;
-    const ground = JSON.stringify([e.terrain || null, e.paint || null]);
+    const ground = JSON.stringify([e.terrain || null, e.paint || null, e.plan || null]);
     if (ground !== this.groundKey) {
       this.groundKey = ground;
-      this.district = districtFromDoc({ ...this.doc, edits: { ...emptyEdits(), terrain: e.terrain, paint: e.paint } });
+      this.district = districtFromDoc({ ...this.doc, edits: { ...emptyEdits(), terrain: e.terrain, paint: e.paint, plan: e.plan } });
       this.map = districtMap(this.district.city);
       this.base = new Map(baseLayout(this.map).items.map((it) => [it.key, it]));
     }
@@ -34,16 +34,25 @@ export class Session {
     this.byKey = new Map(this.layout.items.map((it) => [it.key, it]));
   }
 
-  // One change to the edits, as one step (false if nothing changed).
+  // One change to the edits, as one step (false if nothing changed). A change
+  // the district can't be built with (a street crossing another with no
+  // junction) is undone and its error thrown.
   change(fn) {
     const before = JSON.stringify(this.doc.edits);
     fn(this.doc.edits);
     if (JSON.stringify(this.doc.edits) === before) return false;
+    try {
+      this.apply();
+    } catch (err) {
+      this.doc.edits = JSON.parse(before);
+      this.groundKey = null;
+      this.apply();
+      throw err;
+    }
     this.past.push(before);
     this.future = [];
     this.doc.meta.modified = new Date().toISOString();
     this.dirty = true;
-    this.apply();
     return true;
   }
 
@@ -126,6 +135,20 @@ export class Session {
     const id = `a${n}`;
     this.change((e) => e.add.push({ id, from, x: r3(x), z: r3(z), yaw: r3(yaw) }));
     return `+${id}`;
+  }
+
+  // Copies of district item `from` at each [x, z, yaw], as one step.
+  addMany(from, list) {
+    const ids = [];
+    this.change((e) => {
+      let n = e.add.length + 1;
+      for (const [x, z, yaw] of list) {
+        while (e.add.some((a) => a.id === `a${n}`)) n++;
+        e.add.push({ id: `a${n}`, from, x: r3(x), z: r3(z), yaw: r3(yaw || 0) });
+        ids.push(`+a${n}`);
+      }
+    });
+    return ids;
   }
 
   duplicate(key, dx = 4, dz = 0) {

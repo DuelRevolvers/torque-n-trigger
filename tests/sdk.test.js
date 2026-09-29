@@ -129,6 +129,35 @@ test('sdk: sculpted ground, painted dirt and water are what free roam drives on'
   assert.ok(near(s.map.heightAt(20, 60), own.heightAt(20, 60)));
 });
 
+test('sdk: a new street joins the network with junctions, and its blocks are filled', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { roadEdit, lotEdit } = await import('../src/sdk/roads.js');
+  const strip = byId('strip');
+  const s = new Session(docFromDistrict(strip));
+  const before = s.map.blocks.length;
+  // Across Palace Drive (no junction at x = 0, z = -100 yet), junction to junction.
+  const pe = roadEdit(s, [[-140, -100], [140, -100]], { width: 'street', name: 'Test Street' });
+  assert.ok(s.change((e) => (e.plan = pe)));
+  const st = s.map.streets.find((q) => q.name === 'Test Street');
+  assert.ok(st, 'the street is built');
+  const palace = s.district.city.plan.streets.find((q) => q.name === 'Palace Drive');
+  const cross = palace.path.find((p) => typeof p === 'string' && p.startsWith('sdk-'));
+  assert.ok(cross, 'a junction put into Palace Drive where it crosses');
+  assert.ok(st.marks.some((m) => m.node.name === cross), 'and into the new street');
+  assert.ok(s.map.blocks.length > before, 'the street splits blocks');
+  assert.ok(s.layout.items.some((it) => it.t === 'bldg'), 'blocks filled');
+  // A block given a kind; a street that can't be built is refused and undone.
+  const kinds = s.map.blocks.map((b) => b.kind);
+  assert.ok(s.change((e) => (e.plan = lotEdit(s, s.map.blocks[0].x, s.map.blocks[0].z, 'parking'))));
+  assert.notDeepEqual(s.map.blocks.map((b) => b.kind), kinds);
+  const edits = JSON.stringify(s.doc.edits);
+  assert.throws(() => s.change((e) => (e.plan = { ...e.plan, streets: { ...e.plan.streets, Bad: { name: 'Bad', path: ['nowhere', 'strip-palace'] } } })));
+  assert.equal(JSON.stringify(s.doc.edits), edits, 'refused edit undone');
+  // Saved and played: the game builds the same street.
+  const d = districtFromDoc(parseDoc(serializeDoc(s.doc)));
+  assert.ok(districtMap(d.city).streets.some((q) => q.name === 'Test Street'));
+});
+
 test('sdk: street and ground pieces stay put, and edits that lost their object are reported', () => {
   const strip = byId('strip');
   const map = districtMap(strip.city);

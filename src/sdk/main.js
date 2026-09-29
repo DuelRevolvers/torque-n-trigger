@@ -10,6 +10,8 @@ import { canMove } from '../sim/layoutEdits.js';
 import { Session, footBox } from './session.js';
 import { catalogue, CATEGORIES } from './catalogue.js';
 import { brush } from './brush.js';
+import { roadEdit, lotEdit, lotKinds, linePoints } from './roads.js';
+import * as G from '../sim/geom2d.js';
 import { saveOverride, listOverrides, removeOverride, setOverrideOn, shippedMap } from '../content/store.js';
 
 // The T&T SDK (Studio): opens a district as a map document; select, move,
@@ -63,6 +65,9 @@ let panning = null;
 let tool = 'select';
 let stroke = null; // a ground brush stroke under way (Session.stroke())
 let brushAt = null; // where the brush is on the ground
+let roadPts = []; // the road tool's points so far
+let lineFrom = null; // placing along a line: where it starts
+let scatter = null; // placing by scatter: [[x, z, yaw]] so far
 let rebuildTimer = 0;
 const cam = { x: 0, y: 300, z: 400, yaw: Math.PI, pitch: -0.6, top: null };
 const keys = new Set();
@@ -328,20 +333,35 @@ function showOverlay() {
     const src = session.base.get(placing.from);
     const fb = footBox(src);
     const lift = session.baseY(src) - H(fb.x, fb.z);
-    box({ x: ghostAt.x, z: ghostAt.z, w: fb.w, d: fb.d, yaw: fb.yaw + placeYaw }, H(ghostAt.x, ghostAt.z) + lift, src.h || 2, 0x05d9e8, 0.25);
+    const ghost = (x, z, yaw) => box({ x, z, w: fb.w, d: fb.d, yaw: fb.yaw + yaw }, H(x, z) + lift, src.h || 2, 0x05d9e8, 0.25);
+    if (scatter) for (const [x, z, yaw] of scatter) ghost(x, z, yaw);
+    else if (lineFrom) for (const [x, z, yaw] of linePoses(lineFrom, [ghostAt.x, ghostAt.z])) ghost(x, z, yaw);
+    else ghost(ghostAt.x, ghostAt.z, placeYaw);
   }
 }
 
 // --- Ground tools -----------------------------------------------------------------
 
+const BRUSHES = new Set(['raise', 'lower', 'smooth', 'flatten', 'paint', 'erase']);
+const spacing = () => Math.max(1, Number($('spacing').value) || 8);
 const TOOL_NAMES = { raise: 'Raise', lower: 'Lower', smooth: 'Smooth', flatten: 'Flatten', paint: 'Paint', erase: 'Erase paint' };
 const brushOpts = (dt) => ({ radius: Number($('radius').value), strength: Number($('strength').value), kind: $('kind').value, target: stroke?.target, dt });
 
 function setTool(t) {
+  if ((t === 'road' || t === 'lot') && !session.map.plan) {
+    toast('Streets and blocks can be edited in the street districts; Rustline Docks comes later.');
+    return;
+  }
   tool = t;
+  roadPts = [];
   for (const b of document.querySelectorAll('#tools button')) b.classList.toggle('on', b.dataset.tool === t);
-  $('brush-opts').hidden = t === 'select';
+  $('brush-opts').hidden = !BRUSHES.has(t);
   $('kind-row').hidden = t !== 'paint';
+  $('road-opts').hidden = t !== 'road';
+  $('lot-opts').hidden = t !== 'lot';
+  if (t === 'lot') $('lot-kind').innerHTML = lotKinds(session.district.city.plan).map((k) => `<option>${esc(k)}</option>`).join('');
+  showRoad();
+  showLotHover();
   if (t !== 'select') {
     placing = null;
     ghostAt = null;
@@ -363,7 +383,7 @@ function clearGroup(g) {
 
 // The brush's edge on the ground.
 function showBrush() {
-  if (tool === 'select' || !brushAt || !session) {
+  if (!BRUSHES.has(tool) || !brushAt || !session) {
     ring.visible = false;
     return;
   }
@@ -430,6 +450,121 @@ function showPreview() {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setIndex(idx);
   preview.add(new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: 0x05d9e8, wireframe: true, transparent: true, opacity: 0.45, fog: false })));
+}
+
+// --- Roads, blocks, lines of objects, scatter ------------------------------------
+
+const lineMat = () => new THREE.LineBasicMaterial({ color: 0xffb000, depthTest: false, transparent: true, fog: false });
+const roadLine = new THREE.Line(new THREE.BufferGeometry(), lineMat());
+const blockLine = new THREE.LineLoop(new THREE.BufferGeometry(), lineMat());
+for (const l of [roadLine, blockLine]) {
+  l.renderOrder = 12;
+  l.visible = false;
+  scene.add(l);
+}
+function setLine(line, pts) {
+  line.geometry.dispose();
+  line.geometry = new THREE.BufferGeometry();
+  line.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pts.flatMap(([x, z]) => [x, H(x, z) + 0.5, z]), 3));
+  line.visible = pts.length > 1;
+}
+
+// The street being drawn, along the ground, to the cursor.
+function showRoad() {
+  if (tool !== 'road' || !session) {
+    roadLine.visible = false;
+    return;
+  }
+  const pts = [...roadPts];
+  if (brushAt && roadPts.length) pts.push([brushAt.x, brushAt.z]);
+  const dense = [];
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const [ax, az] = pts[k];
+    const [bx, bz] = pts[k + 1];
+    const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 4));
+    for (let q = 0; q < n; q++) dense.push([ax + ((bx - ax) * q) / n, az + ((bz - az) * q) / n]);
+  }
+  if (pts.length) dense.push(pts[pts.length - 1]);
+  setLine(roadLine, dense);
+}
+
+function buildRoad() {
+  const pts = roadPts;
+  roadPts = [];
+  showRoad();
+  if (pts.length < 2) return;
+  let pe;
+  try {
+    pe = roadEdit(session, pts, { width: $('road-width').value, surface: $('road-surface').value, name: $('road-name').value });
+  } catch (err) {
+    window.alert(err.message);
+    return;
+  }
+  setBusy('Building the street…');
+  setTimeout(() => {
+    try {
+      if (session.change((e) => (e.plan = pe))) {
+        changed();
+        toast(`${Object.keys(pe.streets).pop()} built: its blocks are filled the district's way.`);
+      } else setBusy(null);
+    } catch (err) {
+      setBusy(null);
+      window.alert(`That street can't be built there: ${err.message}`);
+    }
+  }, 30);
+}
+
+function setLot(g) {
+  if (!session.map.blockAt(g.x, g.z)) return;
+  const kind = $('lot-kind').value;
+  setBusy('Filling the block…');
+  setTimeout(() => {
+    try {
+      if (session.change((e) => (e.plan = lotEdit(session, g.x, g.z, kind)))) changed();
+      else setBusy(null);
+    } catch (err) {
+      setBusy(null);
+      window.alert(`That block can't be ${kind}: ${err.message}`);
+    }
+  }, 30);
+}
+
+// The block under the cursor (the lot tool).
+function showLotHover() {
+  const b = tool === 'lot' && brushAt && session?.map.blockAt ? session.map.blockAt(brushAt.x, brushAt.z) : null;
+  if (!b) blockLine.visible = false;
+  else setLine(blockLine, b.lot);
+}
+
+// Copies along a line from a to b, turned to run along it.
+function linePoses(a, b) {
+  const { pts, yaw } = linePoints(a, b, spacing());
+  const fb = footBox(session.base.get(placing.from));
+  return pts.slice(0, 300).map(([x, z]) => [x, z, yaw - fb.yaw + placeYaw]);
+}
+
+function placeLine(a, b) {
+  const ids = session.addMany(placing.from, linePoses(a, b));
+  lineFrom = null;
+  selected = ids[ids.length - 1] || null;
+  changed();
+}
+
+const onStreet = (x, z) => (session.map.edgeList || []).some((e) => e.street && G.nearestOnLine(e.pts, x, z).d < e.street.half + 1);
+
+// Scatter: a few tries a frame at a spot in the brush, clear of the streets and
+// of what's been scattered already (spacing apart), each turned at random.
+function scatterTick() {
+  const r = spacing() * 2.5;
+  for (let k = 0; k < 3 && scatter.length < 400; k++) {
+    const a = Math.random() * Math.PI * 2;
+    const d = Math.sqrt(Math.random()) * r;
+    const x = ghostAt.x + Math.cos(a) * d;
+    const z = ghostAt.z + Math.sin(a) * d;
+    if (scatter.some(([px, pz]) => Math.hypot(px - x, pz - z) < spacing()) || onStreet(x, z)) continue;
+    scatter.push([x, z, Math.random() * Math.PI * 2]);
+  }
+  showOverlay();
 }
 
 function endStroke() {
@@ -587,9 +722,17 @@ function refresh() {
 function hint() {
   $('hint').textContent = !session
     ? 'Open a built-in district or a .ttmap file to start'
-    : tool !== 'select'
-      ? `${TOOL_NAMES[tool]}: hold the left button and move · [ ] size · 1 back to Select · Ctrl+Z undo`
-      : placing
+    : tool === 'road'
+      ? 'Road: click along the way · Enter or double-click to build · Backspace takes a point back · Esc cancels · 1 back to Select'
+      : tool === 'lot'
+        ? 'Lot: click a block to make it the chosen kind · 1 back to Select · Ctrl+Z undo'
+        : tool !== 'select'
+          ? `${TOOL_NAMES[tool]}: hold the left button and move · [ ] size · 1 back to Select · Ctrl+Z undo`
+          : placing && $('place-mode').value === 'line'
+            ? `Placing ${placing.name} along a line: click ${lineFrom ? 'where it ends' : 'where it starts'} · wheel or Q/E to turn · Esc to stop`
+            : placing && $('place-mode').value === 'scatter'
+              ? `Scattering ${placing.name}: hold the left button and brush (spacing sets how far apart) · Esc to stop`
+              : placing
     ? `Placing ${placing.name}: click to place (Shift: keep placing) · wheel or Q/E to turn · Alt: no snap · Esc to stop`
     : drag
       ? 'Wheel or Q/E to turn · Alt: no snap'
@@ -608,6 +751,7 @@ function renderCatalogue() {
       .join('')}`;
   }).join('');
   $('cat').innerHTML = html || '<p class="none">Nothing matches.</p>';
+  $('place-opts').hidden = !placing;
 }
 
 // --- Input ------------------------------------------------------------------------
@@ -626,6 +770,10 @@ for (const id of ['radius', 'strength']) {
   show();
 }
 $('kind').addEventListener('change', showBrush);
+$('place-mode').addEventListener('change', () => {
+  lineFrom = null;
+  hint();
+});
 $('cat').addEventListener('click', (e) => {
   const el = e.target.closest('.entry');
   if (!el || !session) return;
@@ -677,6 +825,18 @@ canvas.addEventListener('mousedown', (e) => {
   }
   if (e.button !== 0) return;
   setRay(e);
+  if (tool === 'road') {
+    const g = groundHit();
+    if (g && e.detail < 2) roadPts.push([g.x, g.z]);
+    if (e.detail >= 2) buildRoad();
+    else showRoad();
+    return;
+  }
+  if (tool === 'lot') {
+    const g = groundHit();
+    if (g) setLot(g);
+    return;
+  }
   if (tool !== 'select') {
     const g = groundHit();
     if (!g) return;
@@ -688,7 +848,16 @@ canvas.addEventListener('mousedown', (e) => {
   }
   if (placing) {
     const g = groundHit();
-    if (g) placeEntry(placing, g, e, false);
+    if (!g) return;
+    const mode = $('place-mode').value;
+    if (mode === 'line') {
+      if (!lineFrom) lineFrom = [snap(g.x, e), snap(g.z, e)];
+      else placeLine(lineFrom, [snap(g.x, e), snap(g.z, e)]);
+    } else if (mode === 'scatter') {
+      scatter = [];
+      ghostAt = { x: g.x, z: g.z };
+    } else placeEntry(placing, g, e, false);
+    hint();
     return;
   }
   const key = pickAt();
@@ -726,6 +895,8 @@ window.addEventListener('mousemove', (e) => {
   if (tool !== 'select') {
     brushAt = g;
     showBrush();
+    showRoad();
+    showLotHover();
     return;
   }
   if (drag) {
@@ -763,6 +934,15 @@ window.addEventListener('mouseup', (e) => {
   }
   if (e.button === 1) {
     panning = null;
+    return;
+  }
+  if (e.button === 0 && scatter) {
+    const list = scatter;
+    scatter = null;
+    if (list.length) {
+      session.addMany(placing.from, list);
+      changed();
+    } else showOverlay();
     return;
   }
   if (e.button === 0 && stroke) {
@@ -820,6 +1000,14 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (flying || ctrl) return; // WASD and Q/E fly while the right button is held
+  if (tool === 'road' && roadPts.length && ['Enter', 'NumpadEnter', 'Backspace', 'Escape'].includes(e.code)) {
+    e.preventDefault();
+    if (e.code === 'Backspace') roadPts.pop();
+    else if (e.code === 'Escape') roadPts = [];
+    else buildRoad();
+    showRoad();
+    return;
+  }
   const step = e.shiftKey ? 0.1 : gridSize();
   const [fx, fz] = flat();
   const [rx, rz] = right();
@@ -831,7 +1019,9 @@ window.addEventListener('keydown', (e) => {
     case 'Digit5':
     case 'Digit6':
     case 'Digit7':
-      setTool(['select', 'raise', 'lower', 'smooth', 'flatten', 'paint', 'erase'][Number(e.code.slice(5)) - 1]);
+    case 'Digit8':
+    case 'Digit9':
+      setTool(['select', 'raise', 'lower', 'smooth', 'flatten', 'paint', 'erase', 'road', 'lot'][Number(e.code.slice(5)) - 1]);
       break;
     case 'BracketLeft':
     case 'BracketRight':
@@ -874,6 +1064,7 @@ window.addEventListener('keydown', (e) => {
     case 'Escape':
       placing = null;
       ghostAt = null;
+      lineFrom = null;
       drag = null;
       renderCatalogue();
       select(null);
@@ -949,6 +1140,7 @@ function frame(now) {
     showPreview();
     showBrush();
   }
+  if (scatter && ghostAt && placing) scatterTick();
   const w = canvas.clientWidth;
   const h = canvas.clientHeight;
   if (canvas.width !== Math.round(w * renderer.getPixelRatio()) || canvas.height !== Math.round(h * renderer.getPixelRatio())) {
