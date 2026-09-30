@@ -409,6 +409,7 @@ function showOverlay() {
     else if (lineFrom) for (const [x, z, yaw] of linePoses(lineFrom, [ghostAt.x, ghostAt.z])) ghost(x, z, yaw);
     else ghost(ghostAt.x, ghostAt.z, placeYaw);
   }
+  drawRing();
   showFeature();
 }
 
@@ -1177,6 +1178,8 @@ function refresh() {
         ${field('in-lift', 'lift (m)', p.dy, 0.25)}
       </div>
       <div class="row">
+        <button id="b-left" title="Turn 15° (Q; Shift+Q: 1°)">⟲ 15°</button>
+        <button id="b-right" title="Turn the other way 15° (E; Shift+E: 1°)">⟳ 15°</button>
         <button id="b-dup" ${movable ? '' : 'disabled'} title="Ctrl+D">Duplicate</button>
         <button id="b-focus" title="F">Focus</button>
         ${moved ? '<button id="b-reset">Put back</button>' : ''}
@@ -1191,6 +1194,8 @@ function refresh() {
       });
     }
     $('b-dup').addEventListener('click', duplicate);
+    $('b-left').addEventListener('click', (ev) => turn(1, ev.shiftKey));
+    $('b-right').addEventListener('click', (ev) => turn(-1, ev.shiftKey));
     $('b-focus').addEventListener('click', focus);
     $('b-del').addEventListener('click', removeSelected);
     $('b-reset')?.addEventListener('click', () => session.reset(selected) && changed());
@@ -1398,6 +1403,13 @@ canvas.addEventListener('mousedown', (e) => {
     hint();
     return;
   }
+  // The rotation ring round the selection: drag it (its handle, or anywhere on it) to turn.
+  const ring = ringOf();
+  const rg = ring && groundHit();
+  if (rg && Math.abs(Math.hypot(rg.x - ring.x, rg.z - ring.z) - ring.r) < Math.max(1.5, ring.r * 0.15)) {
+    drag = { ...ring.drag, sx: e.clientX, sy: e.clientY, rotating: true, a0: Math.atan2(rg.x - ring.x, rg.z - ring.z), moved: false };
+    return;
+  }
   // A gadget (drawn on its own); else an object; else a junction, street or site.
   const gp = groundHit();
   const gid = gp ? gadgetAt(gp.x, gp.z) : null;
@@ -1458,6 +1470,16 @@ window.addEventListener('mousemove', (e) => {
   if (drag) {
     if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
     drag.moved = true;
+    if (drag.rotating) {
+      // (Turned by the angle the cursor has gone round the middle; 15° steps, Alt: free.)
+      if (g) {
+        const turned = drag.yaw0 + Math.atan2(g.x - drag.cx, g.z - drag.cz) - drag.a0;
+        drag.yaw = e.altKey ? turned : snapTurn(turned, false);
+      }
+      showOverlay();
+      hint();
+      return;
+    }
     if (g) {
       drag.x = snap(g.x + drag.ox, e);
       drag.z = snap(g.z + drag.oz, e);
@@ -1509,7 +1531,7 @@ window.addEventListener('mouseup', (e) => {
     const d = drag;
     drag = null;
     if (d.moved && d.feature?.type === 'gadget') {
-      if (session.setGadget(d.feature.id, { x: Math.round(d.x * 100) / 100, z: Math.round(d.z * 100) / 100 })) changed(false);
+      if (session.setGadget(d.feature.id, { x: Math.round(d.x * 100) / 100, z: Math.round(d.z * 100) / 100, ...(d.rotating ? { yaw: d.yaw } : {}) })) changed(false);
       feature = gadgetFeature(d.feature.id);
       showOverlay();
       return;
@@ -1896,8 +1918,8 @@ function gadgetInspector(ins, f) {
       ${nums.map((k) => `<label for="gd-${k}">${LABELS[k]}</label><input id="gd-${k}" data-k="${k}" type="number" step="${k === 'speed' ? 0.1 : 1}" value="${g[k]}" />`).join('')}
       ${g.type === 'gate' ? `<label for="gd-link">opened by</label><select id="gd-link"><option value="">its timer</option>${triggers.map((t) => `<option value="${t.id}"${g.link === t.id ? ' selected' : ''}>trigger pad ${t.id}</option>`).join('')}</select>` : ''}
     </div>
-    <div class="row"><button id="f-del" class="danger">Delete</button></div>
-    <p class="note">Drag it to move it; Q/E turn it. Gadgets work in free roam and in arena events.</p>`;
+    <div class="row"><button id="gd-left" title="Turn 15° (Q)">⟲ 15°</button><button id="gd-right" title="Turn the other way 15° (E)">⟳ 15°</button><button id="f-del" class="danger">Delete</button></div>
+    <p class="note">Drag it to move it; drag its ring (or Q/E) to turn it. Gadgets work in free roam and in arena events.</p>`;
   const apply = () => {
     const patch = { yaw: (Number($('gd-turn').value) * Math.PI) / 180 };
     for (const el of ins.querySelectorAll('[data-k]')) if (Number.isFinite(Number(el.value)) && el.value !== '') patch[el.dataset.k] = Math.max(0.1, Number(el.value));
@@ -1907,6 +1929,8 @@ function gadgetInspector(ins, f) {
     showOverlay();
   };
   for (const el of ins.querySelectorAll('input, select')) el.addEventListener('change', apply);
+  $('gd-left').addEventListener('click', (ev) => turn(1, ev.shiftKey));
+  $('gd-right').addEventListener('click', (ev) => turn(-1, ev.shiftKey));
   $('f-del').addEventListener('click', deleteFeature);
 }
 
@@ -2187,4 +2211,39 @@ function lookBy(dyaw, dpitch) {
   cam.x = pivot.x - f.x * dist;
   cam.y = pivot.y - f.y * dist;
   cam.z = pivot.z - f.z * dist;
+}
+
+// --- Rotation ring -----------------------------------------------------------------------
+// Round the selected object or gadget: a ring on the ground with a handle
+// where it faces. Drag the ring to turn it (15° steps, Alt: free).
+
+function ringOf() {
+  if (!session || tool !== 'select' || placing || placingGadget) return null;
+  const it = selected && session.item(selected);
+  if (it && canMove(it)) {
+    const fb = footBox(it);
+    const p = session.pose(selected);
+    return { x: fb.x, z: fb.z, y: session.baseY(it), r: Math.max(fb.w, fb.d) / 2 + 2.5, yaw: fb.yaw, drag: { key: selected, ox: 0, oz: 0, x: p.x, z: p.z, yaw: p.yaw, yaw0: p.yaw, cx: fb.x, cz: fb.z } };
+  }
+  if (feature?.type === 'gadget') {
+    const g = session.gadgets().find((q) => q.id === feature.id);
+    if (g) return { x: g.x, z: g.z, y: H(g.x, g.z), r: Math.max(3, feature.r || 3) + 1.5, yaw: g.yaw || 0, drag: { feature, ox: 0, oz: 0, x: g.x, z: g.z, yaw: g.yaw || 0, yaw0: g.yaw || 0, cx: g.x, cz: g.z } };
+  }
+  return null;
+}
+
+function drawRing() {
+  const ring = ringOf();
+  if (!ring || (drag?.moved && !drag.rotating)) return;
+  const yaw = drag?.rotating ? ring.yaw + drag.yaw - drag.yaw0 : ring.yaw;
+  const y = ring.y + 0.4;
+  const mat = new THREE.LineBasicMaterial({ color: drag?.rotating ? 0x05d9e8 : 0xffb000, depthTest: false, transparent: true, fog: false });
+  const circle = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([...Array(48).keys()].map((k) => new THREE.Vector3(ring.x + Math.sin((k / 48) * Math.PI * 2) * ring.r, y, ring.z + Math.cos((k / 48) * Math.PI * 2) * ring.r))), mat);
+  const hx = ring.x + Math.sin(yaw) * ring.r;
+  const hz = ring.z + Math.cos(yaw) * ring.r;
+  const arm = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(ring.x, y, ring.z), new THREE.Vector3(hx, y, hz)]), mat);
+  const handle = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.2), new THREE.MeshBasicMaterial({ color: mat.color, depthTest: false, fog: false }));
+  handle.position.set(hx, y, hz);
+  for (const o of [circle, arm, handle]) o.renderOrder = 14;
+  overlay.add(circle, arm, handle);
 }
