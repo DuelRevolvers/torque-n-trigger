@@ -136,7 +136,7 @@ export function buildPlanDistrictView(map, tex) {
   }
 
   // --- Streets: roads along their curves, junctions, markings, kerbs ---
-  const clearAt = junctionClearances();
+  const { clear: clearAt, shapes: junctionAt } = junctionShapes();
   const road = new Surface();
   const dirtRoad = new Surface(); // a dirt road (Maple Hollow's Foundation Road)
   const kerb = new Surface();
@@ -158,7 +158,7 @@ export function buildPlanDistrictView(map, tex) {
   for (const n of map.nodes) {
     if (!n.name || map.edgeList.some((e) => (e.a === n.id || e.b === n.id) && e.street.drain)) continue;
     const poly = junctionPoly(n);
-    if (poly) junctionGeos.push(flatPoly(poly, (x, z) => H(x, z) - 0.035));
+    if (poly) junctionGeos.push(capGeometry(poly, (x, z) => H(x, z) - 0.035));
   }
   // The roads out of the district carry on beyond its edge.
   for (const n of map.nodes.filter((q) => q.exit)) {
@@ -363,43 +363,112 @@ export function buildPlanDistrictView(map, tex) {
     } else if (st.width >= 12) dashes(0);
   }
 
-  // How far back from each junction a street's road stops (the junction's own
-  // surface covers the rest): enough to clear the other roads meeting there.
-  function junctionClearances() {
-    const out = new Map();
+  // Junctions like real ones. Round a junction, each pair of neighbouring
+  // roads has a corner: their kerbs meet in a curve (a kerb radius, smaller
+  // where the angle is tight), whatever the angle between them. Each road stops
+  // where its corners start (the junction's own surface covers the rest); a
+  // road straight on through carries on. Returns { clear: road end distances
+  // by 'edge:node', shapes: node -> { arms, corners } }.
+  function junctionShapes() {
+    const clear = new Map();
+    const shapes = new Map();
     for (const n of map.nodes) {
       if (!n.name) continue;
-      const here = map.edgeList.filter((e) => e.a === n.id || e.b === n.id).map((e) => {
-        const pts = e.a === n.id ? e.pts : [...e.pts].reverse();
-        const L = G.len2(pts[0], pts[1]);
-        return { e, d: [(pts[1][0] - pts[0][0]) / L, (pts[1][1] - pts[0][1]) / L] };
+      const arms = map.edgeList
+        .filter((e) => (e.a === n.id || e.b === n.id) && !e.street.drain && !e.street.tunnel)
+        .map((e) => {
+          const pts = e.a === n.id ? e.pts : [...e.pts].reverse();
+          const L = G.len2(pts[0], pts[1]) || 1;
+          const d = [(pts[1][0] - pts[0][0]) / L, (pts[1][1] - pts[0][1]) / L];
+          return { e, d, h: e.street.half, a: Math.atan2(d[1], d[0]), max: Math.min(e.len * 0.45, 60), need: 0 };
+        })
+        .sort((p, q) => p.a - q.a);
+      if (arms.length < 2) continue;
+      const corners = arms.map((A, i) => {
+        const B = arms[(i + 1) % arms.length];
+        let phi = B.a - A.a;
+        if (phi <= 0) phi += Math.PI * 2;
+        if (arms.length === 2 && Math.abs(phi - Math.PI) < 0.26) return null; // straight on
+        if (phi >= Math.PI - 0.05) return { A, B, chord: true }; // the outside of a bend, or a straight side
+        // Where A's kerb (on B's side) meets B's (on A's side)...
+        const [px, pz] = [n.x - A.d[1] * A.h, n.z + A.d[0] * A.h];
+        const [qx, qz] = [n.x + B.d[1] * B.h, n.z - B.d[0] * B.h];
+        const den = A.d[0] * B.d[1] - A.d[1] * B.d[0];
+        const [wx, wz] = [qx - px, qz - pz];
+        const sA = (wx * B.d[1] - wz * B.d[0]) / den;
+        const sB = (wx * A.d[1] - wz * A.d[0]) / den;
+        const P = [px + A.d[0] * sA, pz + A.d[1] * sA];
+        // ...and the curve round that corner, where it leaves each kerb.
+        const tan = Math.tan(phi / 2);
+        const R = Math.max(0.5, Math.min(4 + Math.min(A.h, B.h) * 0.4, (A.max - sA) * tan, (B.max - sB) * tan));
+        const T = R / tan;
+        A.need = Math.max(A.need, sA + T);
+        B.need = Math.max(B.need, sB + T);
+        const bis = [A.d[0] + B.d[0], A.d[1] + B.d[1]];
+        const bl = Math.hypot(bis[0], bis[1]) || 1;
+        const C = [P[0] + (bis[0] / bl) * (R / Math.sin(phi / 2)), P[1] + (bis[1] / bl) * (R / Math.sin(phi / 2))];
+        return { A, B, R, C, ta: [P[0] + A.d[0] * T, P[1] + A.d[1] * T], tb: [P[0] + B.d[0] * T, P[1] + B.d[1] * T] };
       });
-      for (const a of here) {
-        let c = 0;
-        for (const b of here) {
-          if (a === b) continue;
-          const sin = Math.abs(a.d[0] * b.d[1] - a.d[1] * b.d[0]);
-          const cos = a.d[0] * b.d[0] + a.d[1] * b.d[1];
-          if (sin < 0.26 && cos < 0) continue; // the same street carrying on
-          c = Math.max(c, b.e.street.half / Math.max(sin, 0.35) + a.e.street.half * Math.max(0, cos) / Math.max(sin, 0.35) + 1);
-        }
-        out.set(`${a.e.id}:${n.id}`, Math.min(c, a.e.len * 0.45));
-      }
+      if (corners.every((k) => !k)) continue;
+      for (const A of arms) clear.set(`${A.e.id}:${n.id}`, Math.max(0, Math.min(A.need, A.max)));
+      shapes.set(n.id, { arms, corners });
     }
-    return out;
+    return { clear, shapes };
   }
 
-  // A junction's surface: the hull of every road's end corners there.
+  // A corner's curve, from where it leaves one kerb to where it meets the next.
+  function cornerArc(k, steps = 8) {
+    const a0 = Math.atan2(k.ta[1] - k.C[1], k.ta[0] - k.C[0]);
+    let da = Math.atan2(k.tb[1] - k.C[1], k.tb[0] - k.C[0]) - a0;
+    while (da > Math.PI) da -= Math.PI * 2;
+    while (da < -Math.PI) da += Math.PI * 2;
+    return [...Array(steps + 1).keys()].map((q) => [k.C[0] + Math.cos(a0 + (da * q) / steps) * k.R, k.C[1] + Math.sin(a0 + (da * q) / steps) * k.R]);
+  }
+
+  // A junction's surface: round it, each road's end, then the corner to the
+  // next road (along the kerb, round the curve); kerbs round the curves.
   function junctionPoly(n) {
-    const pts = [[n.x, n.z]];
-    for (const e of map.edgeList) {
-      if (e.a !== n.id && e.b !== n.id) continue;
-      const c = clearAt.get(`${e.id}:${n.id}`) || 0;
-      const line = e.a === n.id ? e.pts : [...e.pts].reverse();
-      const p = G.pointAlong(line, c + 0.3);
-      for (const s of [-1, 1]) pts.push([p.x - p.dz * s * e.street.half, p.z + p.dx * s * e.street.half]);
-    }
-    return pts.length > 3 ? hull(pts) : null;
+    const J = junctionAt.get(n.id);
+    if (!J) return null;
+    const end = (A, side) => {
+      const c = clearAt.get(`${A.e.id}:${n.id}`) || 0;
+      return [n.x + A.d[0] * c - side * A.d[1] * A.h, n.z + A.d[1] * c + side * A.d[0] * A.h];
+    };
+    const pts = [];
+    J.arms.forEach((A, i) => {
+      pts.push(end(A, -1), end(A, 1));
+      const k = J.corners[i];
+      if (!k || k.chord) return;
+      const arc = cornerArc(k);
+      pts.push(...arc);
+      // (Kerbs: round the curve, and along each road's edge back to its end.)
+      if (A.e.street.sidewalk && k.B.e.street.sidewalk) {
+        const kerbLine = [end(A, 1), ...arc, end(k.B, -1)];
+        for (let q = 0; q + 1 < kerbLine.length; q++) {
+          const [a, b] = [kerbLine[q], kerbLine[q + 1]];
+          const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+          if (L < 0.05) continue;
+          // (Out from the road: towards the corner's middle.)
+          const [ox, oz] = [((b[1] - a[1]) / L) * 0.3, (-(b[0] - a[0]) / L) * 0.3];
+          const sg = (a[0] + ox - k.C[0]) ** 2 + (a[1] + oz - k.C[1]) ** 2 < (a[0] - ox - k.C[0]) ** 2 + (a[1] - oz - k.C[1]) ** 2 ? 1 : -1;
+          const p3 = (x, z) => [x, H(x, z) - 0.04, z];
+          kerb.quad(p3(a[0], a[1]), p3(b[0], b[1]), p3(b[0] + sg * ox, b[1] + sg * oz), p3(a[0] + sg * ox, a[1] + sg * oz), [0, 0], [1, 0], [1, 1], [0, 1]);
+        }
+      }
+    });
+    // (Points on top of each other, where a road ends right at its corner's curve, go once.)
+    return pts.filter((p, q) => q === 0 || Math.hypot(p[0] - pts[q - 1][0], p[1] - pts[q - 1][1]) > 0.02);
+  }
+
+  // A flat (following the ground) polygon of any shape, as a surface.
+  function capGeometry(poly, yAt) {
+    const tris = THREE.ShapeUtils.triangulateShape(poly.map(([x, z]) => new THREE.Vector2(x, z)), []);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(poly.flatMap(([x, z]) => [x, yAt(x, z), z]), 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(poly.flatMap(([x, z]) => [x / 16, z / 16]), 2));
+    g.setIndex(tris.flat());
+    g.computeVertexNormals();
+    return g;
   }
 
   function hull(points) {
