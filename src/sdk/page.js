@@ -128,6 +128,8 @@ export const SDK_HTML = `
       </select>
       <label title="The district's haze"><input type="checkbox" id="fog" /> Fog</label>
       <button id="top-view" title="Look straight down (Tab)">Top view</button>
+      <button id="cam-reset" title="Back to where the camera started">Reset camera</button>
+      <label title="Looking round (right button, touch, gamepad) turns the camera round the selection; with nothing selected it turns on the spot"><input type="checkbox" id="orbit" /> Orbit selection</label>
       <button id="drive" class="go" title="Drive this map in the game, from where you're looking (P)">▶ Test drive</button>
       <button id="play" title="Play these edits in the game's free roam (this browser only; the career keeps the official district)">Play in game</button>
       <button id="publish" title="Studio: ship this map with the game in place of its district, career included (writes src/content/maps)">Publish</button>

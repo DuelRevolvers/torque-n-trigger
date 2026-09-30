@@ -118,6 +118,7 @@ function open(doc) {
     const b = session.map.bounds || { minX: -500, maxX: 500, minZ: -500, maxZ: 500 };
     Object.assign(cam, { x: (b.minX + b.maxX) / 2, z: b.maxZ + 150, yaw: Math.PI, pitch: -0.55, top: null });
     cam.y = H(cam.x, b.maxZ) + 320;
+    homeCam = { x: cam.x, y: cam.y, z: cam.z, yaw: cam.yaw, pitch: cam.pitch };
     applyFog();
     buildView();
     rebuildGadgets();
@@ -1429,8 +1430,7 @@ let hoverAt = 0;
 window.addEventListener('mousemove', (e) => {
   if (!session) return;
   if (flying) {
-    cam.yaw -= e.movementX * 0.003;
-    cam.pitch = Math.max(-1.55, Math.min(1.4, cam.pitch - e.movementY * 0.003));
+    lookBy(-e.movementX * 0.003, -e.movementY * 0.003);
     return;
   }
   if (panning) {
@@ -1683,6 +1683,11 @@ $('undo').addEventListener('click', () => session?.undo() && changed());
 $('redo').addEventListener('click', () => session?.redo() && changed());
 $('fog').addEventListener('change', () => session && applyFog());
 $('top-view').addEventListener('click', () => session && toggleTop());
+$('cam-reset').addEventListener('click', () => {
+  if (!session || !homeCam) return;
+  Object.assign(cam, homeCam, { top: null });
+  $('top-view').classList.remove('on');
+});
 $('drive').addEventListener('click', () => session && testDrive());
 window.addEventListener('beforeunload', (e) => {
   if (session?.dirty) e.preventDefault();
@@ -1969,8 +1974,7 @@ function pollPad(dt) {
   const speed = (held(10) ? 4 : 1) * (20 + altitude() * 0.6) * dt;
   const f = forward();
   const [rx, rz] = right();
-  cam.yaw -= axis(2) * 2.2 * dt;
-  cam.pitch = Math.max(-1.55, Math.min(1.4, cam.pitch - axis(3) * 1.6 * dt));
+  if (axis(2) || axis(3)) lookBy(-axis(2) * 2.2 * dt, -axis(3) * 1.6 * dt);
   cam.x += (f.x * -axis(1) + rx * axis(0)) * speed;
   cam.y += (f.y * -axis(1) + (held(7) ? 1 : 0) - (held(6) ? 1 : 0)) * speed;
   cam.z += (f.z * -axis(1) + rz * axis(0)) * speed;
@@ -2036,8 +2040,7 @@ canvas.addEventListener('touchmove', (e) => {
   }
   const t = e.touches[0];
   if (touch.mode === 'look') {
-    cam.yaw -= (t.clientX - touch.x) * 0.005;
-    cam.pitch = Math.max(-1.55, Math.min(1.4, cam.pitch - (t.clientY - touch.y) * 0.005));
+    lookBy(-(t.clientX - touch.x) * 0.005, -(t.clientY - touch.y) * 0.005);
   } else mouseAt('mousemove', t);
   Object.assign(touch, { x: t.clientX, y: t.clientY });
 }, { passive: false });
@@ -2156,3 +2159,32 @@ function toggleControls(show = $('controls-panel').hidden) {
 }
 document.body.insertAdjacentHTML('beforeend', '<div id="controls-panel" hidden></div>');
 $('controls').addEventListener('click', () => toggleControls());
+
+// --- Camera: looking round -------------------------------------------------------------
+// On the spot, or (Orbit selection) round the selection, keeping it in the
+// middle of the view at the same distance. With nothing selected, on the spot.
+
+let homeCam = null; // where the camera started (Reset camera)
+
+function orbitPivot() {
+  if (!$('orbit').checked || !session) return null;
+  const it = selected && session.item(selected);
+  if (it) {
+    const fb = footBox(it);
+    return new THREE.Vector3(fb.x, session.baseY(it) + (it.h || 2) / 2, fb.z);
+  }
+  if (feature && typeof feature.x === 'number') return new THREE.Vector3(feature.x, H(feature.x, feature.z), feature.z);
+  return null;
+}
+
+function lookBy(dyaw, dpitch) {
+  const pivot = orbitPivot();
+  const dist = pivot ? pivot.distanceTo(new THREE.Vector3(cam.x, cam.y, cam.z)) : 0;
+  cam.yaw += dyaw;
+  cam.pitch = Math.max(-1.55, Math.min(1.4, cam.pitch + dpitch));
+  if (!pivot) return;
+  const f = forward();
+  cam.x = pivot.x - f.x * dist;
+  cam.y = pivot.y - f.y * dist;
+  cam.z = pivot.z - f.z * dist;
+}
