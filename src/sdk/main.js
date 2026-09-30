@@ -592,9 +592,9 @@ function roadHandleAt(g) {
 // A point placed at a 15° step from the last one's heading (Alt, or snapping off: any angle).
 function roadSnap([x, z], e) {
   const last = roadPts[roadPts.length - 1];
-  if (!last || !snapping(e)) return [x, z];
+  if (!last || e?.altKey || !$('snap-turn').checked) return [x, z];
   const L = Math.hypot(x - last[0], z - last[1]);
-  const a = Math.round(Math.atan2(x - last[0], z - last[1]) / TURN) * TURN;
+  const a = Math.round(Math.atan2(x - last[0], z - last[1]) / turnStep()) * turnStep();
   return [last[0] + Math.sin(a) * L, last[1] + Math.cos(a) * L];
 }
 
@@ -1143,10 +1143,12 @@ function select(key) {
 const gridSize = () => Number($('grid').value);
 const snapping = (e) => $('snap').checked && !e?.altKey;
 const snap = (v, e) => (snapping(e) ? Math.round(v / gridSize()) * gridSize() : v);
-const snapTurn = (yaw, fine) => (fine ? Math.round(yaw / FINE) * FINE : Math.round(yaw / TURN) * TURN);
+// Turning: in steps (Snap turns, the step chosen beside it), or smooth; fine: 1°.
+const turnStep = () => (Number($('turn-step').value) * Math.PI) / 180;
+const snapTurn = (yaw, fine) => (fine ? Math.round(yaw / FINE) * FINE : $('snap-turn').checked ? Math.round(yaw / turnStep()) * turnStep() : yaw);
 
 function turn(dir, fine) {
-  const d = dir * (fine ? FINE : TURN);
+  const d = dir * (fine ? FINE : turnStep());
   if (drag) {
     drag.yaw = snapTurn(drag.yaw + d, fine);
     showOverlay();

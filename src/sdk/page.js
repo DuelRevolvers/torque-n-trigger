@@ -119,12 +119,19 @@ export const SDK_HTML = `
       <button id="undo" title="Undo (Ctrl+Z)">Undo</button>
       <button id="redo" title="Redo (Ctrl+Y)">Redo</button>
       <span class="sep"></span>
-      <label title="Snap to the grid while moving and placing (G; hold Alt to move freely)"><input type="checkbox" id="snap" checked /> Snap</label>
+      <label title="Moving and placing snap to the grid (G; off, or hold Alt: smooth)"><input type="checkbox" id="snap" checked /> Snap moves</label>
       <select id="grid" title="Grid size (m)">
         <option value="0.5">0.5 m</option>
         <option value="1" selected>1 m</option>
         <option value="2">2 m</option>
         <option value="5">5 m</option>
+      </select>
+      <label title="Turning (the rotation ring, placing, road angles) goes in steps; off (or hold Alt): smooth"><input type="checkbox" id="snap-turn" checked /> Snap turns</label>
+      <select id="turn-step" title="Turn step">
+        <option value="5">5°</option>
+        <option value="15" selected>15°</option>
+        <option value="45">45°</option>
+        <option value="90">90°</option>
       </select>
       <label title="The district's haze"><input type="checkbox" id="fog" /> Fog</label>
       <button id="top-view" title="Look straight down (Tab)">Top view</button>
