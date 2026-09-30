@@ -24,6 +24,17 @@ const RIVERSIDE = { widths: [30, 34, 28, 32], depth: 44 };
 const HEIGHTS = [8.5, 9.5, 8, 10, 9];
 export const PATCH = { grass: 2, dirt: 2, sand: 3, paved: 0 };
 
+// A number in [0, 1) that looks random but is fixed by the place it's for
+// (and a salt): trees are scattered, and the same plan still builds the same
+// district. (By place, not in turn, so a change in one block doesn't move
+// the trees in every other.)
+export function scatter(x, z, salt = 0) {
+  let h = Math.imul(Math.round(x * 10) ^ 0x3c6ef372, 0x85ebca6b) ^ Math.imul(Math.round(z * 10) + salt * 7919, 0xc2b2ae35);
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
 export function suburbLayout(ctx) {
   const { map, P, H, items, obbItem, deco, clear, reserve, inLot } = ctx;
   const S = P.suburb;
@@ -364,9 +375,17 @@ export function suburbLayout(ctx) {
     if (k % 3 !== 2) {
       for (let u = -w / 2 + 0.3; u < drive[0] - 2.5; u += 2.4) breakable('fence', boxAt(u, Math.min(u + 2.3, drive[0] - 2), 0.3, 0.45), 1);
     }
-    // The verge tree, and the lawn's sprinkler.
-    const [tx, tz] = at(-w / 4, -1);
-    tree(tx, tz, 1, 'maple', {});
+    // The verge trees, anywhere along the verge clear of the driveway: none
+    // on some plots, two on others, each its own size. And the lawn's sprinkler.
+    const [px, pz] = at(0, 0);
+    const room = [-w / 2 + 1.5, drive[0] - 2]; // (along the verge)
+    const trees = scatter(px, pz, 1) < 0.15 ? 0 : scatter(px, pz, 2) < 0.3 ? 2 : 1;
+    for (let q = 0; q < trees; q++) {
+      // (Two: one in each half of the room, so they're apart.)
+      const [a, b] = trees === 2 ? [room[0] + ((room[1] - room[0]) * q) / 2, room[0] + ((room[1] - room[0]) * (q + 1)) / 2] : room;
+      const [tx, tz] = at(a + (b - a) * scatter(px, pz, 3 + q), -1 + (scatter(px, pz, 5 + q) - 0.5) * 0.6);
+      tree(tx, tz, 0.85 + 0.35 * scatter(px, pz, 7 + q), 'maple', {});
+    }
     const [sx, sz] = at(-w / 4, lawn / 2);
     items.push({ t: 'sprinkler', solid: false, id: sprinklerId++, x: sx, z: sz });
     // The backyard: a pool, or a trampoline; garden furniture; fences round it.
@@ -435,35 +454,47 @@ export function suburbLayout(ctx) {
     }
   }
 
-  // Maple trees along both sides of Maple Avenue (on the verges), where no plot put one.
+  // Maple trees along both sides of Maple Avenue (on the verges), where no plot
+  // put one: 11–19 m apart, each side on its own, a gap now and then.
   function mapleTrees() {
     const st = map.streets.find((q) => q.name === S.avenue);
     if (!st) return;
     const cw = S.park?.causeway;
-    for (let t = 20; t < st.len - 20; t += 15) {
-      const p = G.pointAlong(st.pts, t);
-      if (cw && p.z > cw.z0 - 10 && p.z < cw.z1 + 10) continue;
-      for (const sd of [-1, 1]) {
-        const lat = st.edge - 1;
+    for (const sd of [-1, 1]) {
+      for (let t = 20; t < st.len - 20;) {
+        const p = G.pointAlong(st.pts, t);
+        t += 11 + 8 * scatter(p.x, p.z, sd > 0 ? 11 : 12);
+        if (cw && p.z > cw.z0 - 10 && p.z < cw.z1 + 10) continue;
+        if (scatter(p.x, p.z, sd > 0 ? 13 : 14) < 0.12) continue;
+        const lat = st.edge - 1 + (scatter(p.x, p.z, sd > 0 ? 15 : 16) - 0.5) * 0.6;
         const x = p.x - p.dz * sd * lat;
         const z = p.z + p.dx * sd * lat;
         if (map.nodes.some((nd) => (nd.name || nd.ring) && Math.hypot(nd.x - x, nd.z - z) < 24)) continue;
-        tree(x, z, 1.1, 'maple', {});
+        tree(x, z, 0.95 + 0.3 * scatter(x, z, 17), 'maple', {});
       }
     }
   }
 
-  // Trees in the block middles behind the houses (a grid, where nothing stands).
+  // Trees in the block middles behind the houses, where nothing stands:
+  // scattered about a 17 m grid (a few gaps, a few clumps of two), each its own size.
   function woods() {
     const P17 = 17;
     for (const b of map.blocks) {
       if (b.kind !== 'houses') continue;
       const bb = G.polyBounds(b.lot);
-      for (let z = Math.ceil(bb.minZ / P17) * P17; z < bb.maxZ; z += P17) {
-        const shift = Math.round(z / P17) % 2 ? 7 : 0;
-        for (let x = Math.ceil(bb.minX / P17) * P17 + shift; x < bb.maxX; x += P17) {
-          if (!G.pointInPoly(x, z, b.lot) || !inLot(x, z)) continue;
-          tree(x, z, 1.2, 'oak', {});
+      for (let gz = Math.ceil(bb.minZ / P17) * P17; gz < bb.maxZ; gz += P17) {
+        for (let gx = Math.ceil(bb.minX / P17) * P17; gx < bb.maxX; gx += P17) {
+          if (scatter(gx, gz, 21) < 0.15) continue;
+          const at = [[gx + (scatter(gx, gz, 22) - 0.5) * 14, gz + (scatter(gx, gz, 23) - 0.5) * 14]];
+          if (scatter(gx, gz, 24) > 0.8) {
+            const a = scatter(gx, gz, 25) * Math.PI * 2;
+            const r = 4.5 + 2 * scatter(gx, gz, 26);
+            at.push([at[0][0] + Math.cos(a) * r, at[0][1] + Math.sin(a) * r]);
+          }
+          for (const [x, z] of at) {
+            if (!G.pointInPoly(x, z, b.lot) || !inLot(x, z)) continue;
+            tree(x, z, 1 + 0.45 * scatter(x, z, 27), 'oak', {});
+          }
         }
       }
     }

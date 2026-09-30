@@ -454,7 +454,9 @@ The code that builds it:
   `src/render/rvView.js` draws the RV.
 
 Metres: x east, z south, origin mid-district. Nothing is random: the same plan
-always builds the same district.
+always builds the same district. The trees look scattered, but each one's place
+and size come from a fixed hash of where it stands (`scatter` in
+`planSuburb.js`).
 
 **Ground and streets**
 - **Terrain:** the bowl (12 m deep round the pond, 650 m across to the rim) and
@@ -492,7 +494,9 @@ frontage, the avenue first)
   plots east of x 436 (Ridgeway's east side and the Riverside Bridge) and east
   of x 420 below z 300 (Willow Bend's east side).
 - **Each plot, from the street:**
-  - a maple on the verge (solid);
+  - maples on the verge (solid): one on most plots, two on some, none on
+    about one in seven, anywhere along it clear of the driveway, 0.85–1.2×
+    size;
   - an 8 m front lawn with a sprinkler, a picket fence (on two plots in three),
     a mailbox and, on every other plot, two bins (all breakable);
   - a minivan on the driveway on every third plot (solid);
@@ -506,9 +510,12 @@ frontage, the avenue first)
     across the back (all breakable).
 - **Numbers:** 389 plots (358 houses and 31 riverside houses), 146 houses in the
   ring beyond the edge, 245 pools, 389 sprinklers, 8,685 breakable props.
-- **Block middles:** oaks on a staggered 17 m grid wherever nothing stands.
-- **Maple Avenue:** maples every 15 m on both verges (not on the causeway, nor
-  within 24 m of a junction).
+- **Block middles:** oaks wherever nothing stands, scattered up to 7 m from the
+  points of a 17 m grid. About one grid point in seven has none, one in five
+  has a pair 4.5–6.5 m apart, and the oaks are 1–1.45× size.
+- **Maple Avenue:** maples 11–19 m apart on both verges, each side spaced on
+  its own, with a gap now and then (not on the causeway, nor within 24 m of a
+  junction).
 
 **The set pieces**
 - **Water Tower Hill:** the tower at (50, −615), on four solid legs 18 m apart,
