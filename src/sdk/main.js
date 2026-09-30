@@ -7,17 +7,20 @@ import { retroUniforms } from '../render/retroMaterial.js';
 import { buildDistrictView } from '../render/districtView.js';
 import { docFromDistrict, districtFromDoc, serializeDoc, parseDoc, baseChanged } from '../content/mapDoc.js';
 import { canMove, LINKED } from '../sim/layoutEdits.js';
-import { brokenEvents } from './checks.js';
+import { brokenEvents, gridProblem, wayProblem } from './checks.js';
+import { isSpot } from '../sim/routePoints.js';
+import { layoutObstacle } from '../sim/city.js';
+import { onFoot } from '../sim/track.js';
 import { TYPES, MODES, MODIFIER_LABELS, DRIVERS, newEvent, nextKey, routePoint, shortcutOptions, arenaSites, routePreview, aiTestRun } from './events.js';
 import { Session, footBox } from './session.js';
 import { catalogue, CATEGORIES } from './catalogue.js';
-import { brush } from './brush.js';
+import { brush, lift } from './brush.js';
 import { GADGETS, addGadgets } from '../sim/gadgets.js';
 import { SPECIALS, progress, triggerText, specialOfType, specialOfGadget } from '../career/unlocks.js';
 import { buildArena } from '../sim/arena.js';
 import { gadgetView } from '../render/gadgetView.js';
 import { readStore } from '../content/idb.js';
-import { curvePts, roadEdit, gridRoadEdit, extraRoadEdit, removeExtra, lotEdit, gridLotEdit, lotAt, lotKinds, linePoints, featureAt, deleteStreet, setStreet, moveNode, removeNode, deleteSite, gridRemove, gridMoveLine } from './roads.js';
+import { curvePts, roadEdit, gridRoadEdit, extraRoadEdit, removeExtra, joinAt, roadProblem, nodeProblem, lotEdit, gridLotEdit, lotAt, lotKinds, linePoints, featureAt, deleteStreet, setStreet, moveNode, removeNode, deleteSite, gridRemove, gridMoveLine } from './roads.js';
 import * as G from '../sim/geom2d.js';
 import { saveOverride, listOverrides, removeOverride, setOverrideOn, shippedMap } from '../content/store.js';
 import { listMaps, saveMap, deleteMap, sdkGet, sdkPut } from '../content/library.js';
@@ -63,6 +66,10 @@ const ring = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicM
 ring.renderOrder = 11;
 ring.visible = false;
 scene.add(ring);
+const slopeArrow = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xffb000, depthTest: false, transparent: true, fog: false }));
+slopeArrow.renderOrder = 11;
+slopeArrow.visible = false;
+scene.add(slopeArrow);
 const PAINT_COLOR = { dirt: 0x9a7a58, grass: 0x4a9a58, sand: 0xe0cc98, road: 0x9894a8, water: 0x2a6ab8 };
 
 let session = null;
@@ -90,6 +97,8 @@ let gadgetGroup = null; // the gadgets as the game draws them, running
 let evKey = null; // the event being edited (Events tool), and its working copy
 let evDraft = null;
 let evPreview = null;
+let evGrid = null; // the draft's grid, if it doesn't fit (gridProblem)
+let evWay = null; // where the draft runs into something off the streets (wayProblem)
 let evRun = null; // an AI test run: { progress } while it runs, then its results
 let rebuildTimer = 0;
 const cam = { x: 0, y: 300, z: 400, yaw: Math.PI, pitch: -0.6, top: null };
@@ -417,22 +426,63 @@ function showOverlay() {
 
 // --- Ground tools -----------------------------------------------------------------
 
-const BRUSHES = new Set(['raise', 'lower', 'smooth', 'flatten', 'paint', 'erase']);
+const BRUSHES = new Set(['height', 'raise', 'lower', 'smooth', 'flatten', 'paint', 'erase']);
 const spacing = () => Math.max(1, Number($('spacing').value) || 8);
-const TOOL_NAMES = { raise: 'Raise', lower: 'Lower', smooth: 'Smooth', flatten: 'Flatten', paint: 'Paint', erase: 'Erase paint' };
-const brushOpts = (dt) => ({ radius: Number($('radius').value), strength: Number($('strength').value), kind: $('kind').value, target: stroke?.target, dt });
+const TOOL_NAMES = { height: 'Raise / lower', raise: 'Raise', lower: 'Lower', smooth: 'Smooth', flatten: 'Flatten', paint: 'Paint', erase: 'Erase paint' };
+const brushOpts = (dt) => ({ radius: Number($('radius').value), strength: Number($('strength').value), kind: $('kind').value, target: stroke?.target, dt, angle: ANGLED.has(tool) ? Number($('angle').value) : 0, dir: stroke?.dir, origin: stroke?.origin });
+const ANGLED = new Set(['smooth', 'flatten']);
+
+// The tool tabs (Select is always there, above them): each tab's tools, and the one it last had.
+const TAB_OF = { height: 'terrain', raise: 'terrain', lower: 'terrain', smooth: 'terrain', flatten: 'terrain', paint: 'terrain', erase: 'terrain', road: 'roads', lot: 'roads', events: 'events' };
+const tabTool = { objects: 'select', terrain: 'height', roads: 'road', events: 'events' };
+let tab = 'objects';
+function showTab(t) {
+  tab = t;
+  for (const b of document.querySelectorAll('#tabs [data-tab]')) b.classList.toggle('on', b.dataset.tab === t);
+  for (const p of document.querySelectorAll('#left .pane')) p.hidden = p.id !== `pane-${t}`;
+}
+
+// The mouse wheel raises and lowers the ground (the Raise / lower tool), or
+// (off) Raise and Lower are held down. Kept in this browser.
+const wheelLift = () => $('wheel-lift').checked;
+try {
+  $('wheel-lift').checked = localStorage.getItem('tt-sdk:wheelLift') !== 'off';
+} catch {
+  // (On.)
+}
+function showLiftTools() {
+  const on = wheelLift();
+  for (const b of document.querySelectorAll('[data-tool="height"]')) b.hidden = !on;
+  for (const b of document.querySelectorAll('[data-tool="raise"], [data-tool="lower"]')) b.hidden = on;
+}
+showLiftTools();
 
 function setTool(t) {
+  if (t === 'height' && !wheelLift()) t = 'raise';
+  if ((t === 'raise' || t === 'lower') && wheelLift()) t = 'height';
+  if (stroke) endStroke();
   tool = t;
   roadPts = [];
   roadBends = [];
   roadStage = 'drawing';
-  for (const b of document.querySelectorAll('#tools button')) b.classList.toggle('on', b.dataset.tool === t);
+  for (const b of document.querySelectorAll('#left [data-tool]')) b.classList.toggle('on', b.dataset.tool === t);
+  if (TAB_OF[t]) {
+    tabTool[TAB_OF[t]] = t;
+    showTab(TAB_OF[t]);
+  }
   $('brush-opts').hidden = !BRUSHES.has(t);
+  $('brush-title').textContent = TOOL_NAMES[t] || 'Terrain';
   $('kind-row').hidden = t !== 'paint';
+  $('wheel-row').hidden = !['height', 'raise', 'lower'].includes(t);
+  $('strength-row').hidden = t === 'height' || t === 'paint' || t === 'erase';
+  $('angle-row').hidden = !ANGLED.has(t);
+  $('lift-row').hidden = t !== 'height';
+  $('lift-up').textContent = `▲ Up a step (${keyName(binding.liftUp[0])})`;
+  $('lift-down').textContent = `▼ Down a step (${keyName(binding.liftDown[0])})`;
+  $('brush-tip').textContent = keyText(BRUSH_TIPS[t] || '');
   $('road-opts').hidden = t !== 'road';
   $('events-panel').hidden = t !== 'events';
-  $('inspector').hidden = t === 'events';
+  $('inspector').hidden = t === 'events' || BRUSHES.has(t);
   if (t === 'events') renderEvents();
   else showEventLine();
   $('lot-opts').hidden = t !== 'lot';
@@ -458,20 +508,87 @@ function clearGroup(g) {
   }
 }
 
+// A slider's number box (input.num, data-for the slider, data-unit shown
+// after it): it shows the slider's value; click it (or tab to it) and type
+// another. It can't go past the slider's ends: a number past them is capped
+// as it's typed (where more digits could only take it further), and on
+// Enter or leaving the box it's kept within them and to the slider's step.
+// Esc puts it back.
+function numberBox(box) {
+  const range = $(box.dataset.for);
+  const unit = box.dataset.unit || '';
+  const [min, max, step] = [Number(range.min), Number(range.max), Number(range.step) || 1];
+  const places = (String(range.step || 1).split('.')[1] || '').length;
+  box.title = `Click to type a number (${min} to ${max})`;
+  const show = () => {
+    if (document.activeElement !== box) box.value = `${range.value}${unit}`;
+  };
+  const apply = () => {
+    const v = Number(box.value.replace(',', '.'));
+    if (box.value.trim() !== '' && Number.isFinite(v)) {
+      const kept = Math.min(max, Math.max(min, min + Math.round((v - min) / step) * step));
+      range.value = kept.toFixed(places);
+      range.dispatchEvent(new Event('input'));
+    }
+  };
+  range.addEventListener('input', show);
+  box.addEventListener('focus', () => {
+    box.value = range.value;
+    box.select();
+  });
+  box.addEventListener('input', () => {
+    // (Digits, one point and a leading minus where the slider goes below zero.)
+    let t = box.value.replace(',', '.').replace(min < 0 ? /[^\d.-]/g : /[^\d.]/g, '');
+    t = t.replace(/(?!^)-/g, '').replace(/(\..*)\./g, '$1');
+    const v = Number(t);
+    if (t !== '' && t !== '-' && Number.isFinite(v)) {
+      if (v > max && v > 0) t = String(max);
+      else if (v < min && v < 0) t = String(min);
+    }
+    if (t !== box.value) box.value = t;
+  });
+  box.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') box.blur();
+    else if (e.key === 'Escape') {
+      box.value = range.value;
+      box.blur();
+    }
+  });
+  box.addEventListener('blur', () => {
+    apply();
+    box.value = `${range.value}${unit}`;
+  });
+  show();
+}
+
 // The brush's edge on the ground.
 function showBrush() {
   if (!BRUSHES.has(tool) || !brushAt || !session) {
     ring.visible = false;
+    slopeArrow.visible = false;
     return;
   }
   const R = Number($('radius').value);
   const hAt = stroke ? stroke.heightAt : H;
+  const [cx, cz] = tool === 'height' ? liftPoint(brushAt) : [brushAt.x, brushAt.z];
   const pts = [];
   for (let k = 0; k < 48; k++) {
     const a = (k / 48) * Math.PI * 2;
-    const x = brushAt.x + Math.cos(a) * R;
-    const z = brushAt.z + Math.sin(a) * R;
+    const x = cx + Math.cos(a) * R;
+    const z = cz + Math.sin(a) * R;
     pts.push(x, hAt(x, z) + 0.3, z);
+  }
+  // (Angled: an arrow up the slope, as steep as it.)
+  const angle = ANGLED.has(tool) ? Number($('angle').value) : 0;
+  slopeArrow.visible = !!angle;
+  if (angle) {
+    const [fx, fz] = stroke?.dir || flat();
+    const y0 = hAt(cx, cz) + 0.5;
+    const rise = Math.tan((angle * Math.PI) / 180);
+    const tip = [cx + fx * R, y0 + rise * R, cz + fz * R];
+    const barb = (s) => [tip[0] - fx * R * 0.2 + fz * s * R * 0.12, tip[1] - rise * R * 0.2, tip[2] - fz * R * 0.2 - fx * s * R * 0.12];
+    slopeArrow.geometry.dispose();
+    slopeArrow.geometry = new THREE.BufferGeometry().setFromPoints([[cx, y0, cz], tip, barb(1), tip, barb(-1)].map((p) => new THREE.Vector3(...p)));
   }
   ring.geometry.dispose();
   ring.geometry = new THREE.BufferGeometry();
@@ -565,6 +682,7 @@ function showRoad() {
   }
   if (pts.length === 1) line.push(pts[0]);
   setLine(roadLine, densify(line));
+  roadLine.material.color.setHex(pts.length > roadPts.length && roadWhy(pts, [...roadBends, null]) ? 0xff3860 : 0xffb000);
   const mark = (x, z, color, s) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), new THREE.MeshBasicMaterial({ color, depthTest: false, fog: false }));
     m.position.set(x, H(x, z) + 0.8, z);
@@ -573,7 +691,20 @@ function showRoad() {
   };
   const size = Math.max(1.2, altitude() * 0.012);
   roadPts.forEach(([x, z]) => mark(x, z, 0xffb000, size));
+  // (Where the next point would join a street: a ring there.)
+  const next = roadStage === 'drawing' && brushAt?.snapped ? joinAt(session, ...brushAt.snapped) : null;
+  if (next) {
+    const r = Math.max(4, altitude() * 0.02);
+    const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([...Array(24).keys()].map((k) => new THREE.Vector3(next[0] + Math.cos((k / 24) * Math.PI * 2) * r, H(next[0], next[1]) + 0.6, next[1] + Math.sin((k / 24) * Math.PI * 2) * r))), new THREE.LineBasicMaterial({ color: 0x05d9e8, depthTest: false, transparent: true, fog: false }));
+    ring.renderOrder = 14;
+    roadMarks.add(ring);
+  }
   if (roadStage === 'shaping') roadPts.slice(1).forEach((b, k) => mark(...roadHandle(k), 0x05d9e8, size));
+}
+
+// Why the road through these points (with these bends) can't be built, or null.
+function roadWhy(pts, bends = roadBends) {
+  return pts.length < 2 ? null : roadProblem(session, pts, { width: $('road-width').value, bends });
 }
 
 // Where stretch k's curve handle is: its bend, or halfway along it.
@@ -656,7 +787,8 @@ function showFeature() {
 
 // A change to the streets or sites: the district is built again (refused and
 // undone if it can't be). The selection is found again at `at`.
-function editFeature(label, make, at) {
+// (check: why the change can't be kept, or null: a change that makes a problem there wasn't before is undone.)
+function editFeature(label, make, at, check) {
   let patch;
   try {
     patch = make();
@@ -665,10 +797,15 @@ function editFeature(label, make, at) {
     return;
   }
   const type = feature?.type;
-  rebuildDistrict(label, (e) => Object.assign(e, patch), (kept) => {
-    const again = kept && at ? featureAt(session, ...at) : null;
-    feature = again && again.type === type ? again : kept ? null : feature;
-  });
+  rebuildDistrict(
+    label,
+    (e) => Object.assign(e, patch),
+    (kept) => {
+      const again = kept && at ? featureAt(session, ...at) : null;
+      feature = again && again.type === type ? again : kept ? null : feature;
+    },
+    check,
+  );
 }
 
 function deleteFeature() {
@@ -718,7 +855,7 @@ function featureInspector(ins) {
       $(id)?.addEventListener('change', () => {
         const x = Number($('n-x').value);
         const z = Number($('n-z').value);
-        editFeature('Moving the junction…', () => ({ plan: moveNode(session, f.name, x, z) }), [x, z]);
+        editFeature('Moving the junction…', () => ({ plan: moveNode(session, f.name, x, z) }), [x, z], () => nodeProblem(session, f.name));
       });
     }
   } else if (f.type === 'site') {
@@ -780,13 +917,23 @@ function setLot(g) {
 // A change to the streets, blocks or sites: the district is built again (a
 // change it can't be built with is refused). Then its events are checked: if
 // the change stops any of them working, you're asked whether to keep it.
-function rebuildDistrict(label, mutate, done) {
+function rebuildDistrict(label, mutate, done, check) {
   setBusy(label);
   setTimeout(() => {
     try {
       const before = session.broken ?? brokenEvents(session.withEvents());
+      const was = check?.();
       if (!session.change(mutate)) {
         setBusy(null);
+        return;
+      }
+      const why = check?.();
+      if (why && !was) {
+        session.undo();
+        session.future.pop();
+        done?.(false);
+        changed();
+        window.alert(`That can't be done: ${why}`);
         return;
       }
       const after = brokenEvents(session.withEvents());
@@ -850,13 +997,74 @@ function scatterTick() {
 function endStroke() {
   const s = stroke;
   stroke = null;
+  clearTimeout(s.timer);
   clearGroup(preview);
   setBusy('Reshaping the ground…');
+  reshaping = true;
   setTimeout(() => {
-    if (s.commit()) changed();
-    else setBusy(null);
+    try {
+      if (s.commit()) changed();
+      else setBusy(null);
+    } finally {
+      reshaping = false;
+    }
   }, 30);
 }
+
+// --- Raise / lower with the mouse wheel ---------------------------------------------
+// Each notch lifts (or lowers) the ground at the grid point nearest the brush
+// to the next multiple of the move grid (Snap moves' size; Alt, or snapping
+// off: 25 cm), the brush round it by as much. Notches in a row are one step
+// to undo: the ground's built again once they stop.
+
+let wheelSum = 0;
+let liftKeyAt = 0; // (a held key's last step)
+let reshaping = false; // (a stroke being built into the district: wait for it)
+
+// The terrain grid point nearest a ground point.
+function liftPoint(g) {
+  const c = session?.doc.edits.terrain?.cell || 4;
+  return [Math.round(g.x / c) * c, Math.round(g.z / c) * c];
+}
+
+// One step (dir 1 up, -1 down) at ground point g (the buttons: where the brush last was, or the middle of the view).
+function liftStep(dir, g = brushAt || viewMiddle(), free = false) {
+  if (!session || reshaping || !g) return;
+  if (stroke && !stroke.wheel) endStroke();
+  if (!stroke) {
+    stroke = session.stroke();
+    stroke.wheel = true;
+    stroke.box = [g.x, g.x, g.z, g.z];
+  }
+  const [x, z] = liftPoint(g);
+  const R = Number($('radius').value);
+  const step = free || !$('snap').checked ? 0.25 : gridSize();
+  const goal = lift(stroke, x, z, { radius: R, step, dir });
+  const b = stroke.box;
+  stroke.box = [Math.min(b[0], x - R), Math.max(b[1], x + R), Math.min(b[2], z - R), Math.max(b[3], z + R)];
+  showPreview();
+  showBrush();
+  $('coords').textContent = `Ground ${goal.toFixed(2)} m`;
+  clearTimeout(stroke.timer);
+  stroke.timer = setTimeout(() => stroke?.wheel && endStroke(), 700);
+}
+
+// The ground in the middle of the view.
+function viewMiddle() {
+  ray.setFromCamera(new THREE.Vector2(0, 0), camera);
+  return groundHit();
+}
+
+// What each terrain tool does (the panel on the right says).
+const BRUSH_TIPS = {
+  height: 'Over the ground, the mouse wheel (or W and S) raises or lowers it a step: to the next multiple of the move grid (Snap moves; hold {fine}, or snapping off: 25 cm), falling off to the brush\'s edge. Hold the right button to zoom with the wheel, or fly with W and S.',
+  raise: 'Hold the left button and move to raise the ground.',
+  lower: 'Hold the left button and move to lower the ground.',
+  smooth: 'Hold the left button and move to smooth the ground. Angle: smooth it into a slope, rising the way you look.',
+  flatten: 'Hold the left button and move: flat at the height where you started. Angle: a slope from there instead, rising the way you look (negative: falling).',
+  paint: 'Hold the left button and paint: dirt and grass are off-road grip, water drops the car in.',
+  erase: 'Hold the left button and move to take paint off.',
+};
 
 // --- Events ------------------------------------------------------------------------
 
@@ -893,7 +1101,9 @@ function previewEvent() {
     const r = evDraft?.route;
     const needs = r && ((r.kind === 'sprint' || r.kind === 'circuit') ? r.path.length >= 2 : r.kind === 'drag' ? !!r.along && !!r.to : true);
     evPreview = needs ? routePreview({ ...session.withEvents(), events: [] }, r) : null;
-    fitEnds();
+    const built = evPreview && !evPreview.error && evPreview.pts;
+    evGrid = built ? gridProblem(session.withEvents(), evDraft) : null;
+    evWay = built ? wayProblem(session.withEvents(), evDraft) : null;
     showEventLine();
     const box = $('ev-preview');
     if (box) box.innerHTML = previewText();
@@ -916,7 +1126,12 @@ function previewText() {
   if (evPreview.error) return `<p class="note warn">Can't be set up: ${esc(evPreview.error)}</p>`;
   if (evPreview.rect) return `<p class="note ok">Arena: ${evPreview.sizeX.toFixed(0)} × ${evPreview.sizeZ.toFixed(0)} m.</p>`;
   const laps = evDraft.type === 'circuit' ? evDraft.laps || 1 : 1;
-  return `<p class="note ok">${(evPreview.length / 1000).toFixed(2)} km${evPreview.closed ? ` a lap × ${laps} = ${((evPreview.length * laps) / 1000).toFixed(2)} km` : ''}; ${evPreview.shortcuts} shortcut${evPreview.shortcuts === 1 ? '' : 's'} open.</p>`;
+  // (A start or finish up on top of something.)
+  const up = (y, p, what) => (y !== null && y !== undefined ? `<p class="note">${what} is ${(y - H(p[0], p[1])).toFixed(1)} m up, on top of something${what === 'The finish' ? ': a car has to get up there to finish' : ''}.</p>` : '');
+  return `<p class="note ok">${(evPreview.length / 1000).toFixed(2)} km${evPreview.closed ? ` a lap × ${laps} = ${((evPreview.length * laps) / 1000).toFixed(2)} km` : ''}; ${evPreview.shortcuts} shortcut${evPreview.shortcuts === 1 ? '' : 's'} open.</p>
+    ${evGrid ? `<p class="note warn">${esc(evGrid.text.replace('something', thing(evGrid.key)))}</p>` : ''}
+    ${evWay ? `<p class="note warn">${esc(evWay.text.replace('something', thing(evWay.key)))}</p>` : ''}
+    ${up(evPreview.startY, r.path[0], 'The start')}${evPreview.closed ? '' : up(evPreview.finishY, r.path[r.path.length - 1], 'The finish')}`;
 }
 
 // A click on the map while editing an event's route.
@@ -925,34 +1140,14 @@ function routeClick(g) {
   if (!r) return;
   if (r.kind === 'sprint' || r.kind === 'circuit') {
     if (!evStage) return toast('Press Place start first (Route, on the right).');
-    const at = [Math.round(g.x), Math.round(g.z)];
     if (evStage === 'start') {
-      // A route there already: the start moves along it. A new one: it starts here.
-      if (r.path.length >= 2) {
-        Object.assign(evDraft, { startAt: at, startFitted: false });
-        evStage = 'editing';
-      } else {
-        const p = pointNames(g, []);
-        if (!p) return toast('Put the start on a street, a junction, or a way through a site or lot.');
-        r.path = p.names;
-        Object.assign(evDraft, { startAt: at, startEdge: p.edge, startFitted: false });
-        delete evDraft.finishAt;
-        delete evDraft.finishS;
-        delete evDraft.startS;
-        evStage = 'placing';
-      }
+      const s = raceSpot();
+      if (s.why) return toast(s.why);
+      placeStart(s.at);
     } else if (evStage === 'placing') {
-      const p = pointNames(g, r.path);
-      if (!p) return toast('Click on a street, a junction, or a way through a site or lot.');
-      // (The start's street: its far end first, from where the race is heading.)
-      if (evDraft.startEdge && r.path.length === 2) {
-        const [A, B] = r.path.map(routePos);
-        const q = routePos(p.names[p.names.length - 1]) || at;
-        if (Math.hypot(A[0] - q[0], A[1] - q[1]) < Math.hypot(B[0] - q[0], B[1] - q[1])) r.path.reverse();
-        delete evDraft.startEdge;
-      }
-      for (const nm of p.names) if (r.path[r.path.length - 1] !== nm) r.path.push(nm);
-      evDraft.lastAt = at;
+      const p = routeAdd();
+      if (p.why) return toast(p.why);
+      if (JSON.stringify(r.path[r.path.length - 1]) !== JSON.stringify(p.point)) r.path.push(p.point);
     }
   } else if (r.kind === 'drag') {
     // A drag: its start on a street, then its finish (one click) further along it.
@@ -980,19 +1175,20 @@ function renderEvents() {
   if (!session || tool !== 'events') return;
   const list = allEvents();
   const row = (e) => `<div class="evrow${e.key === evKey ? ' on' : ''}" data-key="${esc(e.key)}"><span>${esc(e.name)}</span><i>${e.key === 'boss' ? 'boss' : TYPES[e.type] || e.type}${e.rival ? ', rival' : ''}</i></div>`;
-  let html = `<h3>Events</h3>${list.map(row).join('')}
-    <div class="row" style="margin-top:6px">${Object.entries(TYPES).map(([t, n]) => `<button data-new="${t}">+ ${n}</button>`).join('')}</div>`;
+  $('events-list').innerHTML = `<h4>This district's events</h4>${list.map(row).join('') || '<p class="note">None yet.</p>'}
+    <h4>New event</h4><div class="toolgrid">${Object.entries(TYPES).map(([t, n]) => `<button data-new="${t}">+ ${n}</button>`).join('')}</div>`;
+  let html = evDraft ? '' : '<h3>Events</h3><p class="note">Pick an event on the left to edit it here, or make a new one.</p>';
   const d = evDraft;
   if (d) {
     const r = d.route;
     const field = (id, label, value, type = 'number', step = 1) => `<label for="${id}">${label}</label><input id="${id}" type="${type}" step="${step}" value="${esc(value ?? '')}" />`;
     html += `
-      <h4>${evKey && savedEvent(evKey) ? 'Editing' : 'New'}: ${esc(TYPES[d.type] || d.type)}</h4>
+      <h3>${evKey && savedEvent(evKey) ? 'Editing' : 'New'}: ${esc(TYPES[d.type] || d.type)}</h3>
       <div class="grid">
         ${field('ev-name', 'name', d.name, 'text')}
         ${field('ev-cars', 'cars', d.cars)}
         ${CREATOR ? '' : field('ev-purse', 'purse ($)', d.purse, 'number', 50)}
-        ${d.type === 'circuit' ? field('ev-laps', 'laps', d.laps) + field('ev-start', 'start (m)', r.start ?? 0, 'number', 10) : ''}
+        ${d.type === 'circuit' ? field('ev-laps', 'laps', d.laps) : ''}
         ${d.type === 'drag' ? field('ev-finish', 'length (m)', d.finishS ?? 414, 'number', 10) : ''}
         ${d.type === 'arena' ? `<label for="ev-mode">mode</label><select id="ev-mode">${Object.entries(MODES).map(([k, n]) => `<option value="${k}"${d.mode === k ? ' selected' : ''}>${n}</option>`).join('')}</select>${field('ev-time', 'time (s)', d.timeLimit, 'number', 10)}<label for="ev-site">ground</label><select id="ev-site">${arenaSites(session).map((a) => `<option value="${a.site}"${r.site === a.site ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
         ${isBoss() ? `<label for="ev-driver">boss</label><select id="ev-driver">${DRIVERS.map((q) => `<option value="${q.id}"${d.driver === q.id ? ' selected' : ''}>${esc(q.name)}</option>`).join('')}</select>` : ''}
@@ -1008,7 +1204,7 @@ function renderEvents() {
           ${evStage === 'placing' ? '<button id="ev-finish" title="The last point is the finish (Space)">🏁 Finish here</button>' : r.path.length ? '<button id="ev-more" title="Click more points after the last">Continue placing</button>' : ''}
         </div>
         <p class="note">${routeStageText(r)}</p>
-        <div class="chips">${r.path.map((p, k) => `<span class="chip">${esc(p)}<b data-drop="${k}" title="Take it out">×</b></span>`).join('') || '<span class="note">No junctions yet.</span>'}</div>
+        <div class="chips">${r.path.map((p, k) => `<span class="chip">${esc(pointLabel(r, k))}<b data-drop="${k}" title="Take it out">×</b></span>`).join('') || '<span class="note">No points yet.</span>'}</div>
         <div class="row"><button id="ev-clear">Clear route</button></div>
         <div class="checks">${shortcutOptions(session).map((c) => `<label><input type="checkbox" data-cut="${esc(c)}"${(r.shortcuts || []).includes(c) ? ' checked' : ''} /> Shortcut: ${esc(c)}</label>`).join('')}</div>` : ''}
       ${r.kind === 'drag' ? `<div class="row"><button id="ev-start" class="${evStage === 'start' ? 'on' : ''}" title="Then click the start on a street">⚑ Place start</button><button id="ev-clear">Clear route</button></div>
@@ -1046,10 +1242,7 @@ function readEvent() {
   d.desc = $('ev-desc').value;
   d.cars = Math.max(2, Math.min(8, Math.round(num('ev-cars', d.cars))));
   d.purse = Math.max(0, Math.round(num('ev-purse', d.purse)));
-  if (d.type === 'circuit') {
-    d.laps = Math.max(1, Math.round(num('ev-laps', d.laps)));
-    d.route.start = num('ev-start', d.route.start ?? 0);
-  }
+  if (d.type === 'circuit') d.laps = Math.max(1, Math.round(num('ev-laps', d.laps)));
   if (d.type === 'drag') d.finishS = Math.max(100, num('ev-finish', d.finishS));
   if (d.type === 'arena') {
     d.mode = $('ev-mode').value;
@@ -1071,7 +1264,9 @@ function readEvent() {
 
 function saveEvent() {
   readEvent();
-  const { key: _k, lastAt: _l, startEdge: _e, startFitted: _f, ...spec } = evDraft;
+  // (A race's start and finish are its first and last points; older drafts kept them apart.)
+  for (const k of ['lastAt', 'startEdge', 'startFitted', 'startAt', 'finishAt', ...(evDraft.route?.path ? ['startS', 'finishS'] : [])]) delete evDraft[k];
+  const { key: _k, ...spec } = evDraft;
   if (session.change((e) => ((e.events ||= {})[evKey] = spec))) {
     session.broken = null;
     changed(false);
@@ -1082,8 +1277,9 @@ function saveEvent() {
 
 function bindEvents() {
   const panel = $('events-panel');
-  panel.querySelectorAll('.evrow').forEach((el) => el.addEventListener('click', () => editEvent(el.dataset.key, savedEvent(el.dataset.key))));
-  panel.querySelectorAll('[data-new]').forEach((el) =>
+  const side = $('events-list');
+  side.querySelectorAll('.evrow').forEach((el) => el.addEventListener('click', () => editEvent(el.dataset.key, savedEvent(el.dataset.key))));
+  side.querySelectorAll('[data-new]').forEach((el) =>
     el.addEventListener('click', () => {
       const all = allEvents();
       editEvent(nextKey(all), newEvent(el.dataset.new));
@@ -1348,15 +1544,17 @@ function hint() {
   $('hint').textContent = !session
     ? 'Open a built-in district or a .ttmap file to start'
     : tool === 'events'
-      ? 'Events: pick one or make one, click junctions on the map for its route · Save event · Shift+P races it · 1 back to Select'
+      ? 'Events: pick one on the left or make a new one; its settings are on the right · Place start, then click its route on the map · Save event · Shift+P races it · 1 back to Select'
       : tool === 'road'
       ? roadStage === 'shaping'
         ? 'Road: drag a blue handle to curve that stretch (double-click it: straight), an amber one to move a point · Build street (or Enter) · Esc cancels'
         : 'Road: click to place points (15° steps; Alt: any angle) · Space or double-click: stop placing · Backspace takes a point back · Esc cancels'
       : tool === 'lot'
         ? 'Lot: click a block to make it the chosen kind · 1 back to Select · Ctrl+Z undo'
-        : tool !== 'select'
-          ? `${TOOL_NAMES[tool]}: hold the left button and move · [ ] size · 1 back to Select · Ctrl+Z undo`
+        : tool === 'height'
+          ? `Raise / lower: mouse wheel over the ground (or ${keyName(binding.liftUp[0])} / ${keyName(binding.liftDown[0])}), a grid step up or down (hold ${keyName(binding.liftFine[0])}: 25 cm) · hold the right button to zoom and fly · [ ] size · 1 back to Select · Ctrl+Z undo`
+          : tool !== 'select'
+          ? `${TOOL_NAMES[tool]}: hold the left button and move${ANGLED.has(tool) && Number($('angle').value) ? ' (angled: rising the way you look)' : ''} · [ ] size · 1 back to Select · Ctrl+Z undo`
           : placingGadget
             ? `Placing a ${GADGETS[placingGadget].name.toLowerCase()}: click where it goes (Shift: keep placing) · wheel or Q/E to turn · Esc to stop`
             : placing && $('place-mode').value === 'line'
@@ -1369,7 +1567,7 @@ function hint() {
       ? 'Wheel or Q/E to turn · Alt: no snap'
       : selected
         ? 'Drag to move · Q/E turn (Shift: 1°) · arrows nudge · Del delete · Ctrl+D copy · F focus · Esc deselect'
-        : 'Click to select · hold right button + WASD/QE to fly · middle drag to pan · wheel to zoom · Tab top view · P test drive';
+        : 'Click to select · hold right button + WASD to fly (Space up, Ctrl down) · middle drag to pan · wheel to zoom · Tab top view · P test drive';
 }
 
 // The Creator: a special asset stays locked until its trigger is met
@@ -1406,18 +1604,32 @@ function renderCatalogue() {
 // --- Input ------------------------------------------------------------------------
 
 $('search').addEventListener('input', renderCatalogue);
-$('tools').addEventListener('click', (e) => {
-  const t = e.target.closest('button')?.dataset.tool;
-  if (t && session) setTool(t);
+$('left').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b || !session) return;
+  if (b.dataset.tool) setTool(b.dataset.tool);
+  // (A tab: the tool it last had.)
+  else if (b.dataset.tab) setTool(tabTool[b.dataset.tab]);
+  if (b.dataset.tab === 'objects') showTab('objects');
 });
-for (const id of ['radius', 'strength']) {
-  const show = () => ($(`${id}-v`).textContent = id === 'radius' ? `${$(id).value} m` : $(id).value);
+$('wheel-lift').addEventListener('change', () => {
+  try {
+    localStorage.setItem('tt-sdk:wheelLift', wheelLift() ? 'on' : 'off');
+  } catch {
+    // (This session only.)
+  }
+  showLiftTools();
+  if (['height', 'raise', 'lower'].includes(tool)) setTool(wheelLift() ? 'height' : 'raise');
+});
+$('lift-up').addEventListener('click', (e) => liftStep(1, undefined, fineHeld(e)));
+$('lift-down').addEventListener('click', (e) => liftStep(-1, undefined, fineHeld(e)));
+for (const id of ['radius', 'strength', 'angle']) {
   $(id).addEventListener('input', () => {
-    show();
     showBrush();
+    if (id === 'angle') hint();
   });
-  show();
 }
+document.querySelectorAll('input.num[data-for]').forEach(numberBox);
 $('kind').addEventListener('change', showBrush);
 $('road-build').addEventListener('click', buildRoad);
 $('place-mode').addEventListener('change', () => {
@@ -1479,6 +1691,7 @@ canvas.addEventListener('mousedown', (e) => {
   canvas.focus();
   if (e.button === 2) {
     flying = true;
+    pivotUnder(e);
     canvas.requestPointerLock?.();
     return;
   }
@@ -1495,14 +1708,24 @@ canvas.addEventListener('mousedown', (e) => {
     if (roadStage === 'shaping') {
       const h = roadHandleAt(g);
       if (h && h.bend !== undefined && e.detail >= 2) {
-        roadBends[h.bend] = null; // (straightened)
+        // (Straightened, where it can be.)
+        const was = roadBends[h.bend];
+        roadBends[h.bend] = null;
+        const why = roadWhy(roadPts);
+        if (why) {
+          roadBends[h.bend] = was;
+          toast(why);
+        }
         showRoad();
       } else if (h) drag = { road: h, sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
     if (e.detail >= 2) endRoadPlacing();
     else {
-      roadPts.push(roadSnap([g.x, g.z], e));
+      const p = roadSnap([g.x, g.z], e);
+      const why = roadWhy([...roadPts, p], [...roadBends, null]);
+      if (why) return toast(why);
+      roadPts.push(p);
       roadBends.push(null);
       showRoad();
     }
@@ -1517,11 +1740,6 @@ canvas.addEventListener('mousedown', (e) => {
     const g = groundHit();
     if (!g) return;
     const r = evDraft?.route;
-    const flag = r?.path && evStage === 'editing' ? flagAt(g) : null;
-    if (flag) {
-      drag = { flag, sx: e.clientX, sy: e.clientY, at: [g.x, g.z], moved: false };
-      return;
-    }
     if ((r?.path || r?.kind === 'drag') && evStage !== 'start') {
       const at = routePointAt(g);
       if (at !== null) {
@@ -1533,9 +1751,9 @@ canvas.addEventListener('mousedown', (e) => {
       }
       const seg = evStage === 'editing' && r.path ? routeSegmentAt(g) : null;
       if (seg !== null) {
-        const p = routePoint(session, g.x, g.z);
-        if (!p) return toast('Add a point on a junction, or on a way through a site or lot.');
-        r.path.splice(seg + 1, 0, p.name);
+        const p = routeAdd();
+        if (p.why) return toast(p.why);
+        r.path.splice(seg + 1, 0, p.point);
         evSel = seg + 1;
         renderEvents();
         return previewEvent();
@@ -1544,11 +1762,16 @@ canvas.addEventListener('mousedown', (e) => {
     routeClick(g);
     return;
   }
+  if (tool === 'height') return; // (the wheel raises and lowers)
   if (tool !== 'select') {
     const g = groundHit();
     if (!g) return;
+    if (stroke) endStroke();
     stroke = session.stroke();
     stroke.target = stroke.heightAt(g.x, g.z); // (flatten: to here)
+    // (Angled: rising the way the view faces, from here.)
+    stroke.dir = flat();
+    stroke.origin = [g.x, g.z];
     stroke.box = [g.x, g.x, g.z, g.z];
     brushAt = g;
     return;
@@ -1634,7 +1857,7 @@ window.addEventListener('mousemove', (e) => {
   setRay(e);
   const g = groundHit();
   $('coords').textContent = g ? `x ${g.x.toFixed(1)}   z ${g.z.toFixed(1)}   ground ${g.y.toFixed(1)} m` : '';
-  if (tool !== 'select' && !drag?.road && drag?.routePoint === undefined && !drag?.flag) {
+  if (tool !== 'select' && !drag?.road && drag?.routePoint === undefined) {
     brushAt = g ? { ...g, snapped: tool === 'road' ? roadSnap([g.x, g.z], e) : null } : null;
     showBrush();
     showRoad();
@@ -1644,7 +1867,7 @@ window.addEventListener('mousemove', (e) => {
   if (drag) {
     if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
     drag.moved = true;
-    if (drag.routePoint !== undefined || drag.flag) {
+    if (drag.routePoint !== undefined) {
       if (g) drag.at = [g.x, g.z];
       drawEventMarks();
       return;
@@ -1652,8 +1875,15 @@ window.addEventListener('mousemove', (e) => {
     if (drag.road) {
       // A road handle: a stretch's bend, or a point.
       if (g) {
-        if (drag.road.bend !== undefined) roadBends[drag.road.bend] = [g.x, g.z];
-        else roadPts[drag.road.point] = [snap(g.x, e), snap(g.z, e)];
+        const [list, k, to] = drag.road.bend !== undefined ? [roadBends, drag.road.bend, [g.x, g.z]] : [roadPts, drag.road.point, [snap(g.x, e), snap(g.z, e)]];
+        const was = list[k];
+        list[k] = to;
+        const why = roadWhy(roadPts);
+        if (why) {
+          list[k] = was; // (it stays where it last could be)
+          if (!drag.warned) toast(why);
+        }
+        drag.warned = !!why;
       }
       showRoad();
       return;
@@ -1695,6 +1925,7 @@ window.addEventListener('mousemove', (e) => {
 window.addEventListener('mouseup', (e) => {
   if (e.button === 2 && flying) {
     flying = false;
+    lookPivot = null;
     document.exitPointerLock?.();
     return;
   }
@@ -1719,24 +1950,17 @@ window.addEventListener('mouseup', (e) => {
     const d = drag;
     drag = null;
     if (d.road) return showRoad();
-    if (d.flag) {
-      // The start or finish flag dropped: onto the route, where it's let go.
-      if (d.moved) {
-        if (d.flag === 'start') Object.assign(evDraft, { startAt: d.at.map(Math.round), startFitted: false });
-        else evDraft.finishAt = d.at.map(Math.round);
-        previewEvent();
-      }
-      return drawEventMarks();
-    }
     if (d.routePoint !== undefined) {
-      // (A route point dropped: onto the junction or way nearest where it's let go.)
+      // (A route point dropped: where it's let go, as if clicked there.)
       if (d.moved) {
         const r = evDraft.route;
         if (r.kind === 'drag') dropDragEnd(d.routePoint, d.at);
         else {
-          const p = routePoint(session, ...d.at);
-          if (p) r.path[d.routePoint] = p.name;
-          else toast('Drop it on a junction, or on a way through a site or lot.');
+          // (A race's start and finish go anywhere; its other points as clicked: a junction, a way, or anywhere.)
+          setRay(e);
+          const p = d.routePoint === 0 || (r.kind === 'sprint' && d.routePoint === r.path.length - 1) ? raceSpot() : routeAdd();
+          if (p.why) toast(p.why);
+          else r.path[d.routePoint] = p.at || p.point;
         }
         renderEvents();
         previewEvent();
@@ -1750,7 +1974,7 @@ window.addEventListener('mouseup', (e) => {
       return;
     }
     if (d.moved && d.feature) {
-      editFeature('Moving the junction…', () => ({ plan: moveNode(session, d.feature.name, d.x, d.z) }), [d.x, d.z]);
+      editFeature('Moving the junction…', () => ({ plan: moveNode(session, d.feature.name, d.x, d.z) }), [d.x, d.z], () => nodeProblem(session, d.feature.name));
       return;
     }
     if (d.moved && session.place(d.key, d.x, d.z, d.yaw)) changed();
@@ -1764,6 +1988,19 @@ window.addEventListener('mouseup', (e) => {
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   if (!session) return;
+  if (tool === 'height' && !flying) {
+    setRay(e);
+    const g = groundHit();
+    if (!g) return;
+    // (A notch at a time, however the wheel or trackpad counts it.)
+    wheelSum += e.deltaY * (e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 100 : 1);
+    if (Math.abs(wheelSum) < 50) return;
+    const dir = wheelSum < 0 ? 1 : -1;
+    wheelSum = 0;
+    brushAt = g;
+    liftStep(dir, g, fineHeld(e));
+    return;
+  }
   if (drag || placing) {
     turn(e.deltaY < 0 ? 1 : -1, e.shiftKey);
     return;
@@ -1779,6 +2016,10 @@ window.addEventListener('keydown', (e) => {
   if (e.target.matches?.('input, select, textarea')) return;
   keys.add(e.code);
   if (!session) return;
+  if (flying) {
+    e.preventDefault(); // WASD, Space and Ctrl fly while the right button is held
+    return;
+  }
   const ctrl = e.ctrlKey || e.metaKey;
   if (ctrl && e.code === 'KeyZ') {
     e.preventDefault();
@@ -1800,27 +2041,45 @@ window.addEventListener('keydown', (e) => {
     duplicate();
     return;
   }
-  if (flying || ctrl) return; // WASD and Q/E fly while the right button is held
-  if (tool === 'road' && roadPts.length && ['Enter', 'NumpadEnter', 'Backspace', 'Escape', 'Space'].includes(e.code)) {
+  if (ctrl) return;
+  if (tool === 'height') {
+    const up = actionFor(e.code, 'terrain');
+    if (up && up !== 'liftFine') {
+      e.preventDefault();
+      const now = performance.now();
+      if (!e.repeat || now - liftKeyAt > 150) {
+        liftKeyAt = now;
+        liftStep(up === 'liftUp' ? 1 : -1, brushAt || viewMiddle(), fineHeld(e));
+      }
+      return;
+    }
+  }
+  // (The key pressed, as the action it's bound to: see Controls.)
+  const act = actionFor(e.code, 'edit');
+  // Placing a road's points, or a race's: stop, take a point back, build (and Esc cancels a road).
+  const roadPlacing = tool === 'road' && roadPts.length;
+  const racePlacing = tool === 'events' && evDraft?.route?.path;
+  const place = roadPlacing || racePlacing ? actionFor(e.code, 'place') : null;
+  if (roadPlacing && (place || act === 'cancel')) {
     e.preventDefault();
-    if (e.code === 'Space') endRoadPlacing();
-    else if (e.code === 'Backspace') {
+    if (place === 'endPlacing') endRoadPlacing();
+    else if (place === 'backPoint') {
       roadPts.pop();
       roadBends.pop();
       if (roadPts.length < 2) roadStage = 'drawing';
-    } else if (e.code === 'Escape') clearRoad();
-    else buildRoad();
+    } else if (place === 'buildRoad') buildRoad();
+    else clearRoad();
     showRoad();
     hint();
     return;
   }
-  // Placing a race: Space ends it (the last point is the finish); Delete takes out the selected point.
-  if (tool === 'events' && evDraft?.route?.path) {
-    if (e.code === 'Space' && evStage === 'placing') {
+  // Placing a race: stopping, the last point is the finish; Delete takes out the selected point.
+  if (racePlacing) {
+    if (place === 'endPlacing' && evStage === 'placing') {
       e.preventDefault();
       return finishRoute();
     }
-    if ((e.code === 'Delete' || e.code === 'Backspace') && evSel !== null) {
+    if (act === 'delete' && evSel !== null) {
       e.preventDefault();
       evDraft.route.path.splice(evSel, 1);
       evSel = null;
@@ -1831,63 +2090,60 @@ window.addEventListener('keydown', (e) => {
   const step = e.shiftKey ? 0.1 : gridSize();
   const [fx, fz] = flat();
   const [rx, rz] = right();
-  // (The key pressed, as the default key of the action it's bound to: see Controls.)
-  const code = boundCode(e.code);
-  switch (code) {
-    case 'Digit1':
-    case 'Digit2':
-    case 'Digit3':
-    case 'Digit4':
-    case 'Digit5':
-    case 'Digit6':
-    case 'Digit7':
-    case 'Digit8':
-    case 'Digit9':
-      setTool(['select', 'raise', 'lower', 'smooth', 'flatten', 'paint', 'erase', 'road', 'lot'][Number(code.slice(5)) - 1]);
+  switch (act) {
+    case 'tool1':
+    case 'tool2':
+    case 'tool3':
+    case 'tool4':
+    case 'tool5':
+    case 'tool6':
+    case 'tool7':
+    case 'tool8':
+    case 'tool9':
+      setTool(['select', 'raise', 'lower', 'smooth', 'flatten', 'paint', 'erase', 'road', 'lot'][Number(act.slice(4)) - 1]);
       break;
-    case 'Digit0':
+    case 'tool0':
       setTool('events');
       break;
-    case 'BracketLeft':
-    case 'BracketRight':
-      $('radius').value = Number($('radius').value) + (code === 'BracketLeft' ? -2 : 2);
+    case 'smaller':
+    case 'bigger':
+      $('radius').value = Number($('radius').value) + (act === 'smaller' ? -2 : 2);
       $('radius').dispatchEvent(new Event('input'));
       break;
-    case 'Delete':
-    case 'Backspace':
+    case 'delete':
       removeSelected();
       break;
-    case 'KeyQ':
-    case 'KeyE':
-      turn(code === 'KeyQ' ? 1 : -1, e.shiftKey);
+    case 'turnLeft':
+    case 'turnRight':
+      turn(act === 'turnLeft' ? 1 : -1, e.shiftKey);
       break;
-    case 'ArrowUp':
+    case 'nudgeUp':
       nudge(fx * step, fz * step);
       break;
-    case 'ArrowDown':
+    case 'nudgeDown':
       nudge(-fx * step, -fz * step);
       break;
-    case 'ArrowRight':
+    case 'nudgeRight':
       nudge(rx * step, rz * step);
       break;
-    case 'ArrowLeft':
+    case 'nudgeLeft':
       nudge(-rx * step, -rz * step);
       break;
-    case 'KeyF':
+    case 'focus':
       focus();
       break;
-    case 'Tab':
+    case 'topView':
       e.preventDefault();
       toggleTop();
       break;
-    case 'KeyP':
+    case 'testDrive':
       if (e.shiftKey && evKey) testEvent();
       else testDrive();
       break;
-    case 'KeyG':
+    case 'snap':
       $('snap').checked = !$('snap').checked;
       break;
-    case 'Escape':
+    case 'cancel':
       placing = null;
       ghostAt = null;
       lineFrom = null;
@@ -1944,7 +2200,8 @@ $('cam-reset').addEventListener('click', () => {
 });
 $('drive').addEventListener('click', () => session && testDrive());
 window.addEventListener('beforeunload', (e) => {
-  if (session?.dirty) e.preventDefault();
+  // (Flying with Ctrl held, W closes the tab: it asks first.)
+  if (session?.dirty || flying) e.preventDefault();
 });
 
 // --- Loop ----------------------------------------------------------------------------
@@ -1955,17 +2212,19 @@ function frame(now) {
   last = now;
   pollPad(dt);
   if (flying && session) {
-    const speed = (held('flyFast') || keys.has('ShiftRight') ? 4 : 1) * (20 + altitude() * 0.6) * dt;
+    const speed = (held('flyFast') ? 4 : 1) * (20 + altitude() * 0.6) * dt;
     const f = forward();
     const [rx, rz] = right();
     const ax = (held('flyRight') ? 1 : 0) - (held('flyLeft') ? 1 : 0);
     const az = (held('flyForward') ? 1 : 0) - (held('flyBack') ? 1 : 0);
     const ay = (held('flyUp') ? 1 : 0) - (held('flyDown') ? 1 : 0);
-    cam.x += (f.x * az + rx * ax) * speed;
-    cam.y += (f.y * az + ay) * speed;
-    cam.z += (f.z * az + rz * ax) * speed;
+    const move = [(f.x * az + rx * ax) * speed, (f.y * az + ay) * speed, (f.z * az + rz * ax) * speed];
+    cam.x += move[0];
+    cam.y += move[1];
+    cam.z += move[2];
+    lookPivot?.add(new THREE.Vector3(...move));
   }
-  if (stroke && brushAt) {
+  if (stroke && brushAt && !stroke.wheel) {
     const o = brushOpts(dt);
     brush(stroke, tool, brushAt.x, brushAt.z, o);
     const b = stroke.box;
@@ -2084,7 +2343,7 @@ if (CREATOR) {
       <h2>The T&amp;T Creator</h2>
       <ol>
         <li><b>Open a map</b>: a district you've reached in the campaign, or a blank one.</li>
-        <li><b>Look around</b>: hold the right mouse button and use W A S D (Q/E down and up); the wheel zooms; Tab looks straight down.</li>
+        <li><b>Look around</b>: hold the right mouse button and use W A S D (Space up, Ctrl down); the wheel zooms; Tab looks straight down.</li>
         <li><b>Change anything</b>: click it, drag it to move it, Q/E turn it, Delete removes it. Streets and junctions too.</li>
         <li><b>Add things</b>: pick one on the left and click to place it (or drag it in). The tools reshape and paint the ground (2-7), draw streets (8), fill blocks (9) and make events (0).</li>
         <li><b>Try it</b>: P drives it. Save puts it in My maps: race it from the game's events (Your maps), or online with a friend.</li>
@@ -2246,8 +2505,9 @@ function pollPad(dt) {
   if (hit(5)) turn(-1, false);
   const step = gridSize();
   const [fx, fz] = flat();
-  if (hit(12)) nudge(fx * step, fz * step);
-  if (hit(13)) nudge(-fx * step, -fz * step);
+  if (tool === 'height' && (hit(12) || hit(13))) liftStep(hit(12) ? 1 : -1, viewMiddle());
+  else if (hit(12)) nudge(fx * step, fz * step);
+  else if (hit(13)) nudge(-fx * step, -fz * step);
   if (hit(14)) nudge(-rx * step, -rz * step);
   if (hit(15)) nudge(rx * step, rz * step);
   if (hit(8)) toggleTop();
@@ -2270,6 +2530,7 @@ canvas.addEventListener('touchstart', (e) => {
     mouseAt('mousedown', t);
     const looking = tool === 'select' && !drag && !placing && !placingGadget;
     touch = { mode: looking ? 'look' : 'mouse', x: t.clientX, y: t.clientY };
+    if (looking) pivotUnder(t);
   } else if (e.touches.length === 2) {
     if (touch?.mode === 'mouse') mouseAt('mouseup', e.touches[0]);
     const [x, y, dist] = mid(e.touches[0], e.touches[1]);
@@ -2303,80 +2564,139 @@ canvas.addEventListener('touchmove', (e) => {
 canvas.addEventListener('touchend', (e) => {
   e.preventDefault();
   if (touch?.mode === 'mouse' && e.changedTouches[0]) mouseAt('mouseup', e.changedTouches[0]);
-  if (!e.touches.length) touch = null;
+  if (!e.touches.length) {
+    touch = null;
+    lookPivot = null;
+  }
 }, { passive: false });
 
 // --- Controls ------------------------------------------------------------------------
-// Every key the SDK uses, changeable (kept in this browser). Each action has a
-// default key; the keydown handler reads the key pressed as the default key of
-// the action it's bound to (boundCode), and flying reads held(action).
+// Every key the SDK uses, changeable (kept in this browser): each action has a
+// key, and may have an alt key too. Each group has its own keys: flying ones
+// are read only while flying, the roads and races ones only while placing
+// points, so they can be the same keys as editing ones. The keydown handler
+// reads the action a key is (actionFor); flying reads held(action).
 
 const ACTIONS = [
-  ['Flying (hold the right mouse button)', [
+  ['Flying (hold the right mouse button)', 'fly', [
     ['flyForward', 'Forward', 'KeyW'], ['flyBack', 'Back', 'KeyS'], ['flyLeft', 'Left', 'KeyA'], ['flyRight', 'Right', 'KeyD'],
-    ['flyDown', 'Down', 'KeyQ'], ['flyUp', 'Up', 'KeyE'], ['flyFast', 'Faster', 'ShiftLeft'],
+    ['flyUp', 'Up', 'Space', 'KeyE'], ['flyDown', 'Down', 'ControlLeft', 'KeyQ'], ['flyFast', 'Faster', 'ShiftLeft'],
   ]],
-  ['Editing', [
-    ['delete', 'Delete the selection', 'Delete'], ['turnLeft', 'Turn left 15° (Shift: 1°)', 'KeyQ'], ['turnRight', 'Turn right 15° (Shift: 1°)', 'KeyE'],
+  ['Terrain (with the Raise / lower tool)', 'terrain', [
+    ['liftUp', 'Up a step, where the brush is', 'KeyW'], ['liftDown', 'Down a step', 'KeyS'],
+    ['liftFine', 'Hold for 25 cm steps (the wheel, the keys above)', 'AltLeft'],
+  ]],
+  ['Roads and races (while placing points)', 'place', [
+    ['endPlacing', 'Stop placing points (a race: the last is the finish)', 'Space'],
+    ['backPoint', 'Road: take the last point back', 'Backspace'],
+    ['buildRoad', 'Road: build the street', 'Enter', 'NumpadEnter'],
+  ]],
+  ['Editing', 'edit', [
+    ['delete', 'Delete the selection', 'Delete', 'Backspace'], ['turnLeft', 'Turn left 15° (Shift: 1°)', 'KeyQ'], ['turnRight', 'Turn right 15° (Shift: 1°)', 'KeyE'],
     ['nudgeUp', 'Nudge forward (Shift: 10 cm)', 'ArrowUp'], ['nudgeDown', 'Nudge back', 'ArrowDown'], ['nudgeLeft', 'Nudge left', 'ArrowLeft'], ['nudgeRight', 'Nudge right', 'ArrowRight'],
-    ['focus', 'Focus the selection', 'KeyF'], ['snap', 'Snapping on/off', 'KeyG'], ['cancel', 'Cancel / deselect', 'Escape'],
+    ['focus', 'Focus the selection', 'KeyF'], ['snap', 'Snapping on/off', 'KeyG'], ['cancel', 'Cancel (a road being drawn too) / deselect', 'Escape'],
   ]],
-  ['View and play', [
+  ['View and play', 'edit', [
     ['topView', 'Top view', 'Tab'], ['testDrive', 'Test drive (Shift: race the event)', 'KeyP'],
   ]],
-  ['Tools', [
-    ['tool1', 'Select', 'Digit1'], ['tool2', 'Raise', 'Digit2'], ['tool3', 'Lower', 'Digit3'], ['tool4', 'Smooth', 'Digit4'], ['tool5', 'Flatten', 'Digit5'],
+  ['Tools', 'edit', [
+    ['tool1', 'Select', 'Digit1'], ['tool2', 'Raise / lower (wheel toggle off: Raise)', 'Digit2'], ['tool3', 'Lower (wheel toggle off)', 'Digit3'], ['tool4', 'Smooth', 'Digit4'], ['tool5', 'Flatten', 'Digit5'],
     ['tool6', 'Paint', 'Digit6'], ['tool7', 'Erase paint', 'Digit7'], ['tool8', 'Road', 'Digit8'], ['tool9', 'Lot', 'Digit9'], ['tool0', 'Events', 'Digit0'],
     ['smaller', 'Brush smaller', 'BracketLeft'], ['bigger', 'Brush bigger', 'BracketRight'],
   ]],
 ];
-const DEFAULT_KEY = Object.fromEntries(ACTIONS.flatMap(([, list]) => list.map(([a, , k]) => [a, k])));
+const SCOPE = Object.fromEntries(ACTIONS.flatMap(([, scope, list]) => list.map(([a]) => [a, scope])));
+const LABEL = Object.fromEntries(ACTIONS.flatMap(([, , list]) => list.map(([a, label]) => [a, label])));
+const DEFAULT_KEYS = Object.fromEntries(ACTIONS.flatMap(([, , list]) => list.map(([a, , key, alt = null]) => [a, [key, alt]])));
 const KEYS_STORE = 'tt-sdk:keys';
-let binding = { ...DEFAULT_KEY };
+let binding = structuredClone(DEFAULT_KEYS);
 try {
-  Object.assign(binding, JSON.parse(localStorage.getItem(KEYS_STORE) || '{}'));
+  const saved = JSON.parse(localStorage.getItem(KEYS_STORE) || '{}');
+  // (Saved when E and Q flew up and down: now Space and Ctrl do, with E and Q for alts.)
+  if (!('flyUp2' in saved) && saved.flyUp === 'KeyE' && saved.flyDown === 'KeyQ') {
+    delete saved.flyUp;
+    delete saved.flyDown;
+  }
+  for (const [a, v] of Object.entries(saved)) {
+    if (!binding[a]) continue;
+    // (Saved as one key each, before alt keys: that key, and the alt as it comes.)
+    binding[a] = Array.isArray(v) ? [v[0] || binding[a][0], v[1] ?? null] : [v, binding[a][1]];
+  }
+  // (Up and Down's second keys were actions of their own for a while.)
+  if (typeof saved.flyUp2 === 'string') binding.flyUp[1] = saved.flyUp2;
+  if (typeof saved.flyDown2 === 'string') binding.flyDown[1] = saved.flyDown2;
 } catch {
   // (The defaults.)
 }
-const keyOf = (action) => binding[action];
-const held = (action) => keys.has(keyOf(action));
-// The fly keys are only read while flying, so they can share keys with the editing ones.
-const FLY = new Set(ACTIONS[0][1].map(([a]) => a));
-function boundCode(code) {
-  const action = Object.keys(binding).find((a) => !FLY.has(a) && binding[a] === code);
-  // (A key no action has, and that isn't one's default either, passes as itself: Backspace.)
-  return action ? DEFAULT_KEY[action] : Object.values(DEFAULT_KEY).includes(code) ? null : code;
-}
+// (Shift and Ctrl: either side.)
+const SIDES = { ShiftLeft: 'ShiftRight', ControlLeft: 'ControlRight', AltLeft: 'AltRight' };
+const pressed = (code) => !!code && (keys.has(code) || (!!SIDES[code] && keys.has(SIDES[code])));
+const held = (action) => binding[action].some(pressed);
+// 25 cm steps raising and lowering: its key held (Alt as the event says it, too).
+const fineHeld = (e) => held('liftFine') || (!!e?.altKey && binding.liftFine.some((k) => k === 'AltLeft' || k === 'AltRight'));
+// Controls text naming a key that can be changed: {fine} is the 25 cm steps' key.
+const keyText = (t) => t.replaceAll('{fine}', keyName(binding.liftFine[0]));
+// The action of a group (scope) a key is, as its key or its alt, or null.
+const actionFor = (code, scope) => Object.keys(binding).find((a) => SCOPE[a] === scope && binding[a].some((k) => k && (k === code || SIDES[k] === code))) || null;
 
-const KEY_NAMES = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', BracketLeft: '[', BracketRight: ']', ShiftLeft: 'Shift', ShiftRight: 'Right Shift', ControlLeft: 'Ctrl', AltLeft: 'Alt', Space: 'Space', Escape: 'Esc', Backquote: '`', Minus: '-', Equal: '=', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backslash: '\\' };
+const KEY_NAMES = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', BracketLeft: '[', BracketRight: ']', ShiftLeft: 'Shift', ShiftRight: 'Right Shift', ControlLeft: 'Ctrl', ControlRight: 'Right Ctrl', AltLeft: 'Alt', AltRight: 'Right Alt', Space: 'Space', Escape: 'Esc', Enter: 'Enter', NumpadEnter: 'Num Enter', Backquote: '`', Minus: '-', Equal: '=', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backslash: '\\' };
 const keyName = (code) => KEY_NAMES[code] || code.replace(/^Key|^Digit|^Numpad/, (m) => (m === 'Numpad' ? 'Num ' : ''));
 
 const FIXED_KEYS = [
-  ['Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z)', 'Undo / redo'], ['Ctrl+S', 'Save'], ['Ctrl+D', 'Duplicate'], ['Backspace', 'Delete the selection (also)'],
-  ['Enter / Backspace / Esc', 'Road tool: build / take a point back / cancel'], ['Alt (hold)', 'No snapping while moving or placing'],
+  // [what, key, alt key]: set out like the others, in their columns.
+  ['Undo', 'Ctrl+Z'], ['Redo', 'Ctrl+Y', 'Ctrl+Shift+Z'], ['Save', 'Ctrl+S'], ['Duplicate the selection', 'Ctrl+D'],
+  ['No snapping while moving or placing', 'Hold Alt'], ['Finer turns (1°) and nudges (10 cm)', 'Hold Shift'],
 ];
+// [what, button]: in the key column, like the keys.
 const MOUSE = [
-  ['Left click', 'Select (a street, junction, site or gadget where there\'s no object); place; brush; draw a road'],
-  ['Left drag', 'Move the selection (or brush, or scatter)'], ['Right button (hold)', 'Look around, and fly with the keys'],
-  ['Middle drag', 'Pan'], ['Wheel', 'Zoom; while moving or placing: turn 15° (Shift: 1°)'], ['Double-click', 'Road tool: build the street'],
+  ['Select, place, brush, or draw a road', 'Left click'], ['Select a street, junction, site or gadget', 'Left click'],
+  ['Place, and keep placing', 'Shift + click'], ['Move the selection (or brush, or scatter)', 'Left drag'], ['Turn the selection', 'Drag its ring'],
+  ['Look around, and fly with the keys', 'Hold right'], ['Pan', 'Middle drag'], ['Zoom', 'Wheel'], ['Turn while moving or placing (Shift: 1°)', 'Wheel'],
+  ['Raise / lower: a grid step up or down', 'Wheel'], ['Raise / lower: a 25 cm step up or down', '{fine} + wheel'], ['Raise / lower: zoom', 'Hold right + wheel'],
+  ['Road: curve a stretch, or move a point', 'Drag a handle'], ['Road: stop placing points, or straighten a curve', 'Double-click'],
 ];
+const GAMEPAD = [
+  ['Fly, and look round', 'Sticks'], ['Down / up', 'LT / RT'], ['Faster', 'Left stick in'], ['Act at the crosshair (a click)', 'A'],
+  ['Cancel / deselect', 'B'], ['Delete the selection', 'X'], ['Copy the selection', 'Y'], ['Turn 15°', 'LB / RB'],
+  ['Nudge (Raise / lower: a step up or down)', 'D-pad'], ['Top view', 'Back'], ['Test drive', 'Start'],
+];
+const TOUCH = [
+  ['Select, place, brush or draw (as the mouse)', 'One finger'], ['Look round (where there\'s nothing to move)', 'Drag one finger'],
+  ['Pan', 'Two fingers'], ['Zoom', 'Pinch'],
+]
 
-let waiting = null; // the action whose key is being changed
+let waiting = null; // { action, slot (0: its key, 1: its alt) }: the key being changed
+let keysNote = ''; // why the last change wasn't made
 function renderControls() {
   const panel = $('controls-panel');
-  const row = ([a, label]) => `<div class="krow"><span>${esc(label)}</span><button data-bind="${a}" class="${waiting === a ? 'wait' : ''}">${waiting === a ? 'Press a key…' : esc(keyName(keyOf(a)))}</button></div>`;
+  const key = (a, slot) => {
+    const on = waiting?.action === a && waiting.slot === slot;
+    const code = binding[a][slot];
+    return `<button data-bind="${a}" data-slot="${slot}" class="${on ? 'wait' : code ? '' : 'none'}">${on ? 'Press…' : code ? esc(keyName(code)) : '—'}</button>`;
+  };
+  const row = ([a, label]) => `<div class="krow"><span>${esc(label)}</span><span class="keys">${key(a, 0)}${key(a, 1)}${binding[a][1] ? `<button class="clear" data-clear="${a}" title="No alt key">×</button>` : '<i class="clear"></i>'}</span></div>`;
   panel.innerHTML = `<h3>Controls</h3>
-    <p class="note">Click a key to change it, then press the new one (Esc keeps it). A key another action had is swapped over.</p>
-    ${ACTIONS.map(([title, list]) => `<h4>${esc(title)}</h4>${list.map(row).join('')}`).join('')}
-    <h4>Fixed keys</h4>${FIXED_KEYS.map(([k, what]) => `<div class="krow fixed"><span>${esc(what)}</span><span>${esc(k)}</span></div>`).join('')}
-    <h4>Mouse</h4>${MOUSE.map(([k, what]) => `<div class="krow fixed"><span>${esc(what)}</span><span>${esc(k)}</span></div>`).join('')}
+    <p class="note">Click a key to change it, then press the new one (Esc keeps it; × takes an alt key off). A key another action in the same group had is swapped over.</p>
+    ${keysNote ? `<p class="note warn">${esc(keysNote)}</p>` : ''}
+    <div class="krow head"><span></span><span class="keys"><b>Key</b><b>Alt</b><i class="clear"></i></span></div>
+    ${ACTIONS.map(([title, , list]) => `<h4>${esc(title)}</h4>${list.map(row).join('')}`).join('')}
+    <h4>Fixed keys</h4>${FIXED_KEYS.map(([what, k, alt]) => `<div class="krow fixed"><span>${esc(what)}</span><span class="keys"><kbd>${esc(k)}</kbd><kbd class="${alt ? '' : 'none'}">${esc(alt || '')}</kbd><i class="clear"></i></span></div>`).join('')}
+    ${[['Mouse', MOUSE], ['Gamepad', GAMEPAD], ['Touch', TOUCH]].map(([title, list]) => `<h4>${title}</h4>${list.map(([what, k]) => `<div class="krow fixed"><span>${esc(keyText(what))}</span><span class="keys"><kbd class="wide">${esc(keyText(k))}</kbd><i class="clear"></i></span></div>`).join('')}`).join('')}
     <div class="row" style="margin-top:10px"><button id="keys-reset">Reset to defaults</button><button id="keys-close">Close</button></div>`;
   panel.querySelectorAll('[data-bind]').forEach((b) => b.addEventListener('click', () => {
-    waiting = b.dataset.bind;
+    waiting = { action: b.dataset.bind, slot: Number(b.dataset.slot) };
+    keysNote = '';
+    renderControls();
+  }));
+  panel.querySelectorAll('[data-clear]').forEach((b) => b.addEventListener('click', () => {
+    binding[b.dataset.clear][1] = null;
+    waiting = null;
+    saveKeys();
     renderControls();
   }));
   $('keys-reset').addEventListener('click', () => {
-    binding = { ...DEFAULT_KEY };
+    binding = structuredClone(DEFAULT_KEYS);
+    keysNote = '';
     saveKeys();
     renderControls();
   });
@@ -2391,18 +2711,28 @@ function saveKeys() {
   }
 }
 
-// The next key pressed, for the action waiting (before any other handler sees it).
+// The next key pressed, for the key waiting (before any other handler sees it).
 window.addEventListener('keydown', (e) => {
   if (!waiting) return;
   e.preventDefault();
   e.stopImmediatePropagation();
-  if (e.code !== 'Escape' && !['ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight', 'AltLeft', 'AltRight'].includes(e.code)) {
-    // A key another action in the same group had goes to it in exchange (flying keys only clash with flying ones).
-    const fly = FLY.has(waiting);
-    const other = Object.keys(binding).find((a) => a !== waiting && FLY.has(a) === fly && binding[a] === e.code);
-    if (other) binding[other] = binding[waiting];
-    binding[waiting] = e.code;
-    saveKeys();
+  const { action, slot } = waiting;
+  const scope = SCOPE[action];
+  keysNote = '';
+  if (e.code !== 'Escape' && !['MetaLeft', 'MetaRight', ...(scope === 'terrain' ? [] : ['AltLeft', 'AltRight']), ...(scope === 'fly' ? [] : ['ControlLeft', 'ControlRight'])].includes(e.code)) {
+    // A key another action in the same group had goes to it in exchange (a key
+    // an action has as its only key stays, unless there's one to give it back).
+    const was = binding[action][slot];
+    const other = Object.keys(binding)
+      .flatMap((a) => (SCOPE[a] === scope ? [[a, 0], [a, 1]] : []))
+      .find(([a, s]) => !(a === action && s === slot) && binding[a][s] === e.code);
+    if (other && other[1] === 0 && !was && other[0] !== action) keysNote = `${keyName(e.code)} is ${LABEL[other[0]]}'s key: give that another key first.`;
+    else {
+      if (other) binding[other[0]][other[1]] = was;
+      binding[action][slot] = e.code;
+      if (!binding[action][0]) [binding[action][0], binding[action][1]] = [binding[action][1], null];
+      saveKeys();
+    }
   }
   waiting = null;
   renderControls();
@@ -2417,8 +2747,9 @@ document.body.insertAdjacentHTML('beforeend', '<div id="controls-panel" hidden><
 $('controls').addEventListener('click', () => toggleControls());
 
 // --- Camera: looking round -------------------------------------------------------------
-// On the spot, or (Orbit selection) round the selection, keeping it in the
-// middle of the view at the same distance. With nothing selected, on the spot.
+// On the spot, or (Orbit) round the selection, keeping it in the middle of the
+// view at the same distance; with nothing selected, round the ground that was
+// under the cursor (lookPivot).
 
 let homeCam = null; // where the camera started (Reset camera)
 
@@ -2430,7 +2761,15 @@ function orbitPivot() {
     return new THREE.Vector3(fb.x, session.baseY(it) + (it.h || 2) / 2, fb.z);
   }
   if (feature && typeof feature.x === 'number') return new THREE.Vector3(feature.x, H(feature.x, feature.z), feature.z);
-  return null;
+  return lookPivot;
+}
+
+// Nothing selected: looking round turns round the ground under the cursor
+// (where it was when the right button went down, or the touch began).
+let lookPivot = null;
+function pivotUnder(e) {
+  setRay(e);
+  lookPivot = groundHit();
 }
 
 function lookBy(dyaw, dpitch) {
@@ -2483,10 +2822,15 @@ function drawRing() {
 // --- Races: start, points, finish ----------------------------------------------------
 // A sprint or circuit is placed in stages: Place start (click it), then its
 // points one by one, then Space (or Finish here): the last point is the
-// finish (a circuit comes back round to its start). After that its points
-// can be dragged to other junctions, added (click the route) or taken out
-// (select, Delete). On the map: numbered points, a start gate (green) and a
-// finish gate (chequered), where the game puts them.
+// finish (a circuit comes back round to its start). A point is a junction or
+// a way through a site or lot, clicked near one, or a spot anywhere else (see
+// sim/routePoints.js): on a street, in its middle; off the streets the race
+// goes straight to it; on the ground, or up on top of something (never inside
+// it). The start and a sprint's finish are always spots, exactly where they're
+// put. After that the points can be dragged (the start and finish too), added
+// (click the route) or taken out (select, Delete). On the map: numbered
+// points, a start gate (green) and a finish gate (chequered), where the game
+// puts them.
 
 let evStage = null; // null, 'start', 'placing', 'editing'
 let evSel = null; // the selected route point
@@ -2500,25 +2844,171 @@ function routeStageText(r) {
     if (r.along && r.to !== null && r.to !== undefined) return 'Drag the start or the finish along the street to move it.';
     return 'Press Place start, then click the start on a street.';
   }
-  if (evStage === 'start') return r.path.length >= 2 ? 'Click where on the route the start goes.' : 'Click the start anywhere on a street (or a junction, or a way through a site or lot).';
-  if (evStage === 'placing') return `Click where the race goes: anywhere along the streets, junction to junction. Space (or Finish here): ${r.kind === 'circuit' ? 'it comes back round to the start' : 'where you stop is the finish'}.`;
-  if (r.path.length) return `Drag the start${r.kind === 'sprint' ? ' or finish' : ''} flag along the route; drag a junction point to another; click the route to add one; select one and press Delete to take it out.`;
+  if (evStage === 'start') return 'Click the start anywhere: on a street, off the streets, or up on top of something (not inside it).';
+  if (evStage === 'placing') return `Click where the race goes: a junction, a way through a site or lot, or anywhere (off the streets it goes straight there, and up onto things). Space (or Finish here): ${r.kind === 'circuit' ? 'it comes back round to the start' : 'the last point is the finish'}.`;
+  if (r.path.length) return 'Drag a point to move it (the start and finish too); click the route to add one; select one and press Delete to take it out.';
   return 'Press Place start, then click the start on the map.';
 }
 
 function finishRoute() {
-  if ((evDraft?.route?.path?.length || 0) < 2) return toast('Place at least one point after the start.');
-  // Where the last click was is the finish (a sprint's; a circuit finishes at its start).
-  if (evDraft.route.kind === 'sprint' && evDraft.lastAt) evDraft.finishAt = evDraft.lastAt;
-  delete evDraft.startEdge;
+  const r = evDraft?.route;
+  if ((r?.path?.length || 0) < 2) return toast('Place at least one point after the start.');
+  // (A sprint finishes exactly where it stops: on a junction, a spot there.)
+  const last = r.path[r.path.length - 1];
+  if (r.kind === 'sprint' && isJunction(last)) r.path[r.path.length - 1] = routePos(last).map((v) => Math.round(v * 10) / 10);
   evStage = 'editing';
   renderEvents();
   previewEvent();
   hint();
 }
 
-// Where a route point is: a junction, or a way through (its middle).
+// Place start clicked at spot S: a new race starts there. One there already:
+// S goes into it at the stretch nearest it (a circuit's loop turned to start
+// there; a sprint's points before that stretch dropped), in place of the old start.
+function placeStart(S) {
+  const r = evDraft.route;
+  delete r.start; // (a circuit's start was so far along its first street)
+  const rest = isSpot(r.path[0]) ? r.path.slice(1) : r.path;
+  if (!rest.length) {
+    r.path = [S];
+    evStage = 'placing';
+    return;
+  }
+  const pos = rest.map(routePos);
+  let best = null;
+  const n = r.kind === 'circuit' ? pos.length : pos.length - 1;
+  for (let k = 0; k < n; k++) {
+    const [a, b] = [pos[k], pos[(k + 1) % pos.length]];
+    if (!a || !b) continue;
+    const q = G.segDist(S[0], S[1], a, b);
+    if (!best || q.d < best.d) best = { d: q.d, k, t: q.t };
+  }
+  if (r.kind === 'circuit') r.path = best ? [S, ...rest.slice(best.k + 1), ...rest.slice(0, best.k + 1)] : [S, ...rest];
+  else r.path = !best || (best.k === 0 && best.t < 0.02) ? [S, ...rest] : [S, ...rest.slice(best.k + 1)];
+  evStage = 'editing';
+}
+
+// What's solid about a district item, as a race off the streets has it (an
+// obstacle: footprint, y, h), or null.
+function solidOf(it) {
+  if (it.hidden || !(it.solid || it.deck) || !Array.isArray(it.r)) return null;
+  const o = layoutObstacle(it, 0, 0);
+  if (it.deck) {
+    const base = typeof it.y === 'number' ? it.y : H(o.x, o.z);
+    Object.assign(o, { y: base - 0.05, h: it.h - base + 0.05 });
+  }
+  return o;
+}
+
+// The top of what's solid at (x, z) that a click at height y landed on (or on
+// what's drawn on it: rooftop clutter), or null.
+function topAt(x, z, y) {
+  let best = null;
+  for (const it of session.layout.items) {
+    const o = solidOf(it);
+    if (!o || !onFoot(o, x, z)) continue;
+    const top = o.y + o.h;
+    if (y >= top - 0.6 && y <= top + 4 && (best === null || top > best)) best = top;
+  }
+  return best;
+}
+
+// The item a car at height y at (x, z) would be inside, or null.
+function solidIn(x, z, y) {
+  for (const it of session.layout.items) {
+    const o = solidOf(it);
+    if (o && o.y < y + 1.5 && o.y + o.h > y + 0.3 && onFoot(o, x, z)) return it;
+  }
+  return null;
+}
+
+// The middle of the street at (x, z), if it's on one (its sidewalks too), or null.
+function streetMiddle(x, z) {
+  const map = session.map;
+  let best = null;
+  if (map.plan) {
+    for (const st of map.streets) {
+      if (st.drain || st.tunnel) continue;
+      const q = G.nearestOnLine(st.pts, x, z);
+      if (q.d < st.half + 3 && (!best || q.d < best.d)) best = q;
+    }
+    return best?.p || null;
+  }
+  for (const e of map.edges.values()) {
+    const [A, B] = [map.nodes[e.a], map.nodes[e.b]];
+    if (A.stub || B.stub || A.i < 0 || B.i < 0) continue;
+    const q = G.segDist(x, z, [A.x, A.z], [B.x, B.z]);
+    if (q.d < 9 && (!best || q.d < best.d)) best = { d: q.d, p: [A.x + (B.x - A.x) * q.t, A.z + (B.z - A.z) * q.t] };
+  }
+  return best?.p || null;
+}
+
+// Where a race's start or finish goes, under the cursor: on the ground (on a
+// street, in its middle) or up on top of something, never inside something.
+// { at: [x, z] or [x, z, y] } or { why }.
+function raceSpot() {
+  const g = groundHit();
+  if (!g) return { why: 'Click on the map.' };
+  let [x, z, y] = [g.x, g.z, null];
+  const m = meshHit();
+  if (m && m.y > H(m.x, m.z) + 0.4) {
+    // Something's drawn there: stand on its top; its side is refused. (What's
+    // not solid, the Undercity's deck, a tree's crown, a sign: the ground under it.)
+    const top = topAt(m.x, m.z, m.y);
+    if (top !== null) [x, z, y] = [m.x, m.z, top];
+    else {
+      const d = ray.ray.direction;
+      const side = session.layout.items.find((it) => {
+        const o = solidOf(it);
+        return o && m.y >= o.y - 0.1 && m.y <= o.y + o.h + 0.1 && onFoot(o, m.x + d.x * 0.3, m.z + d.z * 0.3);
+      });
+      if (side) return { why: `That's the side of the ${nameOf(side).toLowerCase()}: click its top, or the ground.` };
+    }
+  }
+  const inside = solidIn(x, z, y ?? H(x, z));
+  if (inside) return { why: `That's inside the ${nameOf(inside).toLowerCase()}: put it on the ground, or on top of something.` };
+  if (y === null) [x, z] = streetMiddle(x, z) || [x, z];
+  const r1 = (v) => Math.round(v * 10) / 10;
+  return { at: y === null ? [r1(x), r1(z)] : [r1(x), r1(z), r1(y)] };
+}
+
+// A point clicked along a race: a junction or a way through (near one), or a
+// spot anywhere. { point } or { why }.
+function routeAdd() {
+  const s = raceSpot();
+  if (s.why) return s;
+  const p = s.at.length === 2 ? routePoint(session, s.at[0], s.at[1]) : null;
+  return { point: p ? p.name : s.at };
+}
+
+// A junction's name (not a way's, or a spot)?
+function isJunction(name) {
+  if (isSpot(name)) return false;
+  if (session.map.plan) return session.map.byName.has(name);
+  const [c, rw] = name.split('.');
+  const g = session.district.city.grid;
+  return g.cols[c] !== undefined && g.rows[rw] !== undefined;
+}
+
+// What a check found in the way, by name ("the warehouse"), or "something".
+function thing(key) {
+  const it = key && session.item(key);
+  return it ? `the ${nameOf(it).toLowerCase()}` : 'something';
+}
+
+// A route point as the route's list shows it.
+function pointLabel(r, k) {
+  const p = r.path[k];
+  if (!isSpot(p)) return p;
+  const what = k === 0 ? 'Start' : r.kind === 'sprint' && k === r.path.length - 1 && evStage !== 'placing' ? 'Finish' : 'Point';
+  const f = featureAt(session, p[0], p[1]);
+  const on = f?.type === 'street' || f?.type === 'gridStreet' ? ` on ${f.name}` : '';
+  return `${what}${on}${p.length > 2 ? ` (${(p[2] - H(p[0], p[1])).toFixed(1)} m up)` : ''}`;
+}
+
+// Where a route point is: a junction, a way through (its middle), or a spot.
 function routePos(name) {
+  if (isSpot(name)) return [name[0], name[1]];
   const map = session.map;
   if (map.plan) {
     const n = map.byName.get(name);
@@ -2569,20 +3059,29 @@ function drawEventMarks() {
     let p = mp;
     if (drag?.routePoint === k && drag.at) p = drag.at;
     if (!p) return;
-    const last = k === marks.length - 1 && evStage !== 'placing' && r.kind === 'drag';
+    const last = k === marks.length - 1 && evStage !== 'placing' && (r.kind === 'drag' || r.kind === 'sprint');
     const color = evSel === k ? 0x05d9e8 : k === 0 ? 0x39ff14 : last ? 0xffffff : 0xffb000;
     const m = new THREE.Mesh(new THREE.OctahedronGeometry(size), basic(color));
-    m.position.set(p[0], H(p[0], p[1]) + size * 2, p[1]);
+    m.position.set(p[0], (p[2] ?? H(p[0], p[1])) + size * 2, p[1]);
     m.renderOrder = 15;
     eventMarks.add(m);
   });
-  // The gates, where the game puts them (the route it builds).
+  // Where the race runs into something (wayProblem): a red ring.
+  if (evWay && evStage !== 'placing') {
+    const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([...Array(32).keys()].map((k) => {
+      const a = (k / 32) * Math.PI * 2;
+      return new THREE.Vector3(evWay.x + Math.cos(a) * 8, H(evWay.x, evWay.z) + 1, evWay.z + Math.sin(a) * 8);
+    })), new THREE.LineBasicMaterial({ color: 0xff2a6d, depthTest: false, transparent: true, fog: false }));
+    ring.renderOrder = 15;
+    eventMarks.add(ring);
+  }
+  // The gates, where the game puts them (the route it builds), up on what they're on.
   const pts = evPreview?.pts;
   if (!pts || pts.length < 2 || evStage === 'placing' || evStage === 'start') return;
-  const gate = ([x, z], [nx, nz], kind) => {
+  const gate = ([x, z], [nx, nz], kind, top) => {
     const yaw = Math.atan2(nx - x, nz - z);
     const half = 12;
-    const y = H(x, z);
+    const y = top ?? H(x, z);
     const g = new THREE.Group();
     for (const s of [-1, 1]) g.add(new THREE.Mesh(new THREE.BoxGeometry(0.6, 7, 0.6).translate(s * half, 3.5, 0), basic(0x4a4858)));
     const cells = 12;
@@ -2597,23 +3096,24 @@ function drawEventMarks() {
     g.children.forEach((o) => (o.renderOrder = 15));
     eventMarks.add(g);
   };
-  // (A gate being dragged goes where the cursor is; a sprint's at its startS and finishS.)
   const at = (s) => {
     const p = G.pointAlong(pts, Math.max(0, Math.min(s, G.lineLength(pts))));
     return [[p.x, p.z], [p.x + p.dx, p.z + p.dz]];
   };
-  const dragged = (flag, fallback) => (drag?.flag === flag && drag.at ? [drag.at, [drag.at[0] + 0.01, drag.at[1] + 1]] : fallback);
-  if (evPreview.closed) gate(...dragged('start', [pts[0], pts[1]]), 'both');
-  else {
-    const sprint = r.kind === 'sprint';
-    gate(...dragged('start', sprint && evDraft.startS ? at(evDraft.startS) : [pts[0], pts[1]]), 'start');
-    gate(...dragged('finish', sprint && evDraft.finishS ? at(evDraft.finishS) : [pts[pts.length - 1], [2 * pts[pts.length - 1][0] - pts[pts.length - 2][0], 2 * pts[pts.length - 1][1] - pts[pts.length - 2][1]]]), 'finish');
+  const end = [pts[pts.length - 1], [2 * pts[pts.length - 1][0] - pts[pts.length - 2][0], 2 * pts[pts.length - 1][1] - pts[pts.length - 2][1]]];
+  if (evPreview.closed) gate(...at(0), 'both', evPreview.startY);
+  else if (r.kind === 'drag') {
+    gate(pts[0], pts[1], 'start');
+    gate(...end, 'finish');
+  } else {
+    gate(...at(evPreview.startS), 'start', evPreview.startY);
+    gate(...at(evPreview.finishS), 'finish', evPreview.finishY);
   }
 }
 
 // The route's points on the map (null: not placed): a drag's start and
 // finish (where the game builds them when they're given as distances), or a
-// race's junctions and ways.
+// race's junctions, ways and spots ([x, z, y] up on something).
 function routeMarks() {
   const r = evDraft?.route;
   if (!r) return [];
@@ -2623,7 +3123,7 @@ function routeMarks() {
     const placed = (v, end) => (Array.isArray(v) ? v : v !== null && v !== undefined && r.along ? end : null);
     return [placed(r.from, ends[0]), placed(r.to, ends[1])];
   }
-  return (r.path || []).map(routePos);
+  return (r.path || []).map((p) => (isSpot(p) ? p : routePos(p)));
 }
 
 // A drag's start (0) or finish (1) dropped: it stays on its street.
@@ -2633,85 +3133,4 @@ function dropDragEnd(k, at) {
   const street = f?.type === 'street' || f?.type === 'gridStreet' ? f.name : null;
   if (street !== r.along) return toast(`Keep it on ${r.along}.`);
   r[k === 0 ? 'from' : 'to'] = [Math.round(at[0]), Math.round(at[1])];
-}
-
-// --- Races: start and finish anywhere ------------------------------------------------
-// A route runs junction to junction (the game's routes do); a click along a
-// street between junctions puts both of that street's junctions in the route,
-// and the start and finish are wherever they were clicked (a sprint's startS
-// and finishS: its grid and finish line that far along the route; a
-// circuit's start: its loop turned to begin on that street, route.start in).
-
-// What a click adds to a route: { names, edge (a street's two ends, if it's along one) }.
-function pointNames(g, path) {
-  const p = routePoint(session, g.x, g.z);
-  if (p) return { names: [p.name] };
-  const map = session.map;
-  let best = null;
-  for (const e of map.edgeList || []) {
-    if (!e.street || e.street.drain) continue;
-    const A = map.nodes[e.a];
-    const B = map.nodes[e.b];
-    const q = G.nearestOnLine(e.pts, g.x, g.z);
-    if (A.name && B.name && q.d < e.street.half + 3 && (!best || q.d < best.q.d)) best = { q, A, B };
-  }
-  if (!best) return null;
-  const { A, B } = best;
-  const prev = path.length ? routePos(path[path.length - 1]) : null;
-  // (From where the route is coming: the nearer end first.)
-  const ab = !prev || Math.hypot(A.x - prev[0], A.z - prev[1]) <= Math.hypot(B.x - prev[0], B.z - prev[1]);
-  return { names: ab ? [A.name, B.name] : [B.name, A.name], edge: true };
-}
-
-// The start and finish, from where they were clicked to how far along the route.
-function fitEnds() {
-  const d = evDraft;
-  const r = d?.route;
-  const pts = evPreview?.pts;
-  if (!r?.path || !pts || evPreview.error) return;
-  if (r.kind === 'circuit') {
-    if (!d.startAt || d.startFitted) return;
-    // The stretch the start is on goes first; the start that far along it.
-    const pos = r.path.map(routePos);
-    let best = null;
-    pos.forEach((a, k) => {
-      const b = pos[(k + 1) % pos.length];
-      if (!a || !b) return;
-      const { d: dd } = G.segDist(d.startAt[0], d.startAt[1], a, b);
-      if (!best || dd < best.dd) best = { dd, k };
-    });
-    if (!best) return;
-    r.path = [...r.path.slice(best.k), ...r.path.slice(0, best.k)];
-    const first = routePreview({ ...session.withEvents(), events: [] }, { ...r, start: 0.5 });
-    if (first.pts) r.start = Math.max(1, Math.round(G.nearestOnLine(first.pts, ...d.startAt).s + 0.5));
-    d.startFitted = true;
-    evPreview = routePreview({ ...session.withEvents(), events: [] }, r);
-    return;
-  }
-  if (r.kind !== 'sprint') return;
-  const L = G.lineLength(pts);
-  const sOf = (p) => G.nearestOnLine(pts, p[0], p[1]).s;
-  if (d.startAt) d.startS = Math.round(Math.min(sOf(d.startAt), L - 60));
-  else delete d.startS;
-  if (d.finishAt) d.finishS = Math.round(Math.max(sOf(d.finishAt), (d.startS || 40) + 50));
-  else delete d.finishS;
-}
-
-// The start or finish gate under a ground point, while editing.
-function flagAt(g) {
-  const pts = evPreview?.pts;
-  if (!pts || evPreview.error) return null;
-  const near = Math.max(10, altitude() * 0.03);
-  const L = G.lineLength(pts);
-  const pointAt = (s) => {
-    const p = G.pointAlong(pts, Math.max(0, Math.min(s, L)));
-    return [p.x, p.z];
-  };
-  const r = evDraft.route;
-  const start = r.kind === 'sprint' && evDraft.startS ? pointAt(evDraft.startS) : pts[0];
-  const finish = r.kind === 'sprint' ? (evDraft.finishS ? pointAt(evDraft.finishS) : pts[pts.length - 1]) : null;
-  const d = (p) => (p ? Math.hypot(p[0] - g.x, p[1] - g.z) : Infinity);
-  if (d(start) < near && d(start) <= d(finish)) return 'start';
-  if (d(finish) < near) return 'finish';
-  return null;
 }

@@ -17,7 +17,7 @@ export const SDK_CSS = `
       html, body { margin: 0; height: 100%; overflow: hidden; background: #000; color: var(--ink); font: 13px var(--font); }
       body {
         display: grid;
-        grid-template: 'top top top' 40px 'left view right' 1fr 'status status status' 24px / 230px 1fr 250px;
+        grid-template: 'top top top' 40px 'left view right' 1fr 'status status status' 24px / 250px 1fr 250px;
       }
       [hidden] { display: none !important; }
       button, select, input { font: inherit; color: var(--ink); background: var(--night); border: 1px solid var(--line); border-radius: 3px; padding: 3px 7px; }
@@ -32,17 +32,40 @@ export const SDK_CSS = `
       #top { grid-area: top; display: flex; align-items: center; gap: 8px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; }
       #top b { color: var(--pink); letter-spacing: 1px; }
       #top .sep { width: 1px; height: 22px; background: var(--line); }
-      #title { margin-left: auto; color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
+      #title { color: var(--dim); overflow: hidden; text-overflow: ellipsis; }
 
       #left, #right { background: var(--panel); overflow-y: auto; padding: 8px; }
-      #left { grid-area: left; border-right: 1px solid var(--line); }
+      #left { grid-area: left; border-right: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
+      /* (Select and the tabs stay put; only the tab's own list scrolls, its scrollbar thin and its room kept.) */
+      #left > #tools, #left > #tabs { flex: none; }
+      #left .pane { flex: 1; min-height: 0; overflow-y: auto; }
+      #pane-objects { display: flex; flex-direction: column; overflow: hidden; }
+      #pane-objects > * { flex: none; }
+      #pane-objects > #cat { flex: 1; min-height: 0; overflow-y: auto; }
+      #left .pane, #cat { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+      #cat { scrollbar-gutter: stable; }
       #right { grid-area: right; border-left: 1px solid var(--line); }
-      #tools { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 4px; margin-bottom: 8px; }
-      #tools button { padding: 3px 4px; }
+      #tools { margin-bottom: 8px; }
+      #tools button { width: 100%; padding: 4px; }
+      #tabs { display: flex; gap: 2px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
+      #tabs button { flex: 1; min-width: 0; padding: 4px 0; font-size: 12px; border-bottom: none; border-radius: 3px 3px 0 0; color: var(--dim); }
+      #tabs button.on { color: var(--cyan); border-color: var(--cyan); }
+      .toolgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 8px; }
+      .toolgrid button { padding: 3px 4px; }
+      .pane > .tip { margin: 0 0 8px; color: var(--dim); font-size: 12px; line-height: 1.4; }
       #brush-opts { display: grid; gap: 6px; margin-bottom: 10px; padding: 6px; border: 1px solid var(--line); border-radius: 3px; }
-      #brush-opts label { display: grid; grid-template-columns: 62px 1fr 34px; gap: 6px; }
+      #brush-opts h3 { margin: 0; }
+      #brush-opts label { display: grid; grid-template-columns: 58px 1fr 44px; gap: 6px; }
+      /* A slider's number: reads as plain text; click (or tab) to type one. */
+      input.num { width: 100%; box-sizing: border-box; padding: 1px 2px; font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 3px; text-align: right; cursor: text; }
+      input.num:hover { border-color: var(--line); }
+      input.num:focus { border-color: var(--cyan); background: var(--night); outline: none; }
+      #brush-opts label.check { display: flex; }
       #brush-opts select { grid-column: 2 / 4; }
       #brush-opts input[type=range] { width: 100%; }
+      #brush-opts .row { display: flex; gap: 4px; }
+      #brush-opts .row button { flex: 1; }
+      #brush-opts .tip { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.4; }
       .opts { display: grid; gap: 6px; margin-bottom: 10px; padding: 6px; border: 1px solid var(--line); border-radius: 3px; }
       .opts label { display: grid; grid-template-columns: 62px 1fr; gap: 6px; }
       .opts input, .opts select { width: 100%; }
@@ -74,13 +97,20 @@ export const SDK_CSS = `
       .warn { color: var(--pink); }
       #toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); max-width: 70%; padding: 8px 14px; background: var(--panel); border: 1px solid var(--cyan); color: var(--cyan); border-radius: 3px; pointer-events: none; }
       #crosshair { position: fixed; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid var(--cyan); border-radius: 50%; pointer-events: none; }
-      #controls-panel { position: fixed; right: 12px; top: 48px; width: min(440px, 94vw); max-height: calc(100vh - 80px); overflow-y: auto; padding: 14px 16px; background: var(--panel); border: 1px solid var(--cyan); border-radius: 4px; z-index: 6; }
+      #controls-panel { position: fixed; right: 12px; top: 48px; width: min(560px, 94vw); max-height: calc(100vh - 80px); overflow-y: auto; padding: 14px 16px; background: var(--panel); border: 1px solid var(--cyan); border-radius: 4px; z-index: 6; }
       #controls-panel h3 { margin: 0 0 6px; color: var(--cyan); }
       #controls-panel h4 { margin: 12px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
       #controls-panel .krow { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 0; }
-      #controls-panel .krow button { min-width: 64px; }
+      #controls-panel .krow .keys { display: flex; align-items: center; gap: 4px; flex: none; }
+      #controls-panel .krow .keys button, #controls-panel .krow.head b { width: 106px; min-width: 106px; padding-left: 2px; padding-right: 2px; }
+      #controls-panel .krow.head b { color: var(--dim); font-size: 11px; font-weight: normal; text-align: center; text-transform: uppercase; letter-spacing: 1px; }
+      #controls-panel .krow .keys .clear { min-width: 0; width: 20px; padding: 0; display: inline-block; }
+      #controls-panel .krow button.none { color: var(--dim); opacity: 0.6; }
       #controls-panel .krow button.wait { border-color: var(--amber); color: var(--amber); }
       #controls-panel .fixed { color: var(--dim); }
+      #controls-panel .krow kbd { width: 106px; box-sizing: border-box; padding: 3px 2px; text-align: center; font: inherit; color: var(--dim); border: 1px dashed var(--dim); border-radius: 3px; opacity: 0.8; white-space: nowrap; }
+      #controls-panel .krow kbd.none { border-color: transparent; }
+      #controls-panel .krow kbd.wide { width: 216px; }
       #busy { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); padding: 6px 14px; background: var(--panel); border: 1px solid var(--amber); color: var(--amber); border-radius: 3px; pointer-events: none; }
 
       #right h3 { margin: 0 0 2px; color: var(--amber); font-size: 14px; }
@@ -94,6 +124,8 @@ export const SDK_CSS = `
       .evrow:hover { background: #2a1a48; }
       .evrow.on { background: #3a1a40; outline: 1px solid var(--pink); }
       .evrow i { color: var(--dim); font-style: normal; white-space: nowrap; }
+      #events-list h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+      #events-list .toolgrid { margin-top: 4px; }
       #events-panel h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
       #events-panel textarea { width: 100%; min-height: 48px; font: inherit; color: var(--ink); background: var(--night); border: 1px solid var(--line); border-radius: 3px; }
       .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
@@ -136,27 +168,41 @@ export const SDK_HTML = `
       <label title="The district's haze"><input type="checkbox" id="fog" /> Fog</label>
       <button id="top-view" title="Look straight down (Tab)">Top view</button>
       <button id="cam-reset" title="Back to where the camera started">Reset camera</button>
-      <label title="Looking round (right button, touch, gamepad) turns the camera round the selection; with nothing selected it turns on the spot"><input type="checkbox" id="orbit" /> Orbit selection</label>
-      <button id="drive" class="go" title="Drive this map in the game, from where you're looking (P)">▶ Test drive</button>
+      <label title="Looking round (right button, touch) turns the camera round the selection; with nothing selected, round the spot under the cursor. Off: it turns on the spot"><input type="checkbox" id="orbit" /> Orbit</label>
       <button id="play" title="Play these edits in the game's free roam (this browser only; the career keeps the official district)">Play in game</button>
       <button id="publish" title="Studio: ship this map with the game in place of its district, career included (writes src/content/maps)">Publish</button>
       <button id="marks" hidden title="Where the last test drive was wrecked (red), stuck (amber) or put back on the road (blue). Click to clear them."></button>
-      <span id="title"></span>
+      <button id="drive" style="margin-left: auto" class="go" title="Drive this map in the game, from where you're looking (P)">▶ Test drive</button>
       <button id="controls" title="Keyboard and mouse controls (change the keys here)">Controls</button>
+      <span id="title"></span>
     </div>
     <div id="left">
       <div id="tools">
         <button data-tool="select" class="on" title="Select, move and place objects (1)">Select</button>
-        <button data-tool="raise" title="Raise the ground (2)">Raise</button>
-        <button data-tool="lower" title="Lower the ground (3)">Lower</button>
-        <button data-tool="smooth" title="Smooth the ground (4)">Smooth</button>
-        <button data-tool="flatten" title="Flatten to the height where you start (5)">Flatten</button>
-        <button data-tool="paint" title="Paint the ground: grip in free roam (6)">Paint</button>
-        <button data-tool="erase" title="Erase paint (7)">Erase</button>
-        <button data-tool="road" title="Draw a new street (8)">Road</button>
-        <button data-tool="lot" title="Set what a block is (9)">Lot</button>
-        <button data-tool="events" title="Make and edit this district's events (0)">Events</button>
       </div>
+      <div id="tabs">
+        <button data-tab="objects" class="on" title="Place objects from the list">Objects</button>
+        <button data-tab="terrain" title="Shape and paint the ground">Terrain</button>
+        <button data-tab="roads" title="Streets and blocks">Roads</button>
+        <button data-tab="events" title="Make and edit this district's events (0)">Events</button>
+      </div>
+      <div id="pane-terrain" class="pane" hidden>
+        <div class="toolgrid">
+          <button data-tool="height" title="Raise and lower the ground with the mouse wheel, a grid step at a time (2)">Raise / lower</button>
+          <button data-tool="raise" title="Raise the ground: hold the left button (2)">Raise</button>
+          <button data-tool="lower" title="Lower the ground: hold the left button (3)">Lower</button>
+          <button data-tool="smooth" title="Smooth the ground (4)">Smooth</button>
+          <button data-tool="flatten" title="Flatten to the height where you start (5)">Flatten</button>
+          <button data-tool="paint" title="Paint the ground: grip in free roam (6)">Paint</button>
+          <button data-tool="erase" title="Erase paint (7)">Erase paint</button>
+        </div>
+        <p class="tip">Size, strength, angle and paint are on the right.</p>
+      </div>
+      <div id="pane-roads" class="pane" hidden>
+        <div class="toolgrid">
+          <button data-tool="road" title="Draw a new street (8)">Road</button>
+          <button data-tool="lot" title="Set what a block is (9)">Lot</button>
+        </div>
       <div id="road-opts" class="opts" hidden>
         <label>Name <input id="road-name" value="New Street" /></label>
         <label>Width <select id="road-width"><option value="lane">Lane (7 m)</option><option value="street" selected>Street (12 m)</option><option value="avenue">Avenue (20 m)</option></select></label>
@@ -168,17 +214,18 @@ export const SDK_HTML = `
         <label>Block <select id="lot-kind"></select></label>
         <p class="tip">Click a block to make it this kind: the district fills it its own way.</p>
       </div>
+      </div>
+      <div id="pane-events" class="pane" hidden>
+        <div id="events-list"></div>
+      </div>
+      <div id="pane-objects" class="pane">
       <div id="place-opts" class="opts" hidden>
         <label>Place <select id="place-mode"><option value="one">One at a time</option><option value="line">Along a line</option><option value="scatter">Scatter (hold and brush)</option></select></label>
         <label>Spacing <input type="number" id="spacing" min="1" max="100" step="1" value="8" /></label>
       </div>
-      <div id="brush-opts" hidden>
-        <label>Size <input type="range" id="radius" min="2" max="60" value="12" /><span id="radius-v"></span></label>
-        <label>Strength <input type="range" id="strength" min="0.1" max="2" step="0.1" value="0.6" /><span id="strength-v"></span></label>
-        <label id="kind-row">Paint <select id="kind"><option value="dirt">Dirt (off-road)</option><option value="grass">Grass (off-road)</option><option value="sand">Sand</option><option value="road">Road (full grip)</option><option value="water">Water (fall in)</option></select></label>
-      </div>
       <input id="search" placeholder="Search objects" />
       <div id="cat"></div>
+      </div>
     </div>
     <canvas id="view" tabindex="0"></canvas>
     <div id="start">
@@ -213,6 +260,16 @@ export const SDK_HTML = `
       </div>
     </div>
     <div id="right">
+      <div id="brush-opts" hidden>
+        <h3 id="brush-title">Terrain</h3>
+        <label class="check" id="wheel-row" title="On: the mouse wheel raises and lowers the ground a grid step at a time (Snap moves' size; hold Alt (see Controls) or snapping off: 25 cm). Off: hold the left button to raise or lower"><input type="checkbox" id="wheel-lift" checked /> Mouse wheel raises and lowers</label>
+        <label id="size-row">Size <input type="range" id="radius" min="2" max="60" value="12" /><input class="num" id="radius-v" data-for="radius" data-unit=" m" inputmode="decimal" /></label>
+        <label id="strength-row">Strength <input type="range" id="strength" min="0.1" max="2" step="0.1" value="0.6" /><input class="num" id="strength-v" data-for="strength" inputmode="decimal" /></label>
+        <label id="angle-row" title="Tilts the brush: a slope rising away from where you're looking (negative: falling away)">Angle <input type="range" id="angle" min="-45" max="45" step="1" value="0" /><input class="num" id="angle-v" data-for="angle" data-unit="°" inputmode="decimal" /></label>
+        <label id="kind-row">Paint <select id="kind"><option value="dirt">Dirt (off-road)</option><option value="grass">Grass (off-road)</option><option value="sand">Sand</option><option value="road">Road (full grip)</option><option value="water">Water (fall in)</option></select></label>
+        <div class="row" id="lift-row"><button id="lift-up" title="Raise the ground a step where the brush is (or in the middle of the view)">▲ Up a step (W)</button><button id="lift-down" title="Lower the ground a step where the brush is">▼ Down a step (S)</button></div>
+        <p class="tip" id="brush-tip"></p>
+      </div>
       <div id="events-panel" hidden></div>
       <div id="inspector"></div>
       <div id="edits"></div>

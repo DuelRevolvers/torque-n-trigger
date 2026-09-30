@@ -12,6 +12,7 @@ import { buildTrack, SURFACE } from './track.js';
 import { yawFromDirection } from './math.js';
 import { districtLayout } from './cityLayout.js';
 import { roundedPoints, authoredShortcuts, layoutObstacle, deckLegs, CORNER_R, STREET } from './city.js';
+import { isSpot, endRun, spotEnds, RUN_UP, RUN_OFF, OPEN } from './routePoints.js';
 
 const DEDUPE = 0.5;
 
@@ -88,22 +89,32 @@ function wayNamed(map, name, at) {
 }
 
 // The route's centreline: its waypoints resolved and filled in along the streets.
-// Returns the polyline and its pieces (which street or way each stretch is on).
-export function routeLine(map, names) {
-  const pieces = []; // { pts, st?, way? }
+// Returns the polyline and its pieces (which street or way each stretch is on;
+// free: straight to or from a spot off the streets). A waypoint is a node's or
+// way's name, or a spot anywhere ([x, z]: see routePoints.js). A sprint (ends)
+// starting at a spot has a run-up before it, and finishing at one a run-off.
+export function routeLine(map, names, ends = false) {
+  const pieces = []; // { pts, st?, way?, open?, free? }
   let at = null; // where the route has got to: [x, z]
+  let atOff = false; // (and it's a spot off the streets)
   for (const name of names) {
-    const node = map.byName.get(name);
-    const way = !node && wayNamed(map, name, at);
-    if (!node && !way) throw new Error(`${map.style.id}: no node or way called ${name}`);
+    const spot = isSpot(name) ? [name[0], name[1]] : null;
+    const node = !spot && map.byName.get(name);
+    const way = !spot && !node && wayNamed(map, name, at);
+    if (!spot && !node && !way) throw new Error(`${map.style.id}: no node or way called ${name}`);
+    const off = !!spot && !positions(map, spot).length;
     let seq;
-    if (node) seq = [[node.x, node.z]];
+    if (spot) seq = [spot];
+    else if (node) seq = [[node.x, node.z]];
     else {
       seq = way.points.map((p) => [...p]);
       // Enter the way from the end nearer where the route is.
       if (at && G.len2(at, seq[seq.length - 1]) < G.len2(at, seq[0])) seq.reverse();
     }
-    if (at) {
+    if (at && (atOff || off)) {
+      // To or from a spot off the streets: straight.
+      if (G.len2(at, seq[0]) > DEDUPE) pieces.push({ pts: [[...at], [...seq[0]]], free: true });
+    } else if (at) {
       // Along a street both ends share (the shortest, if more than one);
       // otherwise the shortest way along the streets.
       if (G.len2(at, seq[0]) > DEDUPE) {
@@ -128,6 +139,26 @@ export function routeLine(map, names) {
     }
     if (way) pieces.push({ pts: seq, way });
     at = seq[seq.length - 1];
+    atOff = off;
+  }
+  if (ends && pieces.length) {
+    // A spot's run-up and run-off: along its street, or straight on.
+    const head = pieces[0].pts;
+    const tail = pieces[pieces.length - 1].pts;
+    const away = (a, b) => {
+      const L = Math.hypot(a[0] - b[0], a[1] - b[1]) || 1;
+      return [(a[0] - b[0]) / L, (a[1] - b[1]) / L];
+    };
+    if (isSpot(names[0])) {
+      const p = head[0];
+      const r = endRun(p, away(p, head[1]), RUN_UP, positions(map, p));
+      pieces.unshift({ pts: r.pts.reverse(), ...(r.st ? { st: r.st } : { free: true }) });
+    }
+    if (isSpot(names[names.length - 1])) {
+      const p = tail[tail.length - 1];
+      const r = endRun(p, away(p, tail[tail.length - 2]), RUN_OFF, positions(map, p));
+      pieces.push({ pts: r.pts, ...(r.st ? { st: r.st } : { free: true }) });
+    }
   }
   const line = [];
   for (const pc of pieces) {
@@ -178,12 +209,16 @@ export function planTrack(map, style, route) {
       });
     }
     pieces = [{ pts: line, st, from: 0, to: line.length - 1 }];
-  } else ({ line, pieces } = routeLine(map, circuit ? [...route.path, route.path[0]] : route.path));
+  } else ({ line, pieces } = routeLine(map, circuit ? [...route.path, route.path[0]] : route.path, route.kind === 'sprint'));
   // Each piece as a range of arc length along the line.
   const cum0 = cumulative(line);
   let ranges = pieces.map((pc) => ({ pc, a: cum0[pc.from], b: cum0[pc.to] }));
   const total = cum0[cum0.length - 1];
-  if (circuit) {
+  if (circuit && isSpot(route.path[0])) {
+    // (The start and finish are the spot it starts at; the last point repeats it.)
+    line.pop();
+    for (const pc of pieces) pc.to = Math.min(pc.to, line.length - 1);
+  } else if (circuit) {
     // The last point repeats the first. Start and finish `start` metres along
     // the first street (default: halfway), and shift the pieces to match.
     line.pop();
@@ -209,7 +244,9 @@ export function planTrack(map, style, route) {
   if (map.roof) def.points = densifyPoints(def.points, circuit, 4, HL);
   const probe = buildTrack(def);
   const sOf = (u) => (u / total) * probe.length;
-  if (map.roof) return roofTrack(map, style, def, probe, ranges.map((r) => ({ ...r, s0: sOf(r.a), s1: sOf(r.b) })));
+  // (Stretches off the streets: what's there is solid, and can be driven on.)
+  const zones = pieces.filter((pc) => pc.free).map((pc) => pc.pts);
+  if (map.roof) return spotEnds(roofTrack(map, style, def, probe, ranges.map((r) => ({ ...r, s0: sOf(r.a), s1: sOf(r.b) }))), map, route, zones);
 
   // Widths street by street: the road and the lot line (no sidewalks where a
   // street runs through a site as its aisle); a way through takes its own. In
@@ -227,6 +264,11 @@ export function planTrack(map, style, route) {
   for (const { pc, a: ra, b: rb } of ranges) {
     const s0 = sOf(ra);
     const s1 = sOf(rb);
+    if (pc.free) {
+      // Off the streets: open ground (a suburb's is lawn).
+      push(s0, s1, OPEN.half, OPEN.wall, suburb ? { surface: SURFACE.OFFROAD, open: true } : { off: SURFACE.ROAD, open: true });
+      continue;
+    }
     if (pc.way) {
       const half = pc.way.halfWidth ?? 4;
       const surface = waySurface(pc.way);
@@ -350,7 +392,7 @@ export function planTrack(map, style, route) {
   if (suburb) suburbRace(map, def, layout);
   if (map.under) underRace(map, style, def, layout);
   if (P.spire) spireRace(map, route, def, layout);
-  return def;
+  return spotEnds(def, map, route, zones);
 }
 
 // A suburb's race: what stands inside the walls is solid (verge trees, lamps,
@@ -739,10 +781,10 @@ function planClosures(map, line, pieces, circuit, branches, probe, sections) {
       if (!used([n.x, n.z], dir)) closeAt([n.x, n.z], dir, e.street);
     }
   }
-  // Where the route leaves a street mid-way (into a way through a site), the
-  // rest of that street is closed.
+  // Where the route leaves a street mid-way (into a way through a site, or off
+  // the streets), the rest of that street is closed.
   for (const pc of pieces) {
-    if (!pc.way) continue;
+    if (!pc.way && !pc.free) continue;
     for (const end of [pc.pts[0], pc.pts[pc.pts.length - 1]]) {
       for (const { st, s } of positions(map, end)) {
         if (st.ring) continue;

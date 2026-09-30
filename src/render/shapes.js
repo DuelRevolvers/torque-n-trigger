@@ -1,6 +1,64 @@
 // Small geometry builders shared by the district, arena and track views.
 
 import * as THREE from 'three';
+import { clipHalf, polyArea } from '../sim/geom2d.js';
+
+// A flat polygon of any shape following the ground (yAt): its triangles cut
+// into cells `cell` metres across, so it rises and falls inside as well as
+// round its edge (sculpted ground, a big junction on a hill); finer inside
+// fine.box (fine.cell apart: the sculpted ground's own grid). Every triangle
+// faces up; UVs are world metres / uv.
+export function drapePoly(poly, yAt, cell = 8, uv = 8, fine = null) {
+  const pos = [];
+  const uvs = [];
+  const idx = [];
+  // (The lines cutting it, between a and b: every `cell`, and every fine.cell across fine.box.)
+  const lines = (a, b, f0, f1) => {
+    const out = new Set([a, b]);
+    for (let v = Math.ceil(a / cell) * cell; v < b; v += cell) out.add(v);
+    if (fine) for (let v = Math.ceil(Math.max(a, f0) / fine.cell) * fine.cell; v < Math.min(b, f1); v += fine.cell) out.add(v);
+    return [...out].sort((p, q) => p - q);
+  };
+  for (const t of THREE.ShapeUtils.triangulateShape(poly.map(([x, z]) => new THREE.Vector2(x, z)), [])) {
+    const tri = t.map((q) => poly[q]);
+    const xs = tri.map((p) => p[0]);
+    const zs = tri.map((p) => p[1]);
+    const X = lines(Math.min(...xs), Math.max(...xs), fine?.box[0], fine?.box[1]);
+    const Z = lines(Math.min(...zs), Math.max(...zs), fine?.box[2], fine?.box[3]);
+    for (let a = 0; a + 1 < X.length; a++) {
+      for (let b = 0; b + 1 < Z.length; b++) {
+        let piece = tri;
+        for (const [n, c] of [[[1, 0], X[a]], [[-1, 0], -X[a + 1]], [[0, 1], Z[b]], [[0, -1], -Z[b + 1]]]) if (piece.length > 2) piece = clipHalf(piece, n, c);
+        const area = piece.length > 2 ? polyArea(piece) : 0;
+        if (Math.abs(area) < 1e-4) continue;
+        const k = pos.length / 3;
+        for (const [px, pz] of piece) {
+          pos.push(px, yAt(px, pz), pz);
+          uvs.push(px / uv, pz / uv);
+        }
+        for (let q = 1; q + 1 < piece.length; q++) idx.push(...(area < 0 ? [k, k + q, k + q + 1] : [k, k + q + 1, k + q]));
+      }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+// Points along a line no more than `step` metres apart (its own points kept).
+export function densified(pts, step = 4) {
+  const out = [pts[0]];
+  for (let k = 1; k < pts.length; k++) {
+    const [a, b] = [pts[k - 1], pts[k]];
+    const n = Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / step);
+    for (let i = 1; i < n; i++) out.push([a[0] + ((b[0] - a[0]) * i) / n, a[1] + ((b[1] - a[1]) * i) / n]);
+    out.push(b);
+  }
+  return out;
+}
 
 // A box of w x h x d centred at (x, y, z), turned by yaw.
 export const box = (w, h, d, x, y, z, yaw = 0) => {

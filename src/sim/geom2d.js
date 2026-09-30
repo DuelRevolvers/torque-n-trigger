@@ -154,7 +154,8 @@ export function lineHit(p, d, q, e) {
 
 // Offsets a closed polygon inward, each edge k by off[k] (edge k runs from
 // point k to point k+1). Sharp corners are bevelled instead of mitred far out.
-export function insetPoly(p, off) {
+// tidy: edges too short for their offset taken out (see below).
+export function insetPoly(p, off, tidy = false) {
   const n = p.length;
   const sgn = polyArea(p) > 0 ? 1 : -1;
   const lines = [];
@@ -173,13 +174,35 @@ export function insetPoly(p, off) {
     const cross = A.d[0] * B.d[1] - A.d[1] * B.d[0];
     const hit = Math.abs(cross) > 0.02 ? lineHit(A.p, A.d, B.p, B.d) : null;
     const reach = 3 * Math.max(off[(k - 1 + n) % n], off[k]) + 2;
-    if (hit && len2(hit, p[k]) <= reach) out.push({ pt: hit, edge: k });
+    // (Tidied, a thin wedge's tip is where its sides meet, however far in.)
+    if (hit && (len2(hit, p[k]) <= reach || (tidy && cross * sgn > 0))) out.push({ pt: hit, edge: k });
+    else if (tidy && !hit && A.d[0] * B.d[0] + A.d[1] * B.d[1] > 0) out.push({ pt: [(A.q[0] + B.p[0]) / 2, (A.q[1] + B.p[1]) / 2], edge: k }); // (nearly straight on)
     else {
-      out.push({ pt: A.q, edge: (k - 1 + n) % n });
+      out.push({ pt: A.q, edge: (k - 1 + n) % n, bevel: true });
       if (len2(A.q, B.p) > 0.05) out.push({ pt: B.p, edge: k });
     }
   }
-  return out; // [{ pt, edge }]: pt starts the inset edge that came from original edge `edge`
+  // An edge too short for its offset turns round (the lines either side of it
+  // crossed): it goes, and its neighbours meet instead, until none has.
+  for (let guard = 0; tidy && guard < n && out.length > 3; guard++) {
+    const m = out.length;
+    const k = out.findIndex((q, i) => {
+      if (q.bevel) return false;
+      const r = out[(i + 1) % m].pt;
+      const d = lines[q.edge].d;
+      return (r[0] - q.pt[0]) * d[0] + (r[1] - q.pt[1]) * d[1] < -1e-6;
+    });
+    if (k < 0) break;
+    const prev = out[(k - 1 + m) % m];
+    const next = out[(k + 1) % m];
+    const A = lines[prev.edge];
+    const B = lines[next.edge];
+    const hit = !prev.bevel && Math.abs(A.d[0] * B.d[1] - A.d[1] * B.d[0]) > 0.02 ? lineHit(A.p, A.d, B.p, B.d) : null;
+    const pt = hit && len2(hit, out[k].pt) <= 3 * Math.max(...off) + 2 ? hit : [(out[k].pt[0] + next.pt[0]) / 2, (out[k].pt[1] + next.pt[1]) / 2];
+    out.splice(k, 1);
+    out[k % out.length] = { pt, edge: next.edge };
+  }
+  return out.map(({ pt, edge }) => ({ pt, edge })); // [{ pt, edge }]: pt starts the inset edge that came from original edge `edge`
 }
 
 // Separating-axis overlap test between two convex polygons.

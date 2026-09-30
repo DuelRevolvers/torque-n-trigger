@@ -93,14 +93,10 @@ export function gridLateral(track, s) {
 }
 
 function poseAt(track, i, lateral = 0) {
-  return {
-    pos: {
-      x: track.x[i] + track.rx[i] * lateral,
-      y: track.y[i] + SPAWN_HEIGHT,
-      z: track.z[i] + track.rz[i] * lateral,
-    },
-    yaw: yawFromDirection(track.tx[i], track.tz[i]),
-  };
+  const x = track.x[i] + track.rx[i] * lateral;
+  const z = track.z[i] + track.rz[i] * lateral;
+  // (Off the streets in a T&T SDK race: on top of what's there.)
+  return { pos: { x, y: (track.tops ? track.standY(x, z) : track.y[i]) + SPAWN_HEIGHT, z }, yaw: yawFromDirection(track.tx[i], track.tz[i]) };
 }
 
 // Respawns the car on the centreline when asked, when stuck upside down, or when
@@ -152,6 +148,8 @@ export function respawnCar(world, id, { back = 0, index = null } = {}) {
   // Never put a car back in (or right before) a gap between rooftops.
   const gap = track.gaps?.find((g) => track.s[i] > g.s0 - g.len - 5 && track.s[i] < g.s1 + 5);
   if (gap) i = track.indexAtDistance(Math.max(0, gap.s0 - gap.len - 60));
+  // (Never inside something solid, off the streets.)
+  if (track.tops) i = track.clearIndex(i);
   // On the centreline, or beside the median where there is one (on the side the car was on).
   const median = track.medianAt?.(track.s[i]) || 0;
   const lateral = median ? (Math.sign(car.lateral) || 1) * (median + 3) : 0;

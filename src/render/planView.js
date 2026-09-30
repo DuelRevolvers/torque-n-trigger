@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
 import { textTexture } from './textures.js';
 import { setUvRect } from './trackView.js';
-import { box, obbBox, prism, flatPoly, rampGeometry, tint, scaleUv } from './shapes.js';
+import { box, obbBox, prism, flatPoly, drapePoly, densified, rampGeometry, tint, scaleUv } from './shapes.js';
 import { districtLayout } from '../sim/cityLayout.js';
 import { buildAuthoredStructures } from './arenaView.js';
 import { deadSignShape } from './deadSigns.js';
@@ -53,6 +53,10 @@ class Surface {
 export function buildPlanDistrictView(map, tex) {
   if (map.roof) return buildRoofDistrictView(map, tex); // the rooftops (Chrome Heights)
   const { style, heightAt: H } = map;
+  // (Ground sculpted in the SDK: the flat layers are draped over it, the roads cut finer.)
+  const bumpy = !!map.sculpted;
+  const fine = map.sculptAt?.fine || null;
+  const surface = (poly, dy) => (bumpy ? drapePoly(poly, (x, z) => H(x, z) + dy, 16, 8, fine) : flatPoly(poly, (x, z) => H(x, z) + dy));
   const look = style.look;
   const P = style.plan;
   const group = new THREE.Group();
@@ -62,6 +66,7 @@ export function buildPlanDistrictView(map, tex) {
 
   const mats = {
     walk: litMaterial({ map: tex.sidewalk, color: look.walk || '#ffffff', side: DS }),
+    walkTop: litMaterial({ map: tex.sidewalk, color: look.walk || '#ffffff', side: DS, polygonOffset: true, polygonOffsetFactor: -1.5, polygonOffsetUnits: -3 }),
     lot: litMaterial({ map: tex.lot, color: look.lot, side: DS, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }),
     road: standardMaterial({ map: tex.asphalt, color: look.road || '#ffffff', roughness: 0.35, metalness: 0.1, envMap: tex.env, envMapIntensity: look.roadGloss ?? 0.8, side: DS, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -6 }),
     junction: standardMaterial({ map: tex.asphalt, color: look.road || '#ffffff', roughness: 0.35, metalness: 0.1, envMap: tex.env, envMapIntensity: look.roadGloss ?? 0.8, side: DS, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 }),
@@ -88,8 +93,16 @@ export function buildPlanDistrictView(map, tex) {
     trunk: litMaterial({ color: '#5a4030' }),
   };
   const neonMat = [...Array(neonN).keys()].map((k) => glowMaterial({ color: look.neon[k], intensity: 2.6 }));
+  // The junctions: each one's outline, kerbs and sidewalk corners (the ground's sidewalks follow them).
+  const junctions = junctionShapes();
+  const outlines = new Map(); // node id -> junctionOutline
+  for (const n of map.nodes) {
+    if (!n.name || map.edgeList.some((e) => (e.a === n.id || e.b === n.id) && e.street.drain)) continue;
+    const o = junctionOutline(n);
+    if (o) outlines.set(n.id, o);
+  }
   // A suburb (Maple Hollow) has its own ground and house kit; so has the Undercity.
-  const kitArgs = { map, tex, H, group, items: layout.items, text, clipToConvex, merged };
+  const kitArgs = { map, tex, H, group, items: layout.items, text, clipToConvex, merged, walkBands, junctionAt: (id) => outlines.has(id) };
   const kit = look.suburb ? suburbView(kitArgs) : look.under ? underView(kitArgs) : look.spire ? spireView(kitArgs) : null;
 
   // Buckets, merged into one mesh per material at the end.
@@ -102,41 +115,48 @@ export function buildPlanDistrictView(map, tex) {
   // (Layers a few centimetres apart, and pulled forward in depth, so they never fight.)
   if (kit) kit.ground();
   else cityGround();
+  // (Round the junctions' corners, the sidewalk over the lots: where a kerb
+  // curves, a lot's sharp corner doesn't cut across the sidewalk.)
+  if (!kit || look.spire) {
+    const bands = walkBands(-0.1);
+    if (bands.length) add(new THREE.Mesh(merged(bands), mats.walkTop));
+    const patches = lotPatches(-0.11);
+    if (patches.length) add(new THREE.Mesh(merged(patches), mats.lot));
+  }
   function cityGround() {
-  add(new THREE.Mesh(flatPoly(P.boundary, (x, z) => H(x, z) - 0.16), mats.walk));
-  const lotGeos = map.blocks.map((b) => flatPoly(b.lot, (x, z) => H(x, z) - 0.12));
+  add(new THREE.Mesh(surface(P.boundary, -0.16), mats.walk));
+  const lotGeos = map.blocks.map((b) => surface(b.lot, -0.12));
   add(new THREE.Mesh(merged(lotGeos), mats.lot));
   const siteSurface = { arena: 'parking', market: 'tiles', drivein: 'road', boneyard: 'dirt', depot: 'parking', casino: 'tiles' };
   const surf = { parking: [], tiles: [], road: [], dirt: [], grass: [] };
   for (const s of map.sites) {
     for (const b of map.blocks) {
       const piece = clipToConvex(b.lot, s.poly);
-      if (piece.length > 2 && Math.abs(G.polyArea(piece)) > 1) surf[siteSurface[s.kind] || 'tiles'].push(flatPoly(piece, (x, z) => H(x, z) - 0.08));
+      if (piece.length > 2 && Math.abs(G.polyArea(piece)) > 1) surf[siteSurface[s.kind] || 'tiles'].push(surface(piece, -0.08));
     }
   }
   for (const L of P.lots || []) {
     if (L.kind !== 'promenade') continue;
-    surf.grass.push(flatPoly(L.poly, (x, z) => H(x, z) - 0.08));
+    surf.grass.push(surface(L.poly, -0.08));
     // A tiled walk along the seawall.
     const S = P.seawall.pts;
     for (let k = 0; k + 1 < S.length; k++) {
       const a = S[k];
       const b = S[k + 1];
       const walk = [a, b, ...[b, a].map((p) => inland(p, a, b, 12))];
-      surf.tiles.push(flatPoly(walk, (x, z) => H(x, z) - 0.07));
+      surf.tiles.push(surface(walk, -0.07));
     }
   }
   // The service alleys' asphalt.
   for (const [a, b] of P.alleys?.runs || []) {
     const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
     const n = [(-(b[1] - a[1]) / L) * (P.alleys.width / 2), ((b[0] - a[0]) / L) * (P.alleys.width / 2)];
-    surf.road.push(flatPoly([[a[0] + n[0], a[1] + n[1]], [b[0] + n[0], b[1] + n[1]], [b[0] - n[0], b[1] - n[1]], [a[0] - n[0], a[1] - n[1]]], (x, z) => H(x, z) - 0.08));
+    surf.road.push(surface([[a[0] + n[0], a[1] + n[1]], [b[0] + n[0], b[1] + n[1]], [b[0] - n[0], b[1] - n[1]], [a[0] - n[0], a[1] - n[1]]], -0.08));
   }
   for (const [k, list] of Object.entries(surf)) if (list.length) add(new THREE.Mesh(merged(list), mats[k]));
   }
 
   // --- Streets: roads along their curves, junctions, markings, kerbs ---
-  const { clear: clearAt, shapes: junctionAt } = junctionShapes();
   const road = new Surface();
   const dirtRoad = new Surface(); // a dirt road (Maple Hollow's Foundation Road)
   const kerb = new Surface();
@@ -146,20 +166,35 @@ export function buildPlanDistrictView(map, tex) {
     const st = e.street;
     // (The Undercity's drain is its ground; the Low Road draws its own road.)
     if (st.drain || st.tunnel) continue;
-    const c0 = clearAt.get(`${e.id}:${e.a}`) || 0;
-    const c1 = clearAt.get(`${e.id}:${e.b}`) || 0;
-    if (e.len - c0 - c1 < 0.5) continue;
+    const c0 = junctions.clear(e, 'a');
+    const c1 = junctions.clear(e, 'b');
+    if (e.len - c0 - c1 < 0.05) continue;
     const pts = G.subLine(e.pts, c0, e.len - c1);
-    ribbon(st.surface === 'dirt' ? dirtRoad : road, pts, -st.half, st.half, -0.045, 8, 8);
+    // (Its ends square across it exactly where the junctions start.)
+    const ends = [junctions.normal(e, 'a'), junctions.normal(e, 'b')];
+    ribbon(st.surface === 'dirt' ? dirtRoad : road, pts, -st.half, st.half, -0.045, 8, 8, ends);
     if (st.surface === 'dirt') continue;
-    if (st.sidewalk) for (const s of [-1, 1]) ribbon(kerb, pts, s * st.half, s * (st.half + 0.3), -0.04, 4);
+    if (st.sidewalk) for (const s of [-1, 1]) ribbon(kerb, pts, s * st.half, s * (st.half + 0.3), -0.04, 4, 0, ends);
     markings(marks, pts, st);
   }
-  for (const n of map.nodes) {
-    if (!n.name || map.edgeList.some((e) => (e.a === n.id || e.b === n.id) && e.street.drain)) continue;
-    const poly = junctionPoly(n);
-    if (poly) junctionGeos.push(capGeometry(poly, (x, z) => H(x, z) - 0.035));
+  const junctionFallbacks = [];
+  const p3 = (x, z) => [x, H(x, z) - 0.04, z];
+  for (const [id, o] of outlines) {
+    if (o.fallback) junctionFallbacks.push(map.nodes[id].name);
+    junctionGeos.push(drapePoly(o.poly, (x, z) => H(x, z) - 0.035, 6, 16, fine));
+    // Kerbs round the corners, out from the road.
+    for (const { pts: run } of o.runs) {
+      for (let q = 0; q + 1 < run.length; q++) {
+        const [a, b] = [run[q], run[q + 1]];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+        if (L < 0.02) continue;
+        const [ox, oz] = [((b[1] - a[1]) / L) * 0.3 * o.sg, (-(b[0] - a[0]) / L) * 0.3 * o.sg];
+        kerb.quad(p3(a[0], a[1]), p3(b[0], b[1]), p3(b[0] + ox, b[1] + oz), p3(a[0] + ox, a[1] + oz), [0, 0], [1, 0], [1, 1], [0, 1]);
+      }
+    }
+    if (o.bend) markings(marks, o.bend.pts, o.bend.st);
   }
+  group.userData.junctionFallbacks = junctionFallbacks; // (junctions whose outline crossed itself, drawn as a hull)
   // The roads out of the district carry on beyond its edge.
   for (const n of map.nodes.filter((q) => q.exit)) {
     const e = map.edgeList.find((q) => q.a === n.id || q.b === n.id);
@@ -170,9 +205,15 @@ export function buildPlanDistrictView(map, tex) {
     ribbon(road, out, -e.street.half, e.street.half, -0.045, 8, 8);
     for (const s of [-1, 1]) ribbon(kerb, out, s * e.street.half, s * e.street.edge, -0.05, 4);
   }
-  add(new THREE.Mesh(road.geometry(), mats.road));
+  const roads = new THREE.Mesh(road.geometry(), mats.road);
+  roads.name = 'roads';
+  add(roads);
   add(dirtRoad.geometry() && new THREE.Mesh(dirtRoad.geometry(), mats.dirt));
-  add(junctionGeos.length ? new THREE.Mesh(merged(junctionGeos), mats.junction) : null);
+  if (junctionGeos.length) {
+    const cross = new THREE.Mesh(merged(junctionGeos), mats.junction);
+    cross.name = 'junctions';
+    add(cross);
+  }
   add(kerb.geometry() && new THREE.Mesh(kerb.geometry(), mats.kerb));
   add(marks.geometry() && new THREE.Mesh(marks.geometry(), mats.marking));
 
@@ -315,11 +356,26 @@ export function buildPlanDistrictView(map, tex) {
 
   // A strip along a polyline between lateral offsets l0 and l1 (right-hand
   // side positive), dy above the ground, mitred at the bends.
-  function ribbon(surf, pts, l0, l1, dy, vScale, uScale = 0) {
-    const u0 = uScale ? l0 / uScale : 0;
-    const u1 = uScale ? l1 / uScale : 1;
+  // (ends: its first and last points' normals, where they're given.)
+  function ribbon(surf, pts, l0, l1, dy, vScale, uScale = 0, ends = null) {
+    // (On sculpted ground: a point every few metres along it, and strips a few metres wide across.)
+    const across = bumpy ? Math.max(1, Math.ceil(Math.abs(l1 - l0) / (fine?.cell || 4))) : 1;
+    if (across > 1) {
+      for (let i = 0; i < across; i++) {
+        const [a, b] = [l0 + ((l1 - l0) * i) / across, l0 + ((l1 - l0) * (i + 1)) / across];
+        ribbonStrip(surf, pts, a, b, dy, vScale, uScale ? a / uScale : i / across, uScale ? b / uScale : (i + 1) / across, ends);
+      }
+      return;
+    }
+    ribbonStrip(surf, pts, l0, l1, dy, vScale, uScale ? l0 / uScale : 0, uScale ? l1 / uScale : 1, ends);
+  }
+
+  function ribbonStrip(surf, line, l0, l1, dy, vScale, u0, u1, ends) {
+    const pts = bumpy ? densified(line, fine?.cell || 4) : line;
     const n = pts.length;
     const nrm = pts.map((p, k) => {
+      if (k === 0 && ends?.[0]) return ends[0];
+      if (k === n - 1 && ends?.[1]) return ends[1];
       const a = pts[Math.max(0, k - 1)];
       const b = pts[Math.min(n - 1, k + 1)];
       const dx = b[0] - a[0];
@@ -364,125 +420,442 @@ export function buildPlanDistrictView(map, tex) {
   }
 
   // Junctions like real ones. Round a junction, each pair of neighbouring
-  // roads has a corner: their kerbs meet in a curve (a kerb radius, smaller
-  // where the angle is tight), whatever the angle between them. Each road stops
-  // where its corners start (the junction's own surface covers the rest); a
-  // road straight on through carries on. Returns { clear: road end distances
-  // by 'edge:node', shapes: node -> { arms, corners } }.
+  // roads has a corner: their kerbs (as the roads draw them, along their
+  // curves) meet, and are joined by a curve (a kerb radius: a road bending
+  // on its own gets a wide one; a tight angle a small nose, not a long cut).
+  // Each road stops where its corners start, square across; the junction's
+  // own surface covers the rest, round the outside of a bend too. A road
+  // straight on through carries on. A street drawn in the SDK that ends on
+  // its own gets a rounded end.
+  // Returns { clear(e, 'a'|'b'): how far back from that end its road stops,
+  // normal(e, end): the road's normal there (or null), shapes: node -> shape }.
   function junctionShapes() {
-    const clear = new Map();
+    const ends = new Map(); // 'edge:a|b' -> { c, n (the road's normal, a to b) }
     const shapes = new Map();
-    for (const n of map.nodes) {
-      if (!n.name) continue;
-      const arms = map.edgeList
-        .filter((e) => (e.a === n.id || e.b === n.id) && !e.street.drain && !e.street.tunnel)
-        .map((e) => {
-          const pts = e.a === n.id ? e.pts : [...e.pts].reverse();
-          const L = G.len2(pts[0], pts[1]) || 1;
-          const d = [(pts[1][0] - pts[0][0]) / L, (pts[1][1] - pts[0][1]) / L];
-          return { e, d, h: e.street.half, a: Math.atan2(d[1], d[0]), max: Math.min(e.len * 0.45, 60), need: 0 };
-        })
-        .sort((p, q) => p.a - q.a);
-      if (arms.length < 2) continue;
-      const corners = arms.map((A, i) => {
-        const B = arms[(i + 1) % arms.length];
-        let phi = B.a - A.a;
-        if (phi <= 0) phi += Math.PI * 2;
-        if (arms.length === 2 && Math.abs(phi - Math.PI) < 0.26) return null; // straight on
-        if (phi >= Math.PI - 0.05) return { A, B, chord: true }; // the outside of a bend, or a straight side
-        // Where A's kerb (on B's side) meets B's (on A's side)...
-        const [px, pz] = [n.x - A.d[1] * A.h, n.z + A.d[0] * A.h];
-        const [qx, qz] = [n.x + B.d[1] * B.h, n.z - B.d[0] * B.h];
-        const den = A.d[0] * B.d[1] - A.d[1] * B.d[0];
-        const [wx, wz] = [qx - px, qz - pz];
-        const sA = (wx * B.d[1] - wz * B.d[0]) / den;
-        const sB = (wx * A.d[1] - wz * A.d[0]) / den;
-        const P = [px + A.d[0] * sA, pz + A.d[1] * sA];
-        // (Kerbs meeting behind the junction, or past where a road ends (a very
-        // tight angle, a short road): no room for a curve; the corner is cut
-        // straight, and the roads kept clear of each other.)
-        const cut = () => {
-          A.need = Math.max(A.need, Math.min(Math.max(sA, 0), A.max));
-          B.need = Math.max(B.need, Math.min(Math.max(sB, 0), B.max));
-          return { A, B, chord: true };
-        };
-        if (sA < 0 || sB < 0 || sA > A.max - 1 || sB > B.max - 1) return cut();
-        // ...and the curve round that corner, where it leaves each kerb.
-        const tan = Math.tan(phi / 2);
-        const R = Math.min(4 + Math.min(A.h, B.h) * 0.4, (A.max - sA) * tan, (B.max - sB) * tan);
-        if (R < 1.5) return cut();
-        const T = R / tan;
-        A.need = Math.max(A.need, sA + T);
-        B.need = Math.max(B.need, sB + T);
-        const bis = [A.d[0] + B.d[0], A.d[1] + B.d[1]];
-        const bl = Math.hypot(bis[0], bis[1]) || 1;
-        const C = [P[0] + (bis[0] / bl) * (R / Math.sin(phi / 2)), P[1] + (bis[1] / bl) * (R / Math.sin(phi / 2))];
-        return { A, B, R, C, ta: [P[0] + A.d[0] * T, P[1] + A.d[1] * T], tb: [P[0] + B.d[0] * T, P[1] + B.d[1] * T] };
-      });
-      if (corners.every((k) => !k)) continue;
-      for (const A of arms) clear.set(`${A.e.id}:${n.id}`, Math.max(0, Math.min(A.need, A.max)));
-      shapes.set(n.id, { arms, corners });
-    }
-    return { clear, shapes };
-  }
-
-  // A corner's curve, from where it leaves one kerb to where it meets the next.
-  function cornerArc(k, steps = 8) {
-    const a0 = Math.atan2(k.ta[1] - k.C[1], k.ta[0] - k.C[0]);
-    let da = Math.atan2(k.tb[1] - k.C[1], k.tb[0] - k.C[0]) - a0;
-    while (da > Math.PI) da -= Math.PI * 2;
-    while (da < -Math.PI) da += Math.PI * 2;
-    return [...Array(steps + 1).keys()].map((q) => [k.C[0] + Math.cos(a0 + (da * q) / steps) * k.R, k.C[1] + Math.sin(a0 + (da * q) / steps) * k.R]);
-  }
-
-  // A junction's surface: round it, each road's end, then the corner to the
-  // next road (along the kerb, round the curve); kerbs round the curves.
-  function junctionPoly(n) {
-    const J = junctionAt.get(n.id);
-    if (!J) return null;
-    const end = (A, side) => {
-      const c = clearAt.get(`${A.e.id}:${n.id}`) || 0;
-      return [n.x + A.d[0] * c - side * A.d[1] * A.h, n.z + A.d[1] * c + side * A.d[0] * A.h];
-    };
-    const pts = [];
-    J.arms.forEach((A, i) => {
-      pts.push(end(A, -1), end(A, 1));
-      const k = J.corners[i];
-      if (!k || k.chord) return;
-      // (A curve that would start past either road's end: cut straight.)
-      const along = (p, X) => (p[0] - n.x) * X.d[0] + (p[1] - n.z) * X.d[1];
-      const cOf = (X) => clearAt.get(`${X.e.id}:${n.id}`) || 0;
-      if (along(k.ta, A) > cOf(A) + 0.01 || along(k.tb, k.B) > cOf(k.B) + 0.01) return;
-      const arc = cornerArc(k);
-      pts.push(...arc);
-      // (Kerbs: round the curve, and along each road's edge back to its end.)
-      if (A.e.street.sidewalk && k.B.e.street.sidewalk) {
-        const kerbLine = [end(A, 1), ...arc, end(k.B, -1)];
-        for (let q = 0; q + 1 < kerbLine.length; q++) {
-          const [a, b] = [kerbLine[q], kerbLine[q + 1]];
-          const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
-          if (L < 0.05) continue;
-          // (Out from the road: towards the corner's middle.)
-          const [ox, oz] = [((b[1] - a[1]) / L) * 0.3, (-(b[0] - a[0]) / L) * 0.3];
-          const sg = (a[0] + ox - k.C[0]) ** 2 + (a[1] + oz - k.C[1]) ** 2 < (a[0] - ox - k.C[0]) ** 2 + (a[1] - oz - k.C[1]) ** 2 ? 1 : -1;
-          const p3 = (x, z) => [x, H(x, z) - 0.04, z];
-          kerb.quad(p3(a[0], a[1]), p3(b[0], b[1]), p3(b[0] + sg * ox, b[1] + sg * oz), p3(a[0] + sg * ox, a[1] + sg * oz), [0, 0], [1, 0], [1, 1], [0, 1]);
-        }
+    const setEnd = (A, c, nrm) => ends.set(`${A.e.id}:${A.end}`, { c, n: A.end === 'a' ? nrm : [-nrm[0], -nrm[1]] });
+    const armsAt = new Map(); // node id -> the roads into it
+    for (const e of map.edgeList) {
+      if (e.street.drain || e.street.tunnel) continue;
+      for (const end of ['a', 'b']) {
+        if (!map.nodes[e[end]].name) continue;
+        if (!armsAt.has(e[end])) armsAt.set(e[end], []);
+        armsAt.get(e[end]).push(armOf(e, end));
       }
-    });
-    // (Points on top of each other, where a road ends right at its corner's curve, go once.)
-    return pts.filter((p, q) => q === 0 || Math.hypot(p[0] - pts[q - 1][0], p[1] - pts[q - 1][1]) > 0.02);
+    }
+    for (const [id, arms] of armsAt) {
+      const J = shapeOf(map.nodes[id], arms);
+      if (J) shapes.set(id, J);
+    }
+    // (A junction with no room for a corner in its share of a road takes
+    // what the junction at the road's other end leaves it.)
+    const other = (A) => {
+      const J = shapes.get(A.e[A.end === 'a' ? 'b' : 'a']);
+      const B = J?.cap || J?.arms?.find((X) => X.e === A.e && X.end !== A.end);
+      return { c: B?.c || 0, cramped: !!J?.cramped };
+    };
+    for (const [id, J] of shapes) {
+      if (!J.cramped) continue;
+      const arms = armsAt.get(id).map((A) => {
+        const o = other(A);
+        return armOf(A.e, A.end, o.cramped ? 0 : A.e.len - o.c - 1);
+      });
+      shapes.set(id, shapeOf(map.nodes[id], arms));
+    }
+    for (const J of shapes.values()) {
+      if (J.straight) {
+        // Straight on: the two roads meet square across the node, mitred.
+        const [A, B] = J.arms;
+        const u = [A.d[0] - B.d[0], A.d[1] - B.d[1]];
+        const L = Math.hypot(u[0], u[1]) || 1;
+        setEnd(A, 0, [-u[1] / L, u[0] / L]);
+        setEnd(B, 0, [u[1] / L, -u[0] / L]);
+      } else for (const A of J.cap ? [J.cap] : J.arms) setEnd(A, A.c, sideAt(A, A.c, 1));
+    }
+    return {
+      clear: (e, end) => ends.get(`${e.id}:${end}`)?.c || 0,
+      normal: (e, end) => ends.get(`${e.id}:${end}`)?.n || null,
+      shapes,
+    };
   }
 
-  // A flat (following the ground) polygon of any shape, as a surface.
-  function capGeometry(poly, yAt) {
-    const tris = THREE.ShapeUtils.triangulateShape(poly.map(([x, z]) => new THREE.Vector2(x, z)), []);
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(poly.flatMap(([x, z]) => [x, yAt(x, z), z]), 3));
-    g.setAttribute('uv', new THREE.Float32BufferAttribute(poly.flatMap(([x, z]) => [x / 16, z / 16]), 2));
-    g.setIndex(tris.flat());
-    g.computeVertexNormals();
-    return g;
+  // A junction's shape from the roads into it: a dead end's rounded end
+  // ({ cap }), straight on ({ straight }), or its corners ({ arms, corners }),
+  // cramped where a corner had no room in the roads' share.
+  function shapeOf(n, arms) {
+    arms.sort((p, q) => p.a - q.a);
+    if (arms.length === 1) {
+      // A dead end (of a street drawn in the SDK): rounded.
+      const A = arms[0];
+      if (n.exit || !A.e.street.sdk) return null;
+      A.c = Math.min(A.h, A.max);
+      return { cap: A };
+    }
+    if (arms.length < 2) return null;
+    const two = arms.length === 2;
+    let cramped = false;
+    const corners = arms.map((A, i) => {
+      const B = arms[(i + 1) % arms.length];
+      let phi = B.a - A.a;
+      if (phi <= 0) phi += Math.PI * 2;
+      if (phi >= Math.PI - 0.02) return { A, B, open: true }; // the outside of a bend, or a straight side
+      const P = crossing(kerbOf(A, 1), kerbOf(B, -1));
+      if (!P) {
+        // (Kerbs that never meet: roads side by side, as far as they go.)
+        A.need = A.max;
+        B.need = B.max;
+        cramped = true;
+        return { A, B, open: true, apart: true };
+      }
+      // The curve round the corner, where the kerbs meet at angle psi.
+      const fa = G.pointAlong(A.pts, Math.max(P.sA, 0));
+      const fb = G.pointAlong(B.pts, Math.max(P.sB, 0));
+      let psi = Math.atan2(fa.dx * fb.dz - fa.dz * fb.dx, fa.dx * fb.dx + fa.dz * fb.dz);
+      if (psi <= 0) psi += Math.PI * 2;
+      const R = 4 + Math.min(A.h, B.h) * (two ? 0.8 : 0.4);
+      const want = psi < Math.PI - 0.01 ? Math.min(R / Math.tan(psi / 2), R * (two ? 2.5 : 1.3)) : 0;
+      const T = Math.max(0, Math.min(want, A.max - P.sA, B.max - P.sB));
+      if (T < want - 0.5) cramped = true;
+      if (P.sA + T < 0 || P.sB + T < 0) return { A, B, open: true };
+      A.need = Math.max(A.need, P.sA + T);
+      B.need = Math.max(B.need, P.sB + T);
+      return { A, B, P, sA: P.sA + T, sB: P.sB + T };
+    });
+    if (two && corners.every((k) => k.open)) return { straight: true, arms };
+    for (const A of arms) A.c = Math.max(0, Math.min(A.need, A.max));
+    return { arms, corners, two, cramped };
+  }
+
+  // A road as it leaves a junction (from its a or b end): its centreline out
+  // from the junction, and how far along it the junction may reach.
+  // (room: more of the road than its usual share, where it's free.)
+  function armOf(e, end, room = 0) {
+    const pts = end === 'a' ? e.pts : [...e.pts].reverse();
+    const f = frame(pts, 0);
+    return { e, end, pts, h: e.street.half, d: [f.dx, f.dz], a: Math.atan2(f.dz, f.dx), max: Math.min(Math.max(e.len * 0.45, room), 60), need: 0, walk: !!e.street.sidewalk, kerbs: {} };
+  }
+
+  // Where a polyline is at arc length s, and its heading: where s is on a
+  // corner, the run after it (as a road's strip starting there has it); s < 0
+  // runs straight on back from its start.
+  function frame(pts, s) {
+    let run = 0;
+    let last = null;
+    for (let k = 0; k + 1 < pts.length; k++) {
+      const L = G.len2(pts[k], pts[k + 1]);
+      if (L < 1e-6) continue;
+      const dx = (pts[k + 1][0] - pts[k][0]) / L;
+      const dz = (pts[k + 1][1] - pts[k][1]) / L;
+      if (s < run + L - 1e-6) return { x: pts[k][0] + dx * (s - run), z: pts[k][1] + dz * (s - run), dx, dz };
+      last = { x: pts[k + 1][0], z: pts[k + 1][1], dx, dz };
+      run += L;
+    }
+    return last || { x: pts[0][0], z: pts[0][1], dx: 1, dz: 0 };
+  }
+
+  // The unit normal on one side of a road (+1: to the left of the way it leaves the junction).
+  function sideAt(A, s, side) {
+    const f = frame(A.pts, s);
+    return [-f.dz * side, f.dx * side];
+  }
+
+  // A road's centre, or its edge on one side, at s along it from the junction.
+  function roadPoint(A, s, side = 0) {
+    const f = frame(A.pts, s);
+    return [f.x - f.dz * side * A.h, f.z + f.dx * side * A.h];
+  }
+
+  // A road's kerb on one side, as its strip draws it (mitred at each point),
+  // from a way back behind the junction out to as far as the junction may
+  // reach: [{ s, x, z }].
+  function kerbOf(A, side) {
+    if (A.kerbs[side]) return A.kerbs[side];
+    const P = A.pts;
+    const back = A.h * 2 + 12;
+    const out = [];
+    const f0 = frame(P, 0);
+    out.push({ s: -back, x: f0.x - f0.dx * back - f0.dz * side * A.h, z: f0.z - f0.dz * back + f0.dx * side * A.h });
+    let run = 0;
+    for (let k = 0; k < P.length; k++) {
+      if (k) run += G.len2(P[k - 1], P[k]);
+      if (run >= A.max) break;
+      if (k && run - out[out.length - 1].s < 1e-3) continue;
+      const a = P[Math.max(0, k - 1)];
+      const b = P[Math.min(P.length - 1, k + 1)];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      out.push({ s: run, x: P[k][0] - ((b[1] - a[1]) / L) * side * A.h, z: P[k][1] + ((b[0] - a[0]) / L) * side * A.h });
+    }
+    const [x, z] = roadPoint(A, A.max, side);
+    out.push({ s: A.max, x, z });
+    return (A.kerbs[side] = out);
+  }
+
+  // A point on a kerb (kerbOf) at s.
+  function kerbAt(K, s) {
+    for (let k = 0; k + 1 < K.length; k++) {
+      if (s > K[k + 1].s && k + 2 < K.length) continue;
+      const t = Math.max(0, Math.min(1, (s - K[k].s) / (K[k + 1].s - K[k].s || 1)));
+      return [K[k].x + (K[k + 1].x - K[k].x) * t, K[k].z + (K[k + 1].z - K[k].z) * t];
+    }
+    return [K[0].x, K[0].z];
+  }
+
+  // Where two kerbs meet (nearest the junction): { sA, sB, x, z }, or null.
+  function crossing(KA, KB) {
+    let best = null;
+    for (let i = 0; i + 1 < KA.length; i++) {
+      const [a, b] = [KA[i], KA[i + 1]];
+      for (let j = 0; j + 1 < KB.length; j++) {
+        const [c, d] = [KB[j], KB[j + 1]];
+        const rx = b.x - a.x;
+        const rz = b.z - a.z;
+        const qx = d.x - c.x;
+        const qz = d.z - c.z;
+        const den = rx * qz - rz * qx;
+        if (Math.abs(den) < 1e-9) continue;
+        const t = ((c.x - a.x) * qz - (c.z - a.z) * qx) / den;
+        const u = ((c.x - a.x) * rz - (c.z - a.z) * rx) / den;
+        if (t < 0 || t > 1 || u < 0 || u > 1) continue;
+        const sA = a.s + (b.s - a.s) * t;
+        const sB = c.s + (d.s - c.s) * u;
+        if (!best || Math.abs(sA) + Math.abs(sB) < Math.abs(best.sA) + Math.abs(best.sB)) best = { sA, sB, x: a.x + rx * t, z: a.z + rz * t };
+      }
+    }
+    return best;
+  }
+
+  // A curve from p0 (heading u0) to p2 (heading u2 there): a circle's arc
+  // where it can be one (a conic through the point their headings meet), or
+  // null where there's no curve to be had (straight on, or heading apart).
+  function curveBetween(p0, u0, p2, u2, reach = 200) {
+    const q = meet(p0, u0, p2, u2, reach);
+    if (!q) return null;
+    const cosT = u0[0] * u2[0] + u0[1] * u2[1];
+    const turn = Math.acos(Math.max(-1, Math.min(1, cosT)));
+    const w = Math.cos(turn / 2);
+    const steps = Math.max(3, Math.ceil(turn / 0.12));
+    return [...Array(steps + 1).keys()].map((i) => {
+      const t = i / steps;
+      const [a, b, c] = [(1 - t) ** 2, 2 * t * (1 - t) * w, t * t];
+      const sum = a + b + c;
+      return [(a * p0[0] + b * q[0] + c * p2[0]) / sum, (a * p0[1] + b * q[1] + c * p2[1]) / sum];
+    });
+  }
+
+  // Where a line from p0 (heading u0) meets one arriving at p2 (heading u2),
+  // ahead of the one and behind the other (within reach), or null.
+  function meet(p0, u0, p2, u2, reach = 200) {
+    const den = u0[0] * u2[1] - u0[1] * u2[0];
+    const cosT = u0[0] * u2[0] + u0[1] * u2[1];
+    if (Math.abs(den) < 0.02 && cosT > 0) return null;
+    if (Math.abs(den) < 1e-6) return null;
+    const wx = p2[0] - p0[0];
+    const wz = p2[1] - p0[1];
+    const l0 = (wx * u2[1] - wz * u2[0]) / den;
+    const l2 = (wx * u0[1] - wz * u0[0]) / -den;
+    if (l0 < 0.05 || l2 < 0.05 || l0 > reach || l2 > reach) return null;
+    return [p0[0] + u0[0] * l0, p0[1] + u0[1] * l0];
+  }
+
+  // A corner's edge, from road A's end (its left side) round to road B's end
+  // (its right): along A's kerb, the curve, along B's kerb.
+  function cornerRun(k) {
+    const { A, B } = k;
+    const e0 = roadPoint(A, A.c, 1);
+    const e2 = roadPoint(B, B.c, -1);
+    const back = (X, s) => {
+      const f = frame(X.pts, s);
+      return [-f.dx, -f.dz];
+    };
+    const out = (X, s) => {
+      const f = frame(X.pts, s);
+      return [f.dx, f.dz];
+    };
+    if (k.open) return (!k.apart && curveBetween(e0, back(A, A.c), e2, out(B, B.c))) || [e0, e2];
+    const KA = kerbOf(A, 1);
+    const KB = kerbOf(B, -1);
+    const ta = A.c - k.sA < 0.05 ? e0 : kerbAt(KA, k.sA);
+    const tb = B.c - k.sB < 0.05 ? e2 : kerbAt(KB, k.sB);
+    const run = [e0];
+    for (let q = KA.length - 1; q >= 0; q--) if (KA[q].s < A.c - 0.05 && KA[q].s > k.sA + 0.05) run.push([KA[q].x, KA[q].z]);
+    run.push(...(curveBetween(ta, back(A, k.sA), tb, out(B, k.sB), 80) || [ta, tb]));
+    for (const p of KB) if (p.s > k.sB + 0.05 && p.s < B.c - 0.05) run.push([p.x, p.z]);
+    run.push(e2);
+    return run;
+  }
+
+  // A junction's outline: round it, each road's end, then the corner to the
+  // next road. { poly, runs (the corners' kerbs, where both roads have
+  // sidewalks: { pts, w0, w1 (the sidewalk's width at each end) }), sg (+1:
+  // the outline runs anticlockwise), bend (a road bending on its own: the
+  // line its markings follow round), fallback (an outline that crossed itself,
+  // drawn as a hull) }.
+  function junctionOutline(n) {
+    const J = junctions.shapes.get(n.id);
+    if (!J || J.straight) return null;
+    let pts = [];
+    const runs = [];
+    if (J.cap) {
+      const A = J.cap;
+      const [cx, cz] = roadPoint(A, A.c);
+      const [nx, nz] = sideAt(A, A.c, 1);
+      const a0 = Math.atan2(nz, nx);
+      const arc = [...Array(13).keys()].map((q) => [cx + Math.cos(a0 + (Math.PI * q) / 12) * A.h, cz + Math.sin(a0 + (Math.PI * q) / 12) * A.h]);
+      pts.push(roadPoint(A, A.c, -1), ...arc.slice(0, -1));
+      // (The lot's notch round a dead end is square, out to the sidewalk's edge: lot under all of it, the rounded sidewalk over.)
+      const [f0, f1] = [frame(A.pts, 0), frame(A.pts, A.c)];
+      const e = A.h + A.e.street.sidewalk;
+      const rect = [[f0.x - f0.dz * e, f0.z + f0.dx * e], [f1.x - f1.dz * e, f1.z + f1.dx * e], [f1.x + f1.dz * e, f1.z - f1.dx * e], [f0.x + f0.dz * e, f0.z - f0.dx * e]];
+      if (A.walk) runs.push({ pts: arc, w0: A.e.street.sidewalk, w1: A.e.street.sidewalk, rect, u0: [-f1.dx, -f1.dz], u1: [f1.dx, f1.dz] });
+    } else {
+      J.arms.forEach((A, i) => {
+        pts.push(roadPoint(A, A.c, -1));
+        const run = bumpy ? densified(cornerRun(J.corners[i]), 3) : cornerRun(J.corners[i]);
+        pts.push(...run.slice(0, -1));
+        const B = J.corners[i].B;
+        const [fa, fb] = [frame(A.pts, A.c), frame(B.pts, B.c)];
+        if (A.walk && B.walk) runs.push({ pts: run, w0: A.e.street.sidewalk, w1: B.e.street.sidewalk, u0: [-fa.dx, -fa.dz], u1: [fb.dx, fb.dz] });
+      });
+    }
+    pts = pts.filter((p, q) => Math.hypot(p[0] - pts[(q + pts.length - 1) % pts.length][0], p[1] - pts[(q + pts.length - 1) % pts.length][1]) > 0.02);
+    if (pts.length < 3) return null;
+    if (!simplePoly(pts)) return { poly: hull(pts), runs: [], sg: 1, fallback: true };
+    let area = 0;
+    pts.forEach(([x, z], q) => (area += x * pts[(q + 1) % pts.length][1] - pts[(q + 1) % pts.length][0] * z));
+    let bend = null;
+    if (J.two) {
+      const [A, B] = J.arms;
+      const st = A.e.street;
+      if (st.width === B.e.street.width && !st.median && st.surface !== 'dirt' && B.e.street.surface !== 'dirt') {
+        const fa = frame(A.pts, A.c);
+        const fb = frame(B.pts, B.c);
+        const mid = curveBetween(roadPoint(A, A.c), [-fa.dx, -fa.dz], roadPoint(B, B.c), [fb.dx, fb.dz]);
+        if (mid) bend = { pts: mid, st };
+      }
+    }
+    return { poly: pts, runs, sg: area > 0 ? 1 : -1, bend };
+  }
+
+  // The sidewalk round each junction's corners (and round a dead end): a
+  // band out from the kerb as wide as the sidewalk (or width), dy above the
+  // ground, its texture lined up with the sidewalk under it. Geometries.
+  function walkBands(dy, width = null) {
+    const out = [];
+    for (const o of outlines.values()) {
+      for (const r of o.runs) {
+        const P = r.pts;
+        const Q = bandEdge(r, o.sg, width);
+        const pos = [];
+        const uv = [];
+        const idx = [];
+        P.forEach((p, k) => {
+          for (const [x, z] of [p, Q[k]]) {
+            pos.push(x, H(x, z) + dy, z);
+            uv.push(x / 8, z / 8);
+          }
+          if (k) idx.push(2 * k - 2, 2 * k - 1, 2 * k + 1, 2 * k - 2, 2 * k + 1, 2 * k);
+        });
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+        g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+        g.setIndex(idx);
+        g.computeVertexNormals();
+        out.push(g);
+      }
+    }
+    return out;
+  }
+
+  // A sidewalk band's far edge: each kerb point moved out by the sidewalk's width.
+  function bandEdge(r, sg, width = null) {
+    const P = r.pts;
+    const n = P.length;
+    const total = G.lineLength(P) || 1;
+    let s = 0;
+    const Q = P.map((p, k) => {
+      if (k) s += G.len2(P[k - 1], p);
+      const a = P[Math.max(0, k - 1)];
+      const b = P[Math.min(n - 1, k + 1)];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+      // (Its ends square across the roads, meeting the sidewalk beside the road there.)
+      const [dx, dz] = k === 0 && r.u0 ? r.u0 : k === n - 1 && r.u1 ? r.u1 : [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
+      const w = width ?? r.w0 + ((r.w1 - r.w0) * s) / total;
+      return [p[0] + dz * sg * w, p[1] - dx * sg * w];
+    });
+    // (Round a curve tighter than the sidewalk is wide the far edge loops over
+    // itself: the loop is pinched to where it crosses.)
+    for (let i = 0; i + 1 < Q.length; i++) {
+      for (let j = Q.length - 2; j > i + 1; j--) {
+        const x = segCross(Q[i], Q[i + 1], Q[j], Q[j + 1]);
+        if (!x) continue;
+        for (let k = i + 1; k <= j; k++) Q[k] = x;
+        i = j;
+        break;
+      }
+    }
+    return Q;
+  }
+
+  // Where segments a-b and c-d cross, or null.
+  function segCross(a, b, c, d) {
+    const rx = b[0] - a[0];
+    const rz = b[1] - a[1];
+    const qx = d[0] - c[0];
+    const qz = d[1] - c[1];
+    const den = rx * qz - rz * qx;
+    if (Math.abs(den) < 1e-9) return null;
+    const t = ((c[0] - a[0]) * qz - (c[1] - a[1]) * qx) / den;
+    const u = ((c[0] - a[0]) * rz - (c[1] - a[1]) * rx) / den;
+    return t > 0 && t < 1 && u > 0 && u < 1 ? [a[0] + rx * t, a[1] + rz * t] : null;
+  }
+
+  // Lot, from a corner's sidewalk out to where the lot's own edges meet: its
+  // sharp corner (a block's, a wedge's tip, the outside of a bend) would leave
+  // bare pavement past the curve of the sidewalk. (Not where a site has the
+  // corner: its own surface stays as it is.)
+  function lotPatches(dy) {
+    const out = [];
+    for (const o of outlines.values()) {
+      for (const r of o.runs) {
+        const inSite = (poly) => {
+          const [cx, cz] = G.polyCentroid(poly);
+          return map.sites.some((st) => G.pointInPoly(cx, cz, st.poly));
+        };
+        if (r.rect && !inSite(r.rect)) out.push(surface(r.rect, dy));
+        if (!r.u0) continue;
+        const Q = bandEdge(r, o.sg);
+        const corner = meet(Q[0], r.u0, Q[Q.length - 1], r.u1, 80);
+        if (!corner) continue;
+        // (Only past the sidewalk: a lot corner cutting into it is covered by it.)
+        const mid = Math.floor(Q.length / 2);
+        const kerbMid = r.pts[mid];
+        if (G.len2(corner, kerbMid) <= G.len2(Q[mid], kerbMid) + 0.05) continue;
+        const poly = [...Q, corner];
+        const [cx, cz] = G.polyCentroid(poly);
+        if (map.sites.some((st) => G.pointInPoly(cx, cz, st.poly) || G.pointInPoly(corner[0], corner[1], st.poly))) continue;
+        if (Math.abs(G.polyArea(poly)) > 0.05) out.push(surface(poly, dy));
+      }
+    }
+    return out;
+  }
+
+  // No two of a polygon's edges cross?
+  function simplePoly(p) {
+    const n = p.length;
+    const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+    for (let i = 0; i < n; i++) {
+      const [a, b] = [p[i], p[(i + 1) % n]];
+      for (let j = i + 2; j < n; j++) {
+        if (i === 0 && j === n - 1) continue;
+        const [c, d] = [p[j], p[(j + 1) % n]];
+        if (Math.max(a[0], b[0]) < Math.min(c[0], d[0]) || Math.max(c[0], d[0]) < Math.min(a[0], b[0]) || Math.max(a[1], b[1]) < Math.min(c[1], d[1]) || Math.max(c[1], d[1]) < Math.min(a[1], b[1])) continue;
+        const d1 = cross(a, b, c);
+        const d2 = cross(a, b, d);
+        const d3 = cross(c, d, a);
+        const d4 = cross(c, d, b);
+        if (((d1 > 1e-9 && d2 < -1e-9) || (d1 < -1e-9 && d2 > 1e-9)) && ((d3 > 1e-9 && d4 < -1e-9) || (d3 < -1e-9 && d4 > 1e-9))) return false;
+      }
+    }
+    return true;
   }
 
   function hull(points) {

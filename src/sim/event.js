@@ -24,7 +24,8 @@ export function createEventState(def, track) {
     laps: def.laps || 0,
     timeLimit: def.timeLimit || 0,
     pit: def.pit ? resolvePit(def.pit, track) : null,
-    finishS: def.finishS ?? (track.isArena ? 0 : track.length - 25),
+    finishS: def.finishS ?? track.finishS ?? (track.isArena ? 0 : track.length - 25),
+    finishY: track.finishY ?? null, // (a finish up on something: only a car up there finishes)
     weapons: def.type === 'drag' ? 'rear' : 'all',
     manualShift: def.type === 'drag',
     phase: def.type === 'free' ? 'racing' : 'countdown',
@@ -64,10 +65,11 @@ export function gridPoses(track, def, count) {
   if (track.isArena) return Array.from({ length: count }, (_, i) => track.spawnPose(i));
   const pose = (s, lateral) => {
     const i = track.indexAtDistance(s);
-    return {
-      pos: { x: track.x[i] + track.rx[i] * lateral, y: track.y[i] + 0.9, z: track.z[i] + track.rz[i] * lateral },
-      yaw: Math.atan2(-track.tx[i], -track.tz[i]),
-    };
+    const x = track.x[i] + track.rx[i] * lateral;
+    const z = track.z[i] + track.rz[i] * lateral;
+    // (A start up on something: the grid's on its top.)
+    const y = track.tops ? track.standY(x, z, track.startY ?? track.y[i]) : track.y[i];
+    return { pos: { x, y: y + 0.9, z }, yaw: Math.atan2(-track.tx[i], -track.tz[i]) };
   };
   if (def.type === 'drag') {
     // Two abreast either side of a median, if the drag strip has one.
@@ -75,12 +77,18 @@ export function gridPoses(track, def, count) {
     const lanes = m ? (count <= 2 ? [-(m + 4), m + 4] : [-(m + 8), -(m + 3.4), m + 3.4, m + 8]) : count <= 2 ? [-3, 3] : [-6, -2, 2, 6];
     return Array.from({ length: count }, (_, i) => pose(12, lanes[i % lanes.length]));
   }
-  // (A sprint can start further along its route: startS, set in the T&T SDK.)
-  const back = track.closed ? track.length - 10 : Math.max(40, def.startS ?? 40);
-  return Array.from({ length: count }, (_, i) => {
+  // (A sprint can start further along its route: where the T&T SDK put its start.)
+  const back = track.closed ? track.length - 10 : track.startS ?? Math.max(40, def.startS ?? 40);
+  const pairs = Array.from({ length: count }, (_, i) => {
     const s = back - Math.floor(i / 2) * 8;
     return pose(s, (i % 2 ? 1 : -1) * gridLateral(track, track.closed ? (s + track.length) % track.length : s));
   });
+  // (Up on something too narrow for two abreast: one behind another, if that fits.)
+  if (track.startY === null || track.startY === undefined) return pairs;
+  const fits = (list) => list.every((p) => Math.abs(p.pos.y - 0.9 - track.startY) < 0.5);
+  if (fits(pairs)) return pairs;
+  const file = Array.from({ length: count }, (_, i) => pose(back - i * 6, 0));
+  return fits(file) ? file : pairs;
 }
 
 // Filters a car's input through the event: held at the line during the
@@ -160,7 +168,7 @@ export function updateEvent(world, dt) {
 
     // Finishing.
     if (ev.type === 'sprint' || ev.type === 'drag') {
-      if (car.trackS >= ev.finishS) finish(world, i);
+      if (car.trackS >= ev.finishS && (ev.finishY === null || ev.finishY === undefined || car.pos.y > ev.finishY - 1)) finish(world, i);
     } else if (ev.type === 'circuit') {
       if (car.race.lap > ev.laps) finish(world, i);
     }

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
 import { textTexture } from './textures.js';
-import { box, obbBox, prism, flatPoly, rampGeometry, tint, scaleUv } from './shapes.js';
+import { box, obbBox, prism, flatPoly, drapePoly, densified, rampGeometry, tint, scaleUv } from './shapes.js';
 import { districtLayout } from '../sim/cityLayout.js';
 import { buildAuthoredStructures } from './arenaView.js';
 import { gustAt } from '../sim/gusts.js';
@@ -25,6 +25,7 @@ export function buildRoofDistrictView(map, tex) {
   const P = style.plan;
   const R = P.roof;
   const H = map.heightAt;
+  const sculpt = map.sculptAt; // (ground sculpted in the T&T SDK, or null)
   const street = R.street ?? 0;
   const group = new THREE.Group();
   const add = (m) => m && group.add(m);
@@ -170,7 +171,7 @@ export function buildRoofDistrictView(map, tex) {
   // lamps and traffic lights, low buildings round the edges, the river beyond.
   function cityBelow() {
     const land = [[-2600, -2600], [2600, -2600], [2600, 2600], [760, 2600], [760, 560], [680, -223], [570, -600], [337, -760], [156, -630], [-78, -820], [-311, -600], [-492, -740], [-690, -575], [-2600, -575]];
-    B.ground.push(flatPoly(P.boundary, () => street));
+    B.ground.push(sculpt ? drapePoly(P.boundary, (x, z) => street + sculpt(x, z), 20, 8, sculpt.fine) : flatPoly(P.boundary, () => street));
     B.ground.push(flatPoly(land, () => street));
     B.water.push(new THREE.PlaneGeometry(8000, 8000).rotateX(-Math.PI / 2).translate(0, R.river ?? -6, 0));
     const bb = map.bounds;
@@ -227,21 +228,41 @@ export function buildRoofDistrictView(map, tex) {
           B.tower.push(g);
         }
         // The deck itself, a sloping slab.
-        B.deck.push(flatPoly(d.poly, (x, z) => d.hAt(z)));
-        B.concrete.push(slabSides(d.poly, (x, z) => d.hAt(z), 1.2));
+        B.deck.push(sculpt ? drapePoly(d.poly, deckTop(d), 12, 8, sculpt.fine) : flatPoly(d.poly, (x, z) => d.hAt(z)));
+        B.concrete.push(slabSides(sculpt ? densified([...d.poly, d.poly[0]], 3).slice(0, -1) : d.poly, deckTop(d), 1.2));
       } else {
-        B.tower.push(scaleUv(prism(d.poly, street, top - street - 0.02), 1 / 32, 1 / 64));
-        B.deck.push(flatPoly(d.poly, () => top));
+        // (Sculpted: the tower stops under the roof's lowest point, and the roof's edge comes down to it.)
+        const lid = (sculpt ? lowestTop(d) : top) - 0.02;
+        B.tower.push(scaleUv(prism(d.poly, street, lid - street), 1 / 32, 1 / 64));
+        B.deck.push(sculpt ? drapePoly(d.poly, deckTop(d), 12, 8, sculpt.fine) : flatPoly(d.poly, () => top));
+        if (sculpt) B.concrete.push(slabSides(densified([...d.poly, d.poly[0]], 3).slice(0, -1), deckTop(d), (x, z) => deckTop(d)(x, z) - lid));
       }
     }
   }
 
-  // The skirt round a sloping slab (its edge, thickness t below the top).
+  // The lowest point of a deck's sculpted top.
+  function lowestTop(d) {
+    const top = deckTop(d);
+    let low = Math.min(...d.poly.map(([x, z]) => top(x, z)));
+    const c = sculpt.fine.cell;
+    for (let x = Math.ceil(d.box.minX / c) * c; x <= d.box.maxX; x += c) {
+      for (let z = Math.ceil(d.box.minZ / c) * c; z <= d.box.maxZ; z += c) if (G.pointInPoly(x, z, d.poly)) low = Math.min(low, top(x, z));
+    }
+    return low;
+  }
+
+  // A deck's top: its height, and the ground sculpted over it in the T&T SDK.
+  function deckTop(d) {
+    return (x, z) => d.hAt(z) + (sculpt ? sculpt(x, z) : 0);
+  }
+
+  // The skirt round a slab (its edge, thickness t below the top: a number, or by point).
   function slabSides(poly, h, t) {
     const parts = [];
+    const th = typeof t === 'function' ? t : () => t;
     poly.forEach((a, k) => {
       const b = poly[(k + 1) % poly.length];
-      const pos = [a[0], h(...a), a[1], b[0], h(...b), b[1], b[0], h(...b) - t, b[1], a[0], h(...a) - t, a[1]];
+      const pos = [a[0], h(...a), a[1], b[0], h(...b), b[1], b[0], h(...b) - th(...b), b[1], a[0], h(...a) - th(...a), a[1]];
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 1], 2));
@@ -262,7 +283,10 @@ export function buildRoofDistrictView(map, tex) {
       let run = [];
       const flush = () => {
         if (run.length > 1) {
-          const h = (s, p) => map.deckAt(p[0], p[1])?.hAt(p[1]) ?? H(p[0], p[1]);
+          const h = (s, p) => {
+            const d = map.deckAt(p[0], p[1]);
+            return d ? deckTop(d)(p[0], p[1]) : H(p[0], p[1]);
+          };
           strip(B.road, run, -st.half, st.half, h, 0.03);
           for (const sg of [-1, 1]) strip(B.lines, run, sg * (st.half - 0.45), sg * (st.half - 0.25), h, 0.05);
           const L = G.lineLength(run);

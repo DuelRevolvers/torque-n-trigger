@@ -19,6 +19,7 @@ import { planMap } from './planMap.js';
 import { sculptMap, paintOf } from './ground.js';
 import { addGadgets } from './gadgets.js';
 import { planTrack, planRoam } from './planRoute.js';
+import { isSpot, spotEnds, RUN_UP, RUN_OFF } from './routePoints.js';
 
 export const STREET = { halfWidth: 8, curbWidth: 1.2, shoulderWidth: 4 };
 export const SETBACK = STREET.halfWidth + STREET.curbWidth + STREET.shoulderWidth; // centreline to lot edge
@@ -1151,6 +1152,8 @@ function authoredRoam(map) {
 function pathNodes(map, names) {
   const g = map.style.grid;
   const resolve = (name, prev) => {
+    // A spot anywhere (the T&T SDK): off: not on a street.
+    if (isSpot(name)) return [{ x: name[0], z: name[1], spot: true, off: !onGridStreet(map, name) }];
     const named = map.corridors.find((c) => c.id === name);
     if (named || !name.includes('.')) {
       const pts = (named || map.corridors.find((c) => c.cell.kind === name)).points.map(([x, z]) => ({ x, z, corridor: name }));
@@ -1341,15 +1344,44 @@ function freightLine(map) {
   return { ax: f.x, az: f.z0, bx: f.x, bz: f.z1, length: f.z1 - f.z0, y: map.heightAt(f.x, (f.z0 + f.z1) / 2), seed: map.style.seed };
 }
 
+// Is p on one of a grid district's streets (within a metre of its middle)?
+function onGridStreet(map, p) {
+  for (const e of map.edges.values()) {
+    const A = map.nodes[e.a];
+    const B = map.nodes[e.b];
+    const dx = B.x - A.x;
+    const dz = B.z - A.z;
+    const t = Math.max(0, Math.min(1, ((p[0] - A.x) * dx + (p[1] - A.z) * dz) / (dx * dx + dz * dz || 1)));
+    if (Math.hypot(p[0] - A.x - dx * t, p[1] - A.z - dz * t) < 1) return true;
+  }
+  return false;
+}
+
 function authoredRoute(map, style, route) {
   const circuit = route.kind === 'circuit';
   let list = pathNodes(map, circuit ? [...route.path, route.path[0]] : route.path);
-  if (circuit) {
+  if (circuit && isSpot(route.path[0])) list.pop(); // (the start and finish are the spot it starts at)
+  else if (circuit) {
     // Start and finish halfway along the first street.
     list.pop();
     const [a, b] = list;
     list = [{ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2 }, ...list.slice(1), a];
   }
+  // A sprint from or to a spot: a run-up behind its start, a run-off past its finish (straight on).
+  const on = (p, q, len) => {
+    const L = Math.hypot(p.x - q.x, p.z - q.z) || 1;
+    return { x: p.x + ((p.x - q.x) / L) * len, z: p.z + ((p.z - q.z) / L) * len, spot: true, off: p.off };
+  };
+  if (!circuit && list.length > 1) {
+    if (list[0].spot) list.unshift(on(list[0], list[1], RUN_UP));
+    if (list[list.length - 1].spot) list.push(on(list[list.length - 1], list[list.length - 2], RUN_OFF));
+  }
+  // (Stretches to and from spots off the streets: what's there is solid, and can be driven on.)
+  const zones = [];
+  list.forEach((p, k) => {
+    const q = list[(k + 1) % list.length];
+    if ((k + 1 < list.length || circuit) && (p.off || q.off)) zones.push([[p.x, p.z], [q.x, q.z]]);
+  });
   const ground = map.authored ? () => 0 : map.heightAt;
   const def = { name: `${style.name} ${route.kind}`, closed: circuit, ...STREET, points: roundedPoints(list, circuit, CORNER_R, ground) };
   const track = buildTrack(def);
@@ -1370,7 +1402,7 @@ function authoredRoute(map, style, route) {
     def.narrows = routeNarrows(map, track);
   }
   if (map.freight) def.train = freightLine(map);
-  return def;
+  return spotEnds(def, map, route, zones);
 }
 
 // Builds the venue for one event route in a district.

@@ -28,7 +28,7 @@ const PROP = {
   table: { color: '#c8c0a8' }, chair: { color: '#d8d0b8' }, trampoline: { color: '#1c1c24' }, flag: { color: '#e8e0d0' },
 };
 
-export function suburbView({ map, tex, H, group, items, text, clipToConvex, merged }) {
+export function suburbView({ map, tex, H, group, items, text, clipToConvex, merged, walkBands, junctionAt }) {
   const style = map.style;
   const P = style.plan;
   const S = P.suburb;
@@ -169,9 +169,11 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
         strip(B.walk, e.pts, sd * (st.half + 0.2), sd * (st.half + walk), -0.1);
       }
     }
-    // The sidewalk round each junction's corners.
+    // The sidewalk round each junction's corners: following its kerbs (where
+    // the junction's shaped), or a patch round it (a turning circle's).
+    for (const g of walkBands?.(-0.1, walk) || []) B.walk.push(g);
     for (const n of map.nodes) {
-      if (!n.name && !n.ring) continue;
+      if ((!n.name && !n.ring) || junctionAt?.(n.id)) continue;
       const pts = [[n.x, n.z]];
       for (const e of map.edgeList) {
         if ((e.a !== n.id && e.b !== n.id) || !e.street.sidewalk) continue;

@@ -191,3 +191,66 @@ for (const id of ['strip', 'maple', 'chrome', 'undercity', 'spire']) {
     assert.equal(removed.near + removed.far, without.near, 'a removed object leaves nothing behind');
   });
 }
+
+// Streets drawn in the SDK: curved, bending at a click, at tight angles onto
+// others, onto a curved street, and ending on their own. Every junction's
+// outline is a clean one, and no road or junction surface lies over another
+// (a road stops square where its junction starts).
+test('sdk render: drawn streets meet in clean junctions, curved, bent and at tight angles', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { roadEdit } = await import('../src/sdk/roads.js');
+  const { blankDistrict } = await import('../src/sdk/templates.js');
+  const G = await import('../src/sim/geom2d.js');
+  const s = new Session(blankDistrict(DISTRICTS.find((d) => d.id === 'strip'), 1));
+  const road = (clicks, bends, name) => s.change((e) => (e.plan = roadEdit(s, clicks, { name, bends })));
+  road([[-400, -150], [-100, -400]], [[-270, -290]], 'Curve A');
+  road([[-200, 150], [0, 300], [200, 150]], [[-170, 260], [170, 260]], 'Bend B');
+  road([[100, 0], [400, -300]], [], 'Cut C');
+  road([[-370, 60], [-340, 220], [-230, 250]], [], 'Dogleg D');
+  const a = s.map.streets.find((q) => q.name === 'Curve A');
+  const mid = G.pointAlong(a.pts, a.len / 2);
+  road([[-100, -150], [mid.x, mid.z]], [[-150, -230]], 'Link E');
+  road([[150, 250], [330, 400]], [], 'Sharp F');
+  road([[100, 290], [300, 400]], [], 'Wide G');
+
+  const view = buildDistrictView(s.map, tex);
+  let fallbacks = null;
+  const tris = [];
+  view.traverse((o) => {
+    if (o.userData.junctionFallbacks) fallbacks = o.userData.junctionFallbacks;
+    if (o.name !== 'roads' && o.name !== 'junctions') return;
+    const pos = o.geometry.attributes.position;
+    const idx = o.geometry.index;
+    for (let k = 0; k < idx.count; k += 3) tris.push([0, 1, 2].map((q) => [pos.getX(idx.getX(k + q)), pos.getZ(idx.getX(k + q))]));
+  });
+  assert.deepEqual(fallbacks, [], 'every junction outline a clean one');
+  // Road surface over road surface, sampled every half metre.
+  const hits = new Map();
+  for (const [p, q, r] of tris) {
+    const area = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+    if (Math.abs(area) < 1e-6) continue;
+    for (let i = Math.floor(Math.min(p[0], q[0], r[0]) * 2); i <= Math.max(p[0], q[0], r[0]) * 2; i++) {
+      for (let j = Math.floor(Math.min(p[1], q[1], r[1]) * 2); j <= Math.max(p[1], q[1], r[1]) * 2; j++) {
+        const [x, z] = [(i + 0.5) / 2 + 0.0123, (j + 0.5) / 2 + 0.0371];
+        const inside = [[p, q], [q, r], [r, p]].every(([u, v]) => ((v[0] - u[0]) * (z - u[1]) - (v[1] - u[1]) * (x - u[0])) / area >= 0);
+        if (inside) hits.set(`${i},${j}`, (hits.get(`${i},${j}`) || 0) + 1);
+      }
+    }
+  }
+  const over = [...hits.values()].filter((n) => n > 1).length / 4;
+  assert.ok(hits.size > 50000, 'the roads are drawn');
+  assert.ok(over < 2, `road surfaces overlap by ${over} m2`);
+  // The lots round them (the sidewalks' far edges) never fold over themselves,
+  // at a wedge's tip, beside a dead end or where a short street meets another.
+  const cross = (a, b, c) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  for (const b of s.map.blocks) {
+    const p = b.lot;
+    for (let i = 0; i < p.length; i++) {
+      for (let j = i + 2; j < p.length; j++) {
+        if (i === 0 && j === p.length - 1) continue;
+        const [a, c, d, e] = [p[i], p[(i + 1) % p.length], p[j], p[(j + 1) % p.length]];
+        assert.ok(!(cross(a, c, d) * cross(a, c, e) < -1e-9 && cross(d, e, a) * cross(d, e, c) < -1e-9), `block ${b.id}'s lot folds over itself near ${a.map(Math.round)}`);
+      }
+    }
+  }
+});

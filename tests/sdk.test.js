@@ -8,6 +8,7 @@ import { getVenue } from '../src/sim/tracks/venues.js';
 import { districtMap, cityVenue } from '../src/sim/city.js';
 import { baseLayout, districtLayout } from '../src/sim/cityLayout.js';
 import { canMove, itemCentre, applyEdits } from '../src/sim/layoutEdits.js';
+import * as G from '../src/sim/geom2d.js';
 import { buildArena } from '../src/sim/arena.js';
 import { docFromDistrict, districtFromDoc, serializeDoc, parseDoc, validateDoc, baseChanged, hasEdits } from '../src/content/mapDoc.js';
 
@@ -254,6 +255,57 @@ test('sdk: a new sprint and a replaced circuit are the career events of a publis
   assert.ok(!E.routePreview(d, defs.find((e) => e.key === key).route).error);
 });
 
+test('sdk: a race starts and finishes anywhere: up on a roof, off the streets, up a ramp onto a dock', async () => {
+  const { buildTrack } = await import('../src/sim/track.js');
+  const { gridPoses, createEventState } = await import('../src/sim/event.js');
+  const { gridProblem, wayProblem } = await import('../src/sdk/checks.js');
+  const E = await import('../src/sdk/events.js');
+  const { Session } = await import('../src/sdk/session.js');
+  // Every official race is built as before: no spots, nothing up on anything.
+  for (const d of DISTRICTS) {
+    for (const e of [...d.events, d.boss].filter((q) => q.route.kind !== 'arena')) {
+      const t = buildTrack(cityVenue(d.city, e.route).def);
+      assert.ok(!t.tops && t.startS === null && t.startY === null && t.finishY === null, `${d.id} ${e.key}`);
+    }
+  }
+  // The Strip: from the roof of the building nearest Seven St, to a spot off the street past Pawn St.
+  const strip = new Session(docFromDistrict(byId('strip')));
+  const seven = strip.map.byName.get('strip-seven');
+  const roof = strip.layout.items.filter((it) => it.solid && it.t === 'bldg' && it.obb?.hw > 12 && it.obb.hd > 12)
+    .sort((a, b) => Math.hypot(a.obb.x - seven.x, a.obb.z - seven.z) - Math.hypot(b.obb.x - seven.x, b.obb.z - seven.z))[0];
+  const top = roof.y + roof.h;
+  const pawn = strip.map.byName.get('strip-pawn');
+  const lot = [pawn.x + 30, pawn.z + 30];
+  const sprint = { ...E.newEvent('sprint'), key: 'e9', cars: 4 };
+  sprint.route.path = [[roof.obb.x, roof.obb.z, top], 'strip-seven', 'strip-lucky', 'strip-palace', 'strip-pawn', lot];
+  const track = buildTrack(cityVenue(strip.district.city, sprint.route).def);
+  assert.ok(near(track.startS, 40, 1) && near(track.startY, top, 0.01), 'starts on the roof');
+  assert.ok(near(track.x[track.indexAtDistance(track.finishS)], lot[0], 2) && near(track.z[track.indexAtDistance(track.finishS)], lot[1], 2), 'finishes at the spot');
+  for (const p of gridPoses(track, sprint, 4)) assert.ok(near(p.pos.y, top + 0.9, 0.01), 'the grid is up on the roof');
+  assert.equal(gridProblem(strip.withEvents(), sprint), null);
+  assert.equal(track.query(roof.obb.x, roof.obb.z, -1, top + 0.5).height, top, 'the roof is ground');
+  assert.ok(Math.abs(track.query(roof.obb.x, roof.obb.z, -1, 1).lateral) > track.wallDist, 'the building is solid');
+  strip.change((e) => (e.events = { e9: sprint }));
+  const run = await E.aiTestRun(strip.withEvents(), 'e9');
+  assert.ok(run.rows.every((q) => q.finished), 'off the roof, down the street, to the finish');
+  // Nothing leads up onto the roof: a finish up there can't be reached.
+  const high = { ...sprint, route: { kind: 'sprint', path: [[seven.x, seven.z], 'strip-lucky', [roof.obb.x, roof.obb.z, top]] } };
+  assert.equal(wayProblem(strip.withEvents(), high)?.key, roof.key);
+  // A circuit starts where its start was put.
+  const a = strip.map.byName.get('marquee-palace');
+  const b = strip.map.byName.get('marquee-seven');
+  const S = [(a.x + b.x) / 2, (a.z + b.z) / 2];
+  const loop = buildTrack(cityVenue(strip.district.city, { kind: 'circuit', path: [S, 'marquee-seven', 'strip-seven', 'strip-palace', 'marquee-palace'] }).def);
+  assert.ok(loop.closed && near(loop.x[0], S[0], 0.5) && near(loop.z[0], S[1], 0.5));
+  // Rustline Docks: up the loading dock's ramp to a finish on the dock.
+  const docks = new Session(docFromDistrict(byId('rustline')));
+  const dockRace = { ...E.newEvent('sprint'), cars: 4, route: { kind: 'sprint', path: ['CR.dock', 'KI.rail', 'KI.dock', [-528.2, -97.5], [-568.8, -97.5, 1.2]] } };
+  const dockTrack = buildTrack(cityVenue(docks.district.city, dockRace.route).def);
+  assert.equal(dockTrack.finishY, 1.2);
+  assert.equal(createEventState(dockRace, dockTrack).finishY, 1.2, 'only a car up on the dock finishes');
+  assert.equal(wayProblem(docks.withEvents(), dockRace), null, 'the ramp leads up');
+});
+
 test('sdk: gadgets: a gate opens while its trigger pad is driven over, and lifts stand on the ground', async () => {
   const { newGadget } = await import('../src/sim/gadgets.js');
   const { createWorld, stepWorld } = await import('../src/sim/world.js');
@@ -306,6 +358,92 @@ test('sdk: street and ground pieces move too, and edits that lost their object a
   const out = applyEdits(items, { move: { [median.key]: { dx: 50 } }, remove: ['nothing@0,0'], add: [{ id: 'x', from: 'gone@1,1', x: 0, z: 0 }] }, map.heightAt);
   assert.ok(near(out.items.find((it) => it.key === median.key).obb.x, median.obb.x + 50), 'the median is moved');
   assert.deepEqual(out.orphans.map((o) => o.op).sort(), ['add', 'remove']);
+});
+
+test('sdk: new streets join a loop street anywhere round it, and nothing stands on them', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { roadEdit } = await import('../src/sdk/roads.js');
+  const { blankDistrict } = await import('../src/sdk/templates.js');
+  const s = new Session(blankDistrict(byId('strip'), 1));
+  // Onto the Ring Road's last stretch (w round to nw), ending a few metres short of it: it joins.
+  s.change((e) => (e.plan = roadEdit(s, [[-200, -150], [-386, -250]], { name: 'Loop Link', bends: [[-300, -170]] })));
+  const st = s.map.streets.find((q) => q.name === 'Loop Link');
+  const ring = s.map.streets.find((q) => q.name === 'Ring Road');
+  const end = st.marks[st.marks.length - 1].node;
+  assert.ok(ring.marks.some((m) => m.node === end), 'its end is a junction on the Ring Road');
+  assert.equal(end.x, -400, 'on the ring, not short of it');
+  const on = s.layout.items.filter((it) => it.solid && G.nearestOnLine(st.pts, ...itemCentre(it)).d < st.half);
+  assert.deepEqual(on.map((it) => it.key), [], 'nothing solid on its carriageway');
+});
+
+test("sdk: the road tool won't build a road that can't be driven or drawn", async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { roadEdit, roadProblem } = await import('../src/sdk/roads.js');
+  const { blankDistrict } = await import('../src/sdk/templates.js');
+  const s = new Session(blankDistrict(byId('strip'), 1));
+  const no = (clicks, bends, why) => {
+    assert.match(roadProblem(s, clicks, { bends }) || '', why, `refused: ${why}`);
+    assert.throws(() => roadEdit(s, clicks, { bends }), why);
+  };
+  no([[-300, 100], [-250, 100]], [[-275, 180]], /curve is too tight/); // a hairpin pulled out of a curve
+  no([[250, -100], [350, -200], [260, -120]], [], /corner is too sharp/);
+  no([[200, -60], [200, 60]], [[260, 0]], /curve can't cross another road/);
+  no([[-300, 60], [-100, 60]], [[-200, 8]], /too close to Main Street/); // sagging onto it without crossing
+  no([[-300, -250], [-100, -250], [-100, -150], [-200, -150], [-200, -350]], [], /can't cross itself/);
+  no([[-350, -60], [-150, -60], [-150, -48], [-350, -48]], [], /runs over itself/);
+  no([[60, 340], [300, 400]], [], /too narrow an angle/); // 14 degrees onto the ring
+  no([[-100, 100], [-100, 700]], [], /inside the district/);
+  no([[-100, 100], [-96, 100]], [], /too close together/);
+  // A crossing just beside a junction; the same road further along is fine.
+  s.change((e) => (e.plan = roadEdit(s, [[100, 0], [400, -300]], { name: 'Cut' })));
+  no([[115, 100], [115, -100]], [], /too near a junction/);
+  assert.equal(roadProblem(s, [[160, 100], [160, -100]]), null);
+  // Curves, bends and wide enough angles build.
+  for (const [clicks, bends] of [
+    [[[-400, -150], [-100, -400]], [[-270, -290]]],
+    [[[-200, 150], [0, 300], [200, 150]], [[-170, 260], [170, 260]]],
+    [[[-370, 60], [-340, 220], [-230, 250]], []],
+    [[[100, 290], [300, 400]], []],
+  ]) assert.equal(roadProblem(s, clicks, { bends }), null);
+
+  // Moving a junction: the angles at it, and at the far ends of its roads (they swing too).
+  const { moveNode, nodeProblem } = await import('../src/sdk/roads.js');
+  const start = s.map.nodes.find((n) => n.name?.startsWith('sdk') && Math.abs(n.x - 100) < 1 && Math.abs(n.z) < 1).name;
+  s.change((e) => (e.plan = moveNode(s, start, 150, 0)));
+  assert.equal(nodeProblem(s, start), null, 'along the road a little: fine');
+  s.change((e) => (e.plan = moveNode(s, start, 370, 0)));
+  assert.match(nodeProblem(s, start) || '', /Ring Road and Cut together at too narrow an angle/, 'the far end meets the ring at 6°');
+});
+
+test('sdk: the mouse wheel lifts the ground a grid step at a time; an angled flatten makes a slope', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { lift, brush } = await import('../src/sdk/brush.js');
+  const { catalogue } = await import('../src/sdk/catalogue.js');
+  const s = new Session(docFromDistrict(byId('strip')));
+  const [x, z] = [100, 100]; // (a terrain grid point)
+  const st = s.stroke();
+  const h0 = st.heightAt(x, z);
+  const one = lift(st, x, z, { radius: 12, step: 1, dir: 1 });
+  assert.equal(one, Math.floor(h0 + 1e-6) + 1, 'up to the next whole metre');
+  assert.ok(Math.abs(st.heightAt(x, z) - one) < 1e-9, 'the ground there is at it');
+  lift(st, x, z, { radius: 12, step: 1, dir: 1 });
+  lift(st, x, z, { radius: 12, step: 1, dir: 1 });
+  assert.ok(Math.abs(lift(st, x, z, { radius: 12, step: 1, dir: -1 }) - (one + 1)) < 1e-9, 'three up, one down');
+  assert.ok(Math.abs(st.heightAt(x + 16, z) - s.map.heightAt(x + 16, z)) < 1e-9, 'nothing past the brush');
+  assert.ok(Math.abs(lift(st, x, z, { radius: 12, step: 0.25, dir: 1 }) - (one + 1.25)) < 1e-9, 'a finer step');
+
+  // Flatten at 20°, facing +z from (x, z): the ground rises tan 20° a metre that way.
+  const f = s.stroke();
+  const target = f.heightAt(x, z);
+  for (let k = 0; k < 200; k++) brush(f, 'flatten', x, z + 8, { radius: 16, strength: 2, target, dt: 0.1, angle: 20, dir: [0, 1], origin: [x, z] });
+  const rise = f.heightAt(x, z + 12) - f.heightAt(x, z + 4);
+  assert.ok(Math.abs(rise - 8 * Math.tan((20 * Math.PI) / 180)) < 0.1, `a 20° slope (${rise.toFixed(2)} m over 8 m)`);
+
+  // Ground surfaces are painted, not placed: none in the objects list.
+  for (const id of ['strip', 'maple', 'chrome', 'undercity']) {
+    const list = catalogue(baseLayout(districtMap(byId(id).city)).items).map((e) => e.t);
+    for (const t of ['patch', 'pond', 'pondWater', 'river', 'water', 'fairway', 'driveway', 'footpath']) assert.ok(!list.includes(t), `${id}: no ${t} in the list`);
+  }
 });
 
 test('sdk: a copied breakable gets its own id and breaks on its own', () => {

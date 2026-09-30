@@ -1155,8 +1155,11 @@ function buildStartLine(track, tex, at, i0 = 0) {
   const i1 = track.wrap(i0 + 1);
   const group = new THREE.Group();
   const hw = track.localHalf ? track.localHalf(track.s[i0]) : track.halfWidth;
+  // (Up on something, where the T&T SDK put it: on its top.)
+  const top = track.closed ? track.startY : track.finishY;
+  const lift = top !== null && top !== undefined ? Math.max(0, top - track.y[i0]) : 0;
 
-  const positions = [...at(i0, -hw, 0.03), ...at(i0, hw, 0.03), ...at(i1, -hw, 0.03), ...at(i1, hw, 0.03)];
+  const positions = [...at(i0, -hw, lift + 0.03), ...at(i0, hw, lift + 0.03), ...at(i1, -hw, lift + 0.03), ...at(i1, hw, lift + 0.03)];
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, (hw * 2) / 8, 0, 0, 1, (hw * 2) / 8, 1], 2));
@@ -1191,9 +1194,9 @@ function buildStartLine(track, tex, at, i0 = 0) {
 
   const gantry = new THREE.Group();
   gantry.add(frame, signMesh, strip);
-  gantry.position.set(track.x[i0], track.y[i0], track.z[i0]);
+  gantry.position.set(track.x[i0], track.y[i0] + lift, track.z[i0]);
   // Face the sign toward cars approaching the line (they travel along +tangent).
-  gantry.lookAt(track.x[i0] - track.tx[i0], track.y[i0], track.z[i0] - track.tz[i0]);
+  gantry.lookAt(track.x[i0] - track.tx[i0], track.y[i0] + lift, track.z[i0] - track.tz[i0]);
   group.add(gantry);
   return group;
 }

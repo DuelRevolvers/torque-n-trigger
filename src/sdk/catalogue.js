@@ -18,6 +18,8 @@ const CATEGORY = {
   Industrial: 'stack crates tank tyres pipes generator scrapStack rackLeg cage washing lumber rebar beams slab craneMast craneJib scrapCrane craneBoom hvac dish telescope panel plinth stall',
   Breakables: 'brk',
 };
+// Ground surfaces: painted with the Terrain tab's Paint, not placed as objects.
+const GROUND = new Set(['patch', 'pond', 'pondWater', 'river', 'water', 'fairway', 'driveway', 'footpath']);
 const categoryOf = new Map(Object.entries(CATEGORY).flatMap(([c, list]) => list.split(' ').map((t) => [t, c])));
 export const CATEGORIES = [...Object.keys(CATEGORY), 'Other'];
 
@@ -30,7 +32,7 @@ const humanize = (s) => {
 export function catalogue(items) {
   const byId = new Map();
   for (const it of items) {
-    if (!canMove(it)) continue;
+    if (!canMove(it) || GROUND.has(it.t)) continue;
     const id = it.kind ? `${it.t}.${it.kind}` : it.t;
     const e = byId.get(id);
     if (e) {

@@ -19,6 +19,34 @@ const floodWet = (f, x, z, y, t) => {
 const SEARCH_WINDOW = 16; // samples either side of the hint index
 const SECTION_RAMP = 8; // metres over which a street's width blends into the next
 
+// Is (x, z) on obstacle o's footprint (a box, turned by yaw, or a polygon)?
+export function onFoot(o, x, z) {
+  if (o.poly) return inPoly(x, z, o.poly);
+  const dx = Math.sin(o.yaw || 0);
+  const dz = Math.cos(o.yaw || 0);
+  return Math.abs((x - o.x) * dz - (z - o.z) * dx) <= o.hw && Math.abs((x - o.x) * dx + (z - o.z) * dz) <= o.hd;
+}
+
+// How far (x, z) is inside polygon p, and the way into it from its nearest edge
+// ([rx, rz]); null outside.
+function polyDepth(p, x, z) {
+  if (!inPoly(x, z, p)) return null;
+  let best = null;
+  for (let k = 0; k < p.length; k++) {
+    const a = p[k];
+    const b = p[(k + 1) % p.length];
+    const dx = b[0] - a[0];
+    const dz = b[1] - a[1];
+    const L2 = dx * dx + dz * dz || 1;
+    const t = Math.max(0, Math.min(1, ((x - a[0]) * dx + (z - a[1]) * dz) / L2));
+    const qx = a[0] + dx * t;
+    const qz = a[1] + dz * t;
+    const d = Math.hypot(x - qx, z - qz);
+    if (!best || d < best.d) best = { d, r: d > 1e-6 ? [(x - qx) / d, (z - qz) / d] : [dz / Math.sqrt(L2), -dx / Math.sqrt(L2)] };
+  }
+  return best;
+}
+
 export function buildTrack(def) {
   const {
     name = 'track',
@@ -60,7 +88,16 @@ export function buildTrack(def) {
   track.medians = def.medians?.length ? def.medians : null; // a solid median down the middle (the Strip)
   track.surfaceAll = def.surfaceAll ?? null; // a whole road of one surface (a shortcut across grass)
   // Solid things inside the walls (verge trees, hedges at a corner): { x, z, hw, hd, yaw?, y, h }.
+  // (top: its top is ground a car can drive on, off the streets in a T&T SDK race.)
   if (def.obstacles?.length) track.setObstacles(def.obstacles);
+  // The T&T SDK's races off the streets: ramps ({ x, z, dirX, dirZ, len, width, height, abs }),
+  // and where the start and finish are (along the track, and how high when up on something).
+  track.ramps = def.ramps?.length ? def.ramps : null;
+  track.tops = !!track.ramps || !!def.obstacles?.some((o) => o.top);
+  track.startS = def.startS ?? null;
+  if (def.finishS !== undefined) track.finishS = def.finishS;
+  track.startY = def.startY ?? null;
+  track.finishY = def.finishY ?? null;
   track.sprinklers = def.sprinklers?.length ? def.sprinklers : null; // lawn sprinklers: { x, z, id }
   track.breakables = def.breakables?.length ? def.breakables : null; // fences, mailboxes, bins
   track.gusts = def.gusts || null;
@@ -270,7 +307,54 @@ class Track {
   query(x, z, hint = -1, y) {
     const r = this.queryMain(x, z, hint);
     const best = this.branches ? this.queryBranches(x, z, r) : r;
-    return this.obstacles || this.sprinklers || this.patches || this.flood || this.lockdown ? this.solidAt(x, z, y, best) : best;
+    return this.obstacles || this.sprinklers || this.patches || this.flood || this.lockdown || this.ramps ? this.solidAt(x, z, y, best) : best;
+  }
+
+  // A ramp's surface under (x, z), if it's above the ground g: the new ground.
+  onRamp(x, z, g) {
+    let out = g;
+    for (const r of this.ramps) {
+      const dx = x - r.x;
+      const dz = z - r.z;
+      const u = dx * r.dirX + dz * r.dirZ; // along the ramp
+      if (u < 0 || u > r.len || Math.abs(-dx * r.dirZ + dz * r.dirX) > r.width / 2) continue;
+      const slope = r.height / r.len;
+      const h = r.abs + slope * u;
+      if (h <= out.height) continue;
+      const n = Math.hypot(slope, 1);
+      out = { ...out, height: h, nx: (-r.dirX * slope) / n, ny: 1 / n, nz: (-r.dirZ * slope) / n, surface: r.surface ?? SURFACE.ROAD };
+    }
+    return out;
+  }
+
+  // The ground at (x, z) for something no higher than y: the road, a ramp, or
+  // the top of what it's on (off the streets in a T&T SDK race; on a track
+  // with none, the road's height).
+  standY(x, z, y = Infinity) {
+    let h = this.queryMain(x, z).height;
+    if (this.ramps) {
+      const r = this.onRamp(x, z, { height: h }).height;
+      if (r <= y + 0.5) h = r;
+    }
+    for (const o of this.obstacleGrid?.get(Math.floor(x / 16) * 100003 + Math.floor(z / 16)) || []) {
+      const top = o.y + o.h;
+      if (o.top && top > h && top <= y + 0.5 && onFoot(o, x, z)) h = top;
+    }
+    return h;
+  }
+
+  // Track sample i, or the nearest before it (up to 80 m back) that isn't
+  // inside something solid: where to put a car back.
+  clearIndex(i) {
+    const blocked = (k) => {
+      const [x, z, y] = [this.x[k], this.z[k], this.y[k]];
+      return (this.obstacleGrid?.get(Math.floor(x / 16) * 100003 + Math.floor(z / 16)) || []).some((o) => o.top && o.y < y + 1.5 && o.y + o.h > y + 0.3 && onFoot(o, x, z));
+    };
+    for (let k = i, n = 0; n <= 40; n++, k = this.wrap(k - 1)) {
+      if (!blocked(k)) return k;
+      if (!this.closed && k === 0) break;
+    }
+    return i;
   }
 
   // The lawns under a sprinkler are wet; an obstacle inside the walls is a wall.
@@ -282,6 +366,7 @@ class Track {
     }
     if (this.sprinklers && out.surface === SURFACE.OFFROAD && this.wetAt(x, z)) out = { ...out, surface: SURFACE.WET };
     if (this.flood && floodWet(this.flood, x, z, y ?? g.height, this.time || 0)) out = { ...out, surface: SURFACE.WET };
+    if (this.ramps) out = this.onRamp(x, z, out);
     // (The lockdown's bollards, while they're up.)
     const risen = this.lockdown ? lockdownBoxes(this.lockdown, Math.round((this.time || 0) * 60), x, z) : [];
     const fixed = this.obstacles ? this.obstacleGrid.get(Math.floor(x / 16) * 100003 + Math.floor(z / 16)) : null;
@@ -289,8 +374,23 @@ class Track {
     const list = risen.length ? [...(fixed || []), ...risen] : fixed;
     let pen = Math.abs(g.lateral) - this.wallDist;
     let hit = null;
+    let stand = null; // the top of what it's on
     for (const o of list) {
+      if (o.top && y !== undefined && y >= o.y + o.h - 0.1) {
+        // Up on it: its top is the ground.
+        if (onFoot(o, x, z) && (stand === null || o.y + o.h > stand)) stand = o.y + o.h;
+        continue;
+      }
       if (y !== undefined && (y > o.y + o.h + 0.3 || y < o.y - 2.5)) continue;
+      if (o.top && o.poly) {
+        // (Its own outline, not the box round it.)
+        const q = polyDepth(o.poly, x, z);
+        if (q && q.d > pen) {
+          pen = q.d;
+          hit = q.r;
+        }
+        continue;
+      }
       const dx = Math.sin(o.yaw || 0);
       const dz = Math.cos(o.yaw || 0);
       const u = (x - o.x) * dz - (z - o.z) * dx;
@@ -305,6 +405,7 @@ class Track {
       const sv = v < 0 ? 1 : -1;
       hit = du > dv ? [dz * su, -dx * su] : [dx * sv, dz * sv];
     }
+    if (stand !== null && stand > out.height) out = { ...out, height: stand, nx: 0, ny: 1, nz: 0, surface: SURFACE.ROAD };
     if (!hit) return out;
     return { ...out, lateral: this.wallDist + pen, rx: hit[0], rz: hit[1], trueLateral: g.trueLateral ?? g.lateral };
   }

@@ -17,7 +17,7 @@ import { SETBACK, quadRing, splitLot, nearPath, edgeSpans, TUNNEL_HALF } from '.
 import { authoredLayout } from './authoredLayout.js';
 import { planLayout } from './planLayout.js';
 import { assignKeys, applyEdits, itemCentre } from './layoutEdits.js';
-import { nearestOnLine } from './geom2d.js';
+import { nearestOnLine, lineLength, pointAlong } from './geom2d.js';
 
 const bases = new WeakMap();
 const cache = new WeakMap();
@@ -28,6 +28,10 @@ export function baseLayout(map) {
     const layout = map.plan ? planLayout(map) : map.authored ? authoredLayout(map) : buildLayout(map);
     // Streets drawn off a grid district's grid: what stood in their way is gone.
     if (map.extraStreets?.length) layout.items = layout.items.filter((it) => !inExtraStreet(map.extraStreets, it));
+    // Streets drawn in the SDK (a plan district's): nothing stands on their
+    // carriageway, and buildings beside them don't overlap.
+    const drawn = (map.streets || []).filter((st) => st.sdk && st.pts?.length > 1);
+    if (drawn.length) layout.items = clearDrawnStreets(drawn, layout.items);
     assignKeys(layout.items);
     bases.set(map, layout);
   }
@@ -40,6 +44,81 @@ function inExtraStreet(list, it) {
   const [x, z] = itemCentre(it);
   const reach = it.obb ? Math.hypot(it.obb.hw, it.obb.hd) * 0.8 : Array.isArray(it.r) ? Math.hypot(it.r[1] - it.r[0], it.r[3] - it.r[2]) * 0.4 : 1;
   return list.some((st) => nearestOnLine(st.pts, x, z).d < st.width / 2 + 3 + reach);
+}
+
+// How far (x, z) is from an item's footprint (0 inside it).
+function footDistance(it, x, z) {
+  if (it.obb) {
+    const o = it.obb;
+    const dx = Math.sin(o.yaw || 0);
+    const dz = Math.cos(o.yaw || 0);
+    const u = (x - o.x) * dz - (z - o.z) * dx;
+    const v = (x - o.x) * dx + (z - o.z) * dz;
+    return Math.hypot(Math.max(Math.abs(u) - o.hw, 0), Math.max(Math.abs(v) - o.hd, 0));
+  }
+  if (Array.isArray(it.r)) {
+    const [x0, x1, z0, z1] = it.r;
+    return Math.hypot(Math.max(x0 - x, 0, x - x1), Math.max(z0 - z, 0, z - z1));
+  }
+  const [cx, cz] = itemCentre(it);
+  return Math.max(0, Math.hypot(cx - x, cz - z) - 0.5);
+}
+
+// The corners of an item's footprint (a box; a polygon's own points).
+function footCorners(it) {
+  if (it.obb) {
+    const o = it.obb;
+    const dx = Math.sin(o.yaw || 0);
+    const dz = Math.cos(o.yaw || 0);
+    return [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [o.x + a * o.hw * dz + b * o.hd * dx, o.z - a * o.hw * dx + b * o.hd * dz]);
+  }
+  if (it.poly) return it.poly;
+  if (Array.isArray(it.r)) return [[it.r[0], it.r[2]], [it.r[1], it.r[2]], [it.r[1], it.r[3]], [it.r[0], it.r[3]]];
+  return null;
+}
+
+// Two convex footprints overlap (separating axes)?
+function overlap(a, b) {
+  for (const poly of [a, b]) {
+    for (let k = 0; k < poly.length; k++) {
+      const [px, pz] = poly[k];
+      const [qx, qz] = poly[(k + 1) % poly.length];
+      const [nx, nz] = [pz - qz, qx - px];
+      const span = (p) => p.map(([x, z]) => x * nx + z * nz);
+      const [sa, sb] = [span(a), span(b)];
+      if (Math.max(...sa) < Math.min(...sb) + 0.01 || Math.max(...sb) < Math.min(...sa) + 0.01) return false;
+    }
+  }
+  return true;
+}
+
+function clearDrawnStreets(streets, items) {
+  const samples = streets.flatMap((st) => {
+    const out = [];
+    const L = lineLength(st.pts);
+    for (let s = 0; s <= L; s += 3) {
+      const p = pointAlong(st.pts, s);
+      out.push({ x: p.x, z: p.z, half: st.half + 0.3, edge: Math.max(st.half + 0.3, st.edge - 0.3) });
+    }
+    return out;
+  });
+  const near = (it, reach) => {
+    const [cx, cz] = itemCentre(it);
+    return samples.some((p) => Math.abs(p.x - cx) < reach + p.edge && Math.abs(p.z - cz) < reach + p.edge);
+  };
+  const reachOf = (it) => (it.obb ? it.obb.hw + it.obb.hd : Array.isArray(it.r) ? (it.r[1] - it.r[0] + it.r[3] - it.r[2]) / 2 : 2);
+  // Off the carriageway; buildings (and anything as big) off the sidewalks too, lamps and the like kept.
+  const big = (it) => it.t === 'bldg' || (it.solid && reachOf(it) > 3);
+  const kept = items.filter((it) => !near(it, reachOf(it)) || !samples.some((p) => footDistance(it, p.x, p.z) < (big(it) ? p.edge : p.half)));
+  // Buildings beside the street that overlap one another: the bigger stays.
+  const beside = kept.filter((it) => it.t === 'bldg' && footCorners(it) && near(it, reachOf(it) + 60)).sort((a, b) => reachOf(b) - reachOf(a));
+  const gone = new Set();
+  beside.forEach((a, i) => {
+    if (gone.has(a)) return;
+    const ca = footCorners(a);
+    for (const b of beside.slice(i + 1)) if (!gone.has(b) && overlap(ca, footCorners(b))) gone.add(b);
+  });
+  return gone.size ? kept.filter((it) => !gone.has(it)) : kept;
 }
 
 // The layout with the district's edits made: { items, draw, orphans }.

@@ -36,7 +36,7 @@ export function sculptAt(t) {
     j1 = Math.max(j1, j);
   }
   const v = (i, j) => g.get(i * K + j) || 0;
-  return (x, z) => {
+  const at = (x, z) => {
     const fx = x / c;
     const fz = z / c;
     const i = Math.floor(fx);
@@ -46,6 +46,9 @@ export function sculptAt(t) {
     const w = fz - j;
     return (v(i, j) * (1 - u) + v(i + 1, j) * u) * (1 - w) + (v(i, j + 1) * (1 - u) + v(i + 1, j + 1) * u) * w;
   };
+  // (Where it isn't zero, and its grid: a view draws it that finely there.)
+  at.fine = { box: [(i0 - 1) * c, (i1 + 1) * c, (j0 - 1) * c, (j1 + 1) * c], cell: c };
+  return at;
 }
 
 // A plan district's terrain (sim/planMap.js) with the sculpt layer added.
@@ -53,7 +56,8 @@ export function sculptTerrain(terrain, t) {
   const at = sculptAt(t);
   if (!at) return terrain;
   const wrap = (f) => f && ((x, z) => f(x, z) + at(x, z));
-  return { ...terrain, heightAt: wrap(terrain.heightAt), baseAt: wrap(terrain.baseAt), drawAt: wrap(terrain.drawAt) };
+  // (sculptAt: the layer alone, for a view drawing a surface of its own height: a rooftop's deck.)
+  return { ...terrain, heightAt: wrap(terrain.heightAt), baseAt: wrap(terrain.baseAt), drawAt: wrap(terrain.drawAt), lineHeightAt: wrap(terrain.lineHeightAt), sculptAt: at, sculpted: true };
 }
 
 // A built map (a grid district's) with the sculpt layer added to its ground.
@@ -62,6 +66,7 @@ export function sculptMap(map, t) {
   if (at) {
     const own = map.heightAt;
     map.heightAt = (x, z) => own(x, z) + at(x, z);
+    map.sculpted = true;
   }
   return map;
 }

@@ -417,7 +417,8 @@ export function planMap(style) {
     const onlyRing = f.owner.every((h) => h.e.street?.ring && h.e.street === f.owner[0].e.street);
     const ringOf = onlyRing ? f.owner[0].e.street.ring : null;
     const off = f.owner.map((h) => (!h.e.street ? 0 : ringOf && !ringOf.green ? h.e.street.half : h.e.street.edge));
-    const inset = G.insetPoly(f.poly, off);
+    // (Round streets drawn in the SDK, which can run short and end anywhere, the lot is tidied of folds.)
+    const inset = G.insetPoly(f.poly, off, f.owner.some((h) => h.e.street?.sdk));
     const lot = inset.map((q) => q.pt);
     if (Math.abs(G.polyArea(lot)) < 30) continue;
     // Frontages: the runs of the lot's edge along one street (or the boundary).
@@ -546,6 +547,8 @@ export function planMap(style) {
     rv: P.rv ? { ...P.rv, seed: style.seed } : null,
     // Rooftops: the decks, the crossings, the spiral towers, the river gusts.
     roof: !!terrain.roof, decks: terrain.decks || null, deckAt: terrain.deckAt || null, lineHeightAt: terrain.lineHeightAt || null, crossings,
+    // The ground sculpted in the T&T SDK: the views follow it inside their surfaces too.
+    sculpted: !!terrain.sculpted, sculptAt: terrain.sculptAt || null,
     spirals: streets.filter((q) => q.helix).map((q) => ({ ...q.helix, street: q.name })),
     gusts: P.gusts ? { ...P.gusts, seed: style.seed } : null,
     // The Undercity: the deck overhead, the pit and its floor (driven straight across), the drain, the flood.

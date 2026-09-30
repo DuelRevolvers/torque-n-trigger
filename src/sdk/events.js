@@ -69,7 +69,8 @@ export function arenaSites(session) {
 }
 
 // The route the game builds for an event: its line (tracks) or ground (arenas),
-// length, and shortcuts; or why it can't be built.
+// length, shortcuts, and where it starts and finishes (along it, and how high
+// when up on something); or why it can't be built.
 export function routePreview(district, route) {
   try {
     const v = cityVenue(district.city, route);
@@ -83,7 +84,10 @@ export function routePreview(district, route) {
     const pts = [];
     for (let i = 0; i < track.count; i += 3) pts.push([track.x[i], track.z[i]]);
     if (track.closed) pts.push(pts[0]);
-    return { pts, length: track.length, closed: track.closed, shortcuts: (v.def.branches || []).length };
+    return {
+      pts, length: track.length, closed: track.closed, shortcuts: (v.def.branches || []).length,
+      startS: track.closed ? 0 : track.startS ?? 40, finishS: track.closed ? 0 : track.finishS ?? track.length - 25, startY: track.startY, finishY: track.finishY,
+    };
   } catch (err) {
     return { error: err.message };
   }
