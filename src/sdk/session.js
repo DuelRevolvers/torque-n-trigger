@@ -85,8 +85,13 @@ export class Session {
   }
 
   // The district's own item a copy was made from (the item itself if not a copy).
+  // What a copy of an item copies: another of this district's objects (its
+  // key), or one from another district ({ from, district, item, ground }: the
+  // object as it was there, carried in the edit; sim/layoutEdits.js).
   source(key) {
-    return this.addOf(key)?.from ?? key;
+    const a = this.addOf(key);
+    if (a?.item) return { from: a.from, district: a.district, item: a.item, ground: a.ground };
+    return a?.from ?? key;
   }
 
   // Where an item stands now: its middle, and how far it's turned from how it was placed.
@@ -136,7 +141,7 @@ export class Session {
     let n = this.doc.edits.add.length + 1;
     while (this.doc.edits.add.some((a) => a.id === `a${n}`)) n++;
     const id = `a${n}`;
-    this.change((e) => e.add.push({ id, from, x: r3(x), z: r3(z), yaw: r3(yaw) }));
+    this.change((e) => e.add.push({ id, ...sourceOf(from), x: r3(x), z: r3(z), yaw: r3(yaw) }));
     return `+${id}`;
   }
 
@@ -150,7 +155,11 @@ export class Session {
     let n = this.gadgets().length + 1;
     while (this.gadgets().some((g) => g.id === `g${n}`)) n++;
     const id = `g${n}`;
-    this.change((e) => (e.gadgets ||= []).push(newGadget(type, id, r3(x), r3(z), r3(yaw))));
+    this.change((e) => {
+      // (One free roam start: a new one moves it.)
+      if (type === 'start') e.gadgets = (e.gadgets || []).filter((g) => g.type !== 'start');
+      (e.gadgets ||= []).push(newGadget(type, id, r3(x), r3(z), r3(yaw)));
+    });
     return id;
   }
 
@@ -172,7 +181,7 @@ export class Session {
       let n = e.add.length + 1;
       for (const [x, z, yaw] of list) {
         while (e.add.some((a) => a.id === `a${n}`)) n++;
-        e.add.push({ id: `a${n}`, from, x: r3(x), z: r3(z), yaw: r3(yaw || 0) });
+        e.add.push({ id: `a${n}`, ...sourceOf(from), x: r3(x), z: r3(z), yaw: r3(yaw || 0) });
         ids.push(`+a${n}`);
       }
     });
@@ -291,4 +300,10 @@ function footArea(it, x, z, pad) {
   }
   if (typeof it.x === 'number' && typeof it.z === 'number') return Math.hypot(x - it.x, z - it.z) <= 1 + pad ? 1 : null;
   return null;
+}
+
+// A copy's source as its edit has it (see Session.source).
+function sourceOf(from) {
+  if (typeof from === 'string') return { from };
+  return { from: from.from, district: from.district, item: from.item, ground: from.ground };
 }

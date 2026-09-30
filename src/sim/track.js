@@ -110,6 +110,9 @@ export function buildTrack(def) {
   track.jumps = jumps;
   track.gaps = gaps.length ? gaps : null;
   track.train = def.train || null; // the freight line, if the district has one
+  track.drops = def.drops || null; // the drops placed in the T&T SDK (event.js pickups)
+  track.oil = def.oil || null; // its oil slicks (combat.js)
+  track.rain = def.rain ?? null; // the map's rain, 0-1 (combat.js: grip)
   track.truck = def.truck || null; // the armoured cash truck (the Neon Strip)
   track.rv = def.rv || null; // the runaway RV (Maple Hollow)
   track.closures = def.closures || [];

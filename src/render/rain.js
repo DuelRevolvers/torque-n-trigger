@@ -7,9 +7,14 @@ const STREAK = 0.9;
 
 const wrap = (v, center, size) => center + ((((v - center + size / 2) % size) + size) % size) - size / 2;
 
+// How many drops at most (a downpour), and the game's usual share of them.
+export const RAIN_MAX = 4000;
+export const RAIN_USUAL = 0.4;
+
 export class Rain {
   constructor(count = 1600) {
     this.count = count;
+    this.active = count;
     this.drops = new Float32Array(count * 3);
     for (let i = 0; i < count; i++) {
       this.drops[i * 3] = (Math.random() - 0.5) * BOX.x;
@@ -26,10 +31,16 @@ export class Rain {
     this.mesh.frustumCulled = false;
   }
 
+  // Only so many of the drops fall (a map's rain: none, a drizzle, a downpour).
+  setAmount(n) {
+    this.active = Math.max(0, Math.min(this.count, n));
+    this.mesh.geometry.setDrawRange(0, this.active * 2);
+  }
+
   update(center, dt) {
     const d = this.drops;
     const p = this.positions;
-    for (let i = 0; i < this.count; i++) {
+    for (let i = 0; i < this.active; i++) {
       const k = i * 3;
       d[k + 1] -= FALL_SPEED * dt;
       d[k] += 2 * dt; // light wind

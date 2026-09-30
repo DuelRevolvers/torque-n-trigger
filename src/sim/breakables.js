@@ -6,9 +6,10 @@
 // A breakable: { id, kind, x, z, hw, hd, yaw, y, h } in world coordinates.
 
 import { quatRotate } from './math.js';
+import { explode } from './combat.js';
 
 // How much of its speed a car loses knocking one over.
-const SLOW = { fence: 0.07, mailbox: 0.025, bin: 0.02, chair: 0.02, table: 0.03, trampoline: 0.09, flag: 0.005, glass: 0.15, lounger: 0.03, umbrella: 0.01 };
+const SLOW = { barrel: 0.05, fence: 0.07, mailbox: 0.025, bin: 0.02, chair: 0.02, table: 0.03, trampoline: 0.09, flag: 0.005, glass: 0.15, lounger: 0.03, umbrella: 0.01 };
 const CELL = 8;
 const grids = new WeakMap();
 
@@ -61,7 +62,37 @@ export function hitBreakables(world) {
         car.vel.x *= k;
         car.vel.z *= k;
         world.events.push({ type: 'break', id: b.id, kind: b.kind, car: i, x: b.x, z: b.z, vx: car.vel.x, vz: car.vel.z });
+        if (b.blast) blowUp(world, list, b, i);
       }
     }
   });
+}
+
+// An explosive barrel (placed in the T&T SDK) going off: damage (the
+// weapons' explosion), cars near it thrown outwards and up, and barrels
+// close by set off too. The car that set it off gets the credit.
+function blowUp(world, list, first, by) {
+  const { state } = world;
+  const queue = [first];
+  while (queue.length) {
+    const b = queue.shift();
+    const pos = { x: b.x, y: b.y + b.h / 2, z: b.z };
+    explode(world, pos, b.blast, b.damage, by);
+    for (const car of state.cars) {
+      const dx = car.pos.x - pos.x;
+      const dz = car.pos.z - pos.z;
+      const d = Math.hypot(dx, dz);
+      if (car.wrecked || d > b.blast || Math.abs(car.pos.y - pos.y) > b.blast) continue;
+      const f = 1 - d / b.blast;
+      car.vel.x += (dx / (d || 1)) * 14 * f;
+      car.vel.z += (dz / (d || 1)) * 14 * f;
+      car.vel.y += 6 * f;
+    }
+    for (const o of list) {
+      if (!o.blast || state.broken[o.id] !== undefined || Math.hypot(o.x - b.x, o.z - b.z) > b.blast * 0.6) continue;
+      state.broken[o.id] = state.tick;
+      world.events.push({ type: 'break', id: o.id, kind: o.kind, car: by, x: o.x, z: o.z, vx: 0, vz: 0 });
+      queue.push(o);
+    }
+  }
 }

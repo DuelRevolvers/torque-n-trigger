@@ -17,6 +17,7 @@ import { SETBACK, quadRing, splitLot, nearPath, edgeSpans, TUNNEL_HALF } from '.
 import { authoredLayout } from './authoredLayout.js';
 import { planLayout } from './planLayout.js';
 import { assignKeys, applyEdits, itemCentre } from './layoutEdits.js';
+import { gadgetItems } from './gadgets.js';
 import { nearestOnLine, lineLength, pointAlong } from './geom2d.js';
 
 const bases = new WeakMap();
@@ -125,7 +126,14 @@ function clearDrawnStreets(streets, items) {
 export function districtLayout(map) {
   if (!cache.has(map)) {
     const base = baseLayout(map);
-    cache.set(map, map.style.edits ? { ...base, ...applyEdits(base.items, map.style.edits, map.heightAt) } : { ...base, draw: base.items, orphans: [] });
+    const edits = map.style.edits;
+    if (!edits) cache.set(map, { ...base, draw: base.items, orphans: [] });
+    else {
+      const done = applyEdits(base.items, edits, map.heightAt);
+      // (Lights' posts, solid: sim/gadgets.js.)
+      const posts = gadgetItems(edits.gadgets, map.heightAt);
+      cache.set(map, { ...base, ...done, items: posts.length ? [...done.items, ...posts] : done.items });
+    }
   }
   return cache.get(map);
 }

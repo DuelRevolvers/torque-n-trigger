@@ -18,7 +18,7 @@ globalThis.document ??= { createElement: () => ({ width: 0, height: 0, style: {}
 const THREE = await import('three');
 const { DISTRICTS } = await import('../src/career/districts.js');
 const { districtMap } = await import('../src/sim/city.js');
-const { baseLayout, setEdits } = await import('../src/sim/cityLayout.js');
+const { baseLayout, setEdits, districtLayout } = await import('../src/sim/cityLayout.js');
 const { canMove } = await import('../src/sim/layoutEdits.js');
 const { createTextures } = await import('../src/render/textures.js');
 const { createCityTextures } = await import('../src/render/cityTextures.js');
@@ -252,5 +252,48 @@ test('sdk render: drawn streets meet in clean junctions, curved, bent and at tig
         assert.ok(!(cross(a, c, d) * cross(a, c, e) < -1e-9 && cross(d, e, a) * cross(d, e, c) < -1e-9), `block ${b.id}'s lot folds over itself near ${a.map(Math.round)}`);
       }
     }
+  }
+});
+
+// Objects from any district in any other: the copy carries the object (its
+// district's data), collides where it's put, and is drawn there by its own
+// district's view (none of that district's streets or ground come with it).
+test('sdk render: an object from each district, placed in another, is drawn and solid where it is put', async () => {
+  const { setDistrictStyles } = await import('../src/render/districtView.js');
+  const { catalogue } = await import('../src/sdk/catalogue.js');
+  const { itemCentre } = await import('../src/sim/layoutEdits.js');
+  const { docFromDistrict, districtFromDoc } = await import('../src/content/mapDoc.js');
+  setDistrictStyles((id) => DISTRICTS.find((d) => d.id === id)?.city || null);
+  const into = { rustline: 'strip', strip: 'maple', maple: 'strip', chrome: 'strip', undercity: 'spire', spire: 'undercity' };
+  for (const src of DISTRICTS) {
+    const map = districtMap(src.city);
+    const items = baseLayout(map).items;
+    // (A solid thing with some size: a building or the like.)
+    const e = catalogue(items).filter((q) => q.t !== 'quayCrane').find((q) => {
+      const it = items.find((i) => i.key === q.from);
+      return it.solid && q.size[0] > 3 && q.size[0] < 60 && q.size[2] > 3 && q.size[2] < 60;
+    });
+    assert.ok(e, `${src.id}: something to copy`);
+    const item = JSON.parse(JSON.stringify(items.find((i) => i.key === e.from)));
+    const ground = map.heightAt(...itemCentre(item));
+    const target = DISTRICTS.find((d) => d.id === into[src.id]);
+    const doc = docFromDistrict(target);
+    doc.edits.add.push({ id: 'g1', from: e.from, district: src.id, item, ground, x: 20, z: 40, yaw: 0.5 });
+    const d = districtFromDoc(doc);
+    const there = districtMap(d.city);
+    const it = districtLayout(there).items.find((q) => q.key === '+g1');
+    assert.equal(it?.guest, src.id, `${src.id} -> ${target.id}: in the layout`);
+    const [cx, cz] = itemCentre(it);
+    assert.ok(Math.hypot(cx - 20, cz - 40) < 0.5, 'where it was put');
+    const view = buildDistrictView(there, tex);
+    const guests = view.getObjectByName('guests');
+    assert.ok(guests, `${src.id} -> ${target.id}: drawn by ${src.id}'s view`);
+    const c = census(guests, Infinity);
+    assert.ok(c.near > 0, `${src.id} -> ${target.id}: ${e.id} drawn (${guests.children.map((v) => v.children.length).join()} meshes)`);
+    // (All of it round where it was put: nothing of its home district comes with it.)
+    const pts = points(guests);
+    const reach = Math.hypot(...e.size) + 12;
+    const far = pts.filter(([x, z]) => Math.hypot(x - 20, z - 40) > reach);
+    assert.equal(far.length, 0, `${src.id}: ${far.length} points far from it (e.g. ${far[0]?.map(Math.round)})`);
   }
 });

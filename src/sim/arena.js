@@ -97,6 +97,7 @@ class Arena {
     this.y0 = def.y || 0;
     this.halfX = (def.sizeX ?? def.size) / 2;
     this.halfZ = (def.sizeZ ?? def.size) / 2;
+    this.boundary = def.boundary || null; // a drawn arena's outline (arena-local): its wall
     this.half = Math.max(this.halfX, this.halfZ);
     this.halfWidth = this.half;
     this.wallDist = WALL_DIST;
@@ -294,6 +295,35 @@ class Arena {
         pen = d;
         rx = wxd;
         rz = wzd;
+      }
+    }
+    // A drawn outline: how far inside it (negative) or out past it, (rx, rz) out through its nearest edge.
+    if (this.boundary) {
+      const p = this.boundary;
+      let best = null;
+      for (let k = 0; k < p.length; k++) {
+        const [ax, az] = p[k];
+        const [bx, bz] = p[(k + 1) % p.length];
+        const L2 = (bx - ax) ** 2 + (bz - az) ** 2 || 1;
+        const t = Math.max(0, Math.min(1, ((x - ax) * (bx - ax) + (z - az) * (bz - az)) / L2));
+        const [qx, qz] = [ax + (bx - ax) * t, az + (bz - az) * t];
+        const d = Math.hypot(x - qx, z - qz);
+        if (!best || d < best.d) best = { d, qx, qz, nx: bz - az, nz: -(bx - ax) };
+      }
+      const into = inPoly(x, z, p);
+      let [ox, oz] = into ? [best.qx - x, best.qz - z] : [x - best.qx, z - best.qz];
+      let L = Math.hypot(ox, oz);
+      if (L < 1e-6) {
+        // (On the line: out through the edge's normal, whichever side is outside.)
+        const n = Math.hypot(best.nx, best.nz) || 1;
+        [ox, oz, L] = [best.nx / n, best.nz / n, 1];
+        if (inPoly(x + ox * 0.01, z + oz * 0.01, p)) [ox, oz] = [-ox, -oz];
+      }
+      const d = into ? -best.d : best.d;
+      if (d > pen) {
+        pen = d;
+        rx = ox / L;
+        rz = oz / L;
       }
     }
     const boxWall = (bx, bz, hw, hd) => {

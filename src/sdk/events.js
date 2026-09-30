@@ -2,6 +2,7 @@
 // the map, a preview of the route the game builds from them, and an AI test
 // run (the event raced headless by AI drivers, a slice at a time).
 import { districtEvents, MODIFIER_LABELS } from '../career/districts.js';
+import { arenasOf } from '../sim/arenaEdits.js';
 import { cityVenue } from '../sim/city.js';
 import { buildTrack } from '../sim/track.js';
 import { buildArena } from '../sim/arena.js';
@@ -65,7 +66,7 @@ export function shortcutOptions(session) {
 
 // The arena grounds an arena event can take over.
 export function arenaSites(session) {
-  return (session.map.arenas || []).map((a, i) => ({ site: i, name: a.name || `Arena ${i + 1}` }));
+  return arenasOf(session.district.city, session.map).filter((a) => !a.removed).map((a) => ({ site: a.index, name: a.name }));
 }
 
 // The route the game builds for an event: its line (tracks) or ground (arenas),
@@ -78,7 +79,9 @@ export function routePreview(district, route) {
       const d = v.def;
       const hx = (d.sizeX ?? d.size) / 2;
       const hz = (d.sizeZ ?? d.size) / 2;
-      return { rect: [[d.cx - hx, d.cz - hz], [d.cx + hx, d.cz - hz], [d.cx + hx, d.cz + hz], [d.cx - hx, d.cz + hz]], sizeX: hx * 2, sizeZ: hz * 2 };
+      // (A drawn arena: its outline.)
+      const rect = d.boundary ? d.boundary.map(([x, z]) => [x + d.cx, z + d.cz]) : [[d.cx - hx, d.cz - hz], [d.cx + hx, d.cz - hz], [d.cx + hx, d.cz + hz], [d.cx - hx, d.cz + hz]];
+      return { rect, sizeX: hx * 2 - (d.boundary ? 2 : 0), sizeZ: hz * 2 - (d.boundary ? 2 : 0) };
     }
     const track = buildTrack(v.def);
     const pts = [];

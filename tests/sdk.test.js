@@ -328,6 +328,183 @@ test('sdk: gadgets: a gate opens while its trigger pad is driven over, and lifts
   assert.ok(near(lift.base, def.heightAt(-60, 60)));
 });
 
+test('sdk: lights and drops: a lamp post is solid in free roam and races, drops are in every event and heal as set', async () => {
+  const { newGadget } = await import('../src/sim/gadgets.js');
+  const { createEventState } = await import('../src/sim/event.js');
+  const { buildTrack } = await import('../src/sim/track.js');
+  const { createWorld, stepWorld } = await import('../src/sim/world.js');
+  const { TEST_CAR } = await import('../src/sim/carParams.js');
+  const { districtEvents } = await import('../src/career/districts.js');
+  const doc = docFromDistrict(byId('strip'));
+  doc.edits.gadgets = [
+    { ...newGadget('light', 'g1', 30, 60), fixture: 'post', height: 9 },
+    newGadget('light', 'g2', 60, 60), // (a post too)
+    { ...newGadget('light', 'g3', 90, 60), fixture: 'bare' },
+    { ...newGadget('health', 'g4', 10, 60), amount: 80, respawn: 5 },
+    { ...newGadget('nitro', 'g5', 10, 80), amount: 2, height: 3 },
+  ];
+  const d = districtFromDoc(parseDoc(serializeDoc(doc)));
+  const map = districtMap(d.city);
+
+  // Posts are solid layout items (not a bare light), hidden from the SDK.
+  const posts = districtLayout(map).items.filter((it) => it.t === 'lightPost');
+  assert.deepEqual(posts.map((it) => it.gadget), ['g1', 'g2']);
+  assert.ok(posts.every((it) => it.solid && it.hidden && !canMove(it)));
+  assert.equal(posts[0].h, 9.5, 'as tall as its light');
+
+  // Free roam: the post is an obstacle; the drops are pickups, with their settings.
+  const roam = cityVenue(d.city, { kind: 'roam' }).def;
+  assert.ok(roam.obstacles.some((o) => near(o.x + roam.cx, 30, 0.5) && near(o.z + roam.cz, 60, 0.5)), 'the post is hit in free roam');
+  const arena = buildArena(roam);
+  const ev = createEventState({ type: 'free' }, arena);
+  const mine = ev.pickups.filter((p) => p.gadget);
+  assert.deepEqual(mine.map((p) => [p.type, p.amount, p.respawn]), [['health', 80, 5], ['nitro', 2, 18]]);
+  assert.ok(near(mine[1].y, map.heightAt(10, 80) + 3.8), 'lifted by its height');
+
+  // Driving through the health drop: 80% back, and it's back after 5 s.
+  const world = createWorld({ track: arena, cars: [{ params: TEST_CAR }], poses: [{ pos: { x: 10, y: map.heightAt(10, 60) + 0.9, z: 60 }, yaw: 0 }], event: ev });
+  world.state.cars[0].hp = 1;
+  stepWorld(world, []);
+  const car = world.state.cars[0];
+  assert.ok(car.hp >= car.maxHp * 0.8, `healed to ${Math.round((car.hp / car.maxHp) * 100)}%`);
+  const pk = world.state.event.pickups.find((p) => p.gadget === 'g4');
+  assert.equal(pk.active, false);
+  assert.equal(pk.timer, 5);
+
+  // A race on the same map has them too; turning its automatic drops off leaves just these.
+  const sprint = districtEvents({ ...byId('strip'), city: d.city }).find((e) => e.type === 'sprint');
+  const track = buildTrack(cityVenue(d.city, sprint.route).def);
+  const all = createEventState(sprint, track).pickups;
+  assert.equal(all.filter((p) => p.gadget).length, 2);
+  assert.ok(all.length > 2, 'and the automatic ones');
+  assert.deepEqual(createEventState({ ...sprint, autoDrops: false }, track).pickups.map((p) => p.gadget), ['g4', 'g5']);
+  assert.equal(createEventState({ ...sprint, type: 'drag' }, track).pickups.length, 0, 'none in a drag race');
+});
+
+test('sdk: ramps, oil, barrels, signs, start and spawn points, and the rain work in the events', async () => {
+  const { newGadget, signSize } = await import('../src/sim/gadgets.js');
+  const { buildTrack } = await import('../src/sim/track.js');
+  const { createWorld, stepWorld } = await import('../src/sim/world.js');
+  const { updateMods } = await import('../src/sim/combat.js');
+  const { TEST_CAR } = await import('../src/sim/carParams.js');
+  const { districtEvents } = await import('../src/career/districts.js');
+  const { yawFromDirection } = await import('../src/sim/math.js');
+  const strip = byId('strip');
+  const plain = districtMap(strip.city);
+  // A sprint's route, and the arena event's ground, as the district has them.
+  const sprint = districtEvents(strip).find((e) => e.type === 'sprint');
+  const arenaEv = districtEvents(strip).find((e) => e.type === 'arena');
+  const route = buildTrack(cityVenue(strip.city, sprint.route).def);
+  const i = route.indexAtDistance(300);
+  const [rx, rz] = [route.x[i], route.z[i]];
+  const heading = Math.atan2(route.x[i + 1] - route.x[i], route.z[i + 1] - route.z[i]);
+  const ground = cityVenue(strip.city, arenaEv.route).def;
+
+  const doc = docFromDistrict(strip);
+  doc.edits.gadgets = [
+    { ...newGadget('ramp', 'g1', 30, 60), len: 10, height: 2 }, // yaw 0: rising towards +z
+    { ...newGadget('kicker', 'g2', rx, rz, heading) }, // on the sprint's route
+    { ...newGadget('oil', 'g3', 60, 60), r: 4 },
+    newGadget('barrel', 'g4', 90, 60),
+    newGadget('barrel', 'g5', 93, 60), // (close enough to go off with it)
+    { ...newGadget('sign', 'g6', 120, 60), height: 1, posts: true },
+    { ...newGadget('start', 'g7', 150, 60, Math.PI / 2) },
+    newGadget('spawn', 'g8', ground.cx + 4, ground.cz + 4, Math.PI),
+    newGadget('spawn', 'g9', ground.cx - 4, ground.cz + 4, Math.PI),
+  ];
+  doc.edits.atmosphere = { rain: 1, fog: 2, darkness: 0.5 };
+  const d = districtFromDoc(parseDoc(serializeDoc(doc)));
+  const map = districtMap(d.city);
+  const roam = cityVenue(d.city, { kind: 'roam' }).def;
+  const arena = buildArena(roam);
+  const up = (x, z) => arena.ground(x - roam.cx, z - roam.cz).h + roam.y;
+
+  // The ramp: 2 m up at its top end, on the ground at its foot; the kicker on the race's route.
+  assert.ok(near(up(30, 60 + 4.9) - map.heightAt(30, 55), 2 * 0.99, 0.05), 'ramp top');
+  assert.ok(near(up(30, 55.1), map.heightAt(30, 55), 0.05), 'ramp foot');
+  const race = buildTrack(cityVenue(d.city, sprint.route).def);
+  const k = newGadget('kicker', 'x', 0, 0);
+  const top = [rx + Math.sin(heading) * (k.len / 2 - 0.1), rz + Math.cos(heading) * (k.len / 2 - 0.1)];
+  assert.ok(race.standY(...top) > route.standY(...top) + k.height * 0.9, 'the kicker lifts the race road');
+
+  // Oil: a third of the grip on it; heavy rain costs a fifth everywhere.
+  const world = createWorld({ track: arena, cars: [{ params: TEST_CAR }, { params: TEST_CAR }], poses: [{ pos: { x: 60, y: up(60, 60) + 0.5, z: 60 }, yaw: 0 }, { pos: { x: 200, y: up(200, 60) + 0.5, z: 60 }, yaw: 0 }] });
+  updateMods(world, 0);
+  updateMods(world, 1);
+  const [onOil, off] = world.state.cars.map((c) => c.mods.grip);
+  assert.ok(near(onOil / off, 0.35, 0.01), `oil: ${(onOil / off).toFixed(2)} of the grip`);
+  assert.ok(near(off, 0.8, 0.01), `a downpour: grip ${off.toFixed(2)}`);
+
+  // A barrel: hit, it blows up (and the one beside it), hurting and throwing a car near it.
+  const bang = createWorld({ track: arena, cars: [{ params: TEST_CAR }, { params: TEST_CAR }], poses: [{ pos: { x: 90, y: up(90, 60) + 0.6, z: 60 }, yaw: 0 }, { pos: { x: 90, y: up(90, 64) + 0.6, z: 64 }, yaw: 0 }] });
+  const hp = bang.state.cars[1].hp;
+  stepWorld(bang, []);
+  assert.notEqual(bang.state.broken['barrel:g4'], undefined, 'the barrel went off');
+  assert.notEqual(bang.state.broken['barrel:g5'], undefined, 'and set the next one off');
+  assert.ok(bang.state.cars[1].hp < hp, 'the car beside it is hurt');
+  assert.ok(bang.state.cars[1].vel.z > 3, 'and thrown away from it');
+
+  // The sign: posts solid, and the sign too (its bottom is 1 m up).
+  const solid = districtLayout(map).items.filter((it) => it.gadget === 'g6');
+  assert.deepEqual(solid.map((it) => it.t).sort(), ['signBoard', 'signPost', 'signPost']);
+  assert.ok(near(solid.find((it) => it.t === 'signBoard').h, 1 + signSize(d.city.edits.gadgets[5]).h));
+
+  // Free roam starts at the start, facing its arrow (+x); the arena's first spawns are the placed ones.
+  const s = arena.spawnPose(0);
+  assert.ok(near(s.pos.x, 150) && near(s.pos.z, 60), 'free roam start');
+  assert.ok(near(s.yaw, yawFromDirection(1, 0)), 'facing +x');
+  const fight = buildArena(cityVenue(d.city, arenaEv.route).def);
+  assert.ok(near(fight.spawnPose(0).pos.x, ground.cx + 4, 0.01) && near(fight.spawnPose(1).pos.x, ground.cx - 4, 0.01), 'placed spawns first');
+  assert.ok(fight.def.spawnPoints.length >= arenaEv.cars, 'enough for every car');
+  assert.equal(fight.def.rain, 1);
+});
+
+test('sdk: arenas drawn, redrawn and taken out: their outline is the wall, the cars start inside it', async () => {
+  const { newGadget } = await import('../src/sim/gadgets.js');
+  const { createEventState } = await import('../src/sim/event.js');
+  const { districtEvents } = await import('../src/career/districts.js');
+  const { blankDistrict } = await import('../src/sdk/templates.js');
+  const { arenasOf, outlineProblem } = await import('../src/sim/arenaEdits.js');
+  // A new arena in a blank district (an L: not a box), and a spawn point placed in it.
+  const doc = blankDistrict(byId('strip'), 1);
+  const L = [[-180, -180], [-60, -180], [-60, -120], [-120, -120], [-120, -60], [-180, -60]];
+  assert.equal(outlineProblem(L), null);
+  assert.match(outlineProblem([[0, 0], [10, 0], [10, 10], [0, 10]]), /too small/);
+  assert.match(outlineProblem([[0, 0], [100, 100], [100, 0], [0, 100]]), /crosses itself/);
+  doc.edits.arenas = [{ id: 'r1', name: 'The L', poly: L }];
+  doc.edits.gadgets = [newGadget('spawn', 'g1', -150, -150, 0)];
+  const d = districtFromDoc(doc);
+  const all = arenasOf(d.city, districtMap(d.city));
+  assert.deepEqual(all.map((a) => a.name), ['The L']);
+  const arena = buildArena(cityVenue(d.city, { kind: 'arena', site: 0 }).def);
+  const inside = (p) => G.pointInPoly(p.x, p.z, L);
+  for (let k = 0; k < 8; k++) assert.ok(inside(arena.spawnPose(k).pos), `car ${k} starts inside`);
+  assert.ok(near(arena.spawnPose(0).pos.x, -150) && near(arena.spawnPose(0).pos.z, -150), 'the placed spawn point first');
+  const pen = (x, z) => Math.abs(arena.query(x, z).lateral) - arena.wallDist;
+  assert.ok(pen(-150, -150) < -10, 'well inside: clear');
+  assert.ok(pen(-90, -90) > 20, 'in the L\'s missing corner: through the wall');
+  assert.ok(near(pen(-121, -90), -1, 0.01) && near(pen(-119, -90), 1, 0.01), 'the wall is on the outline');
+  const ev = createEventState({ type: 'arena' }, arena);
+  assert.ok(ev.pickups.length >= 3 && ev.pickups.every(inside), 'drops inside it');
+
+  // The Strip's car park: redrawn smaller, its event still runs there; taken out, its event can't.
+  const strip = byId('strip');
+  const brawl = districtEvents(strip).find((e) => e.type === 'arena');
+  const own = arenasOf(strip.city, districtMap(strip.city))[0];
+  const box = G.polyBounds(own.site.poly);
+  const [mx, mz] = [(box.minX + box.maxX) / 2, (box.minZ + box.maxZ) / 2];
+  const small = [[mx - 50, mz - 40], [mx + 50, mz - 40], [mx + 50, mz + 40], [mx - 50, mz + 40]];
+  const edit = (arenas) => {
+    const doc2 = docFromDistrict(strip);
+    doc2.edits.arenas = arenas;
+    return districtFromDoc(doc2).city;
+  };
+  const redrawn = buildArena(cityVenue(edit([{ id: 'r1', of: own.name, poly: small }]), brawl.route).def);
+  assert.ok(near(redrawn.def.sizeX, 102, 0.1), 'as big as its new outline');
+  for (let k = 0; k < brawl.cars; k++) assert.ok(G.pointInPoly(redrawn.spawnPose(k).pos.x, redrawn.spawnPose(k).pos.z, small), `car ${k} inside the new outline`);
+  assert.throws(() => cityVenue(edit([{ id: 'r1', of: own.name, removed: true }]), brawl.route), /taken out/);
+});
+
 test("sdk: special assets unlock by what's done over the career, in whichever events", async () => {
   const U = await import('../src/career/unlocks.js');
   const of = (id) => U.SPECIALS.find((s) => s.id === id).unlock;

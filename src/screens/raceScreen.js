@@ -20,8 +20,10 @@ import { buildTrackView } from '../render/trackView.js';
 import { buildCityView } from '../render/cityView.js';
 import { buildArenaView } from '../render/arenaView.js';
 import { gadgetView } from '../render/gadgetView.js';
+import { placedView } from '../render/placedView.js';
+import { makePickupMesh } from '../render/pickupMesh.js';
 import { recordFeats, unlockedIds, SPECIALS } from '../career/unlocks.js';
-import { buildDistrictView, districtClear } from '../render/districtView.js';
+import { buildDistrictView, districtClear, setDistrictStyles } from '../render/districtView.js';
 import { buildTrainView, updateTrainView } from '../render/trainView.js';
 import { buildTruckView, updateTruckView } from '../render/truckView.js';
 import { buildRvView, updateRvView } from '../render/rvView.js';
@@ -30,7 +32,7 @@ import { trainAt } from '../sim/train.js';
 import { additiveMaterial } from '../render/retroMaterial.js';
 import { CarView } from '../render/carView.js';
 import { CameraRig } from '../render/cameraRig.js';
-import { Rain } from '../render/rain.js';
+import { Rain, RAIN_MAX, RAIN_USUAL } from '../render/rain.js';
 import { Fx } from '../render/fx.js';
 import { SpeedLines } from '../render/speedLines.js';
 import { formatTime } from '../ui/hud.js';
@@ -66,6 +68,10 @@ const styleTag = (style) => {
   return styleTags.get(style);
 };
 
+// Objects placed in a map from another district (the T&T SDK) are drawn by
+// that district's own view.
+setDistrictStyles((id) => DISTRICTS.find((d) => d.id === id)?.city || null);
+
 export class RaceScreen {
   constructor(app) {
     this.app = app;
@@ -75,7 +81,8 @@ export class RaceScreen {
     const moon = new THREE.DirectionalLight('#9ab8ff', 1.2);
     moon.position.set(-0.4, 1, 0.3);
     scene.add(moon);
-    this.rain = new Rain();
+    this.moon = moon;
+    this.rain = new Rain(RAIN_MAX);
     scene.add(this.rain.mesh);
     this.fx = new Fx(scene, app.tex);
     this.scene = scene;
@@ -174,7 +181,24 @@ export class RaceScreen {
       old.traverse((o) => o.geometry?.dispose());
       this.envs.delete(oldKey);
     }
-    const group = buildDistrictView(districtMap(style), this.app.tex);
+    const map = districtMap(style);
+    const group = buildDistrictView(map, this.app.tex);
+    // What's placed in the T&T SDK (lights flickering with the district's
+    // clock, barrels gone once they've blown up).
+    const placed = placedView(style.edits?.gadgets, map.heightAt, this.app.tex);
+    if (placed) {
+      group.add(placed);
+      const own = group.userData.animate;
+      group.userData.animate = (t, real) => {
+        own?.(t, real);
+        placed.userData.animate(real ?? t);
+      };
+      const broken = group.userData.setBroken;
+      group.userData.setBroken = (b) => {
+        broken?.(b);
+        placed.userData.setBroken(b);
+      };
+    }
     this.scene.add(group);
     this.envs.set(style, group);
     return group;
@@ -211,11 +235,18 @@ export class RaceScreen {
     const theme = DISTRICTS.find((d) => d.id === this.def.district)?.theme;
     const mods = this.def.modifiers || [];
     const blackout = mods.includes('blackout');
-    const haze = theme?.haze || PALETTE.haze;
+    // (A map's own atmosphere, set in the T&T SDK: haze, fog, darkness, rain.)
+    const atmos = this.def.city?.edits?.atmosphere || {};
+    const haze = atmos.haze || theme?.haze || PALETTE.haze;
+    const thick = atmos.fog ?? 1;
     this.scene.fog = venue.outdoor
-      ? new THREE.FogExp2(haze, (theme?.fog || 0.0045) * (blackout ? 2.4 : 1))
-      : new THREE.Fog('#07050d', blackout ? 15 : 40, blackout ? 70 : 160);
-    this.hemi.intensity = blackout ? 0.3 : 1.4;
+      ? new THREE.FogExp2(haze, (theme?.fog || 0.0045) * (blackout ? 2.4 : 1) * thick)
+      : new THREE.Fog('#07050d', (blackout ? 15 : 40) / Math.max(0.3, thick), (blackout ? 70 : 160) / Math.max(0.3, thick));
+    const dark = atmos.darkness || 0;
+    this.hemi.intensity = (blackout ? 0.3 : 1.4) * (1 - 0.8 * dark);
+    this.moon.intensity = 1.2 * (1 - 0.85 * dark);
+    this.rainAmount = atmos.rain ?? RAIN_USUAL;
+    this.rain.setAmount(Math.round(RAIN_MAX * this.rainAmount));
     this.hemiBase = this.hemi.intensity;
     this.scene.background = venue.outdoor ? this.app.tex.sky : new THREE.Color('#07050d');
 
@@ -611,7 +642,7 @@ export class RaceScreen {
     const cam = this.camera.position;
     const covered = !!this.track?.ceilingAt && this.track.ceilingAt(cam.x, cam.z, cam.y) != null;
     if (this.track?.ceilingAt) this.hemi.intensity += ((covered ? this.hemiBase * 0.45 : this.hemiBase) - this.hemi.intensity) * Math.min(1, dt * 3);
-    this.rain.mesh.visible = settings.rain && this.outdoor && !split && !covered;
+    this.rain.mesh.visible = settings.rain && this.rainAmount > 0 && this.outdoor && !split && !covered;
     if (this.rain.mesh.visible) this.rain.update(this.camera.position, dt);
 
     // Results a moment after the player finishes, is eliminated, or the event ends.
@@ -789,25 +820,6 @@ function splitLayout(n) {
   if (n === 2) return [top, bottom];
   if (n === 3) return [top, q(0, 1), q(1, 1)];
   return [q(0, 0), q(1, 0), q(0, 1), q(1, 1)];
-}
-
-// Floating pickup: red cross (health), cyan canister (nitro), amber crate (ammo).
-function makePickupMesh(type) {
-  const g = new THREE.Group();
-  const color = { health: '#ff2040', nitro: '#05d9e8', ammo: '#ffb000' }[type];
-  const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(2.2) });
-  if (type === 'health') {
-    g.add(new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.36, 0.36), mat), new THREE.Mesh(new THREE.BoxGeometry(0.36, 1.2, 0.36), mat));
-  } else if (type === 'nitro') {
-    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 1.1, 8), mat));
-  } else {
-    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.6, 0.6), mat));
-  }
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.9, 0.05, 4, 20), new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(1.5), transparent: true, opacity: 0.6 }));
-  ring.rotation.x = Math.PI / 2;
-  ring.position.y = -0.7;
-  g.add(ring);
-  return g;
 }
 
 // Glowing strip marking the pit zone on the right of the road.

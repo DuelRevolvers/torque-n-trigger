@@ -79,6 +79,7 @@ export function buildArenaView(arena, tex, { outdoor = false, look = null } = {}
   // Ramps: wedges with chevrons.
   const rampMat = litMaterial({ map: tex.wall, side: THREE.DoubleSide });
   for (const r of def.ramps) {
+    if (r.placed) continue; // (the T&T SDK's, drawn with the district: render/placedView.js)
     const g = new THREE.BufferGeometry();
     const w = r.width / 2;
     const L = r.len;

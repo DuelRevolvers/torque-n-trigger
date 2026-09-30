@@ -50,8 +50,10 @@ class Surface {
   }
 }
 
-export function buildPlanDistrictView(map, tex) {
-  if (map.roof) return buildRoofDistrictView(map, tex); // the rooftops (Chrome Heights)
+// only: just these objects (draw entries), none of the district itself: this
+// district's objects placed in another district (render/districtView.js).
+export function buildPlanDistrictView(map, tex, { only = null } = {}) {
+  if (map.roof) return buildRoofDistrictView(map, tex, { only }); // the rooftops (Chrome Heights)
   const { style, heightAt: H } = map;
   // (Ground sculpted in the SDK: the flat layers are draped over it, the roads cut finer.)
   const bumpy = !!map.sculpted;
@@ -61,7 +63,7 @@ export function buildPlanDistrictView(map, tex) {
   const P = style.plan;
   const group = new THREE.Group();
   const add = (m) => m && group.add(m);
-  const layout = districtLayout(map);
+  const layout = only ? { draw: only, items: only } : districtLayout(map);
   const neonN = look.neon.length;
 
   const mats = {
@@ -96,13 +98,13 @@ export function buildPlanDistrictView(map, tex) {
   // The junctions: each one's outline, kerbs and sidewalk corners (the ground's sidewalks follow them).
   const junctions = junctionShapes();
   const outlines = new Map(); // node id -> junctionOutline
-  for (const n of map.nodes) {
+  for (const n of only ? [] : map.nodes) {
     if (!n.name || map.edgeList.some((e) => (e.a === n.id || e.b === n.id) && e.street.drain)) continue;
     const o = junctionOutline(n);
     if (o) outlines.set(n.id, o);
   }
   // A suburb (Maple Hollow) has its own ground and house kit; so has the Undercity.
-  const kitArgs = { map, tex, H, group, items: layout.items, text, clipToConvex, merged, walkBands, junctionAt: (id) => outlines.has(id) };
+  const kitArgs = { map, tex, H, group, items: layout.items, text, clipToConvex, merged, walkBands, junctionAt: (id) => outlines.has(id), guest: !!only };
   const kit = look.suburb ? suburbView(kitArgs) : look.under ? underView(kitArgs) : look.spire ? spireView(kitArgs) : null;
 
   // Buckets, merged into one mesh per material at the end.
@@ -113,11 +115,12 @@ export function buildPlanDistrictView(map, tex) {
 
   // --- The ground, in layers ---
   // (Layers a few centimetres apart, and pulled forward in depth, so they never fight.)
-  if (kit) kit.ground();
+  if (only);
+  else if (kit) kit.ground();
   else cityGround();
   // (Round the junctions' corners, the sidewalk over the lots: where a kerb
   // curves, a lot's sharp corner doesn't cut across the sidewalk.)
-  if (!kit || look.spire) {
+  if (!only && (!kit || look.spire)) {
     const bands = walkBands(-0.1);
     if (bands.length) add(new THREE.Mesh(merged(bands), mats.walkTop));
     const patches = lotPatches(-0.11);
@@ -162,7 +165,7 @@ export function buildPlanDistrictView(map, tex) {
   const kerb = new Surface();
   const marks = new Surface();
   const junctionGeos = [];
-  for (const e of map.edgeList) {
+  for (const e of only ? [] : map.edgeList) {
     const st = e.street;
     // (The Undercity's drain is its ground; the Low Road draws its own road.)
     if (st.drain || st.tunnel) continue;
@@ -196,7 +199,7 @@ export function buildPlanDistrictView(map, tex) {
   }
   group.userData.junctionFallbacks = junctionFallbacks; // (junctions whose outline crossed itself, drawn as a hull)
   // The roads out of the district carry on beyond its edge.
-  for (const n of map.nodes.filter((q) => q.exit)) {
+  for (const n of only ? [] : map.nodes.filter((q) => q.exit)) {
     const e = map.edgeList.find((q) => q.a === n.id || q.b === n.id);
     const pts = e.a === n.id ? e.pts : [...e.pts].reverse();
     const d = [pts[0][0] - pts[1][0], pts[0][1] - pts[1][1]];
@@ -205,9 +208,11 @@ export function buildPlanDistrictView(map, tex) {
     ribbon(road, out, -e.street.half, e.street.half, -0.045, 8, 8);
     for (const s of [-1, 1]) ribbon(kerb, out, s * e.street.half, s * e.street.edge, -0.05, 4);
   }
-  const roads = new THREE.Mesh(road.geometry(), mats.road);
-  roads.name = 'roads';
-  add(roads);
+  if (road.geometry()) {
+    const roads = new THREE.Mesh(road.geometry(), mats.road);
+    roads.name = 'roads';
+    add(roads);
+  }
   add(dirtRoad.geometry() && new THREE.Mesh(dirtRoad.geometry(), mats.dirt));
   if (junctionGeos.length) {
     const cross = new THREE.Mesh(merged(junctionGeos), mats.junction);
@@ -218,7 +223,7 @@ export function buildPlanDistrictView(map, tex) {
   add(marks.geometry() && new THREE.Mesh(marks.geometry(), mats.marking));
 
   // --- The bay beyond the seawall ---
-  if (P.seawall) {
+  if (P.seawall && !only) {
     const S = P.seawall.pts;
     const wy = Math.min(...S.map(([x, z]) => H(x, z))) - 1.4;
     const far = 2000;
@@ -244,7 +249,8 @@ export function buildPlanDistrictView(map, tex) {
     if (own && own(it) !== false) return;
     DRAW[it.t]?.(it);
   };
-  for (const it of layout.draw) if (!it.hidden) drawItem(it, drawOne);
+  // (Another district's objects placed here are drawn by its own view: districtView.js.)
+  for (const it of layout.draw) if (!it.hidden && (only || !it.guest)) drawItem(it, drawOne);
   const sub = kit?.finish();
 
   // --- Merge ---
@@ -292,20 +298,20 @@ export function buildPlanDistrictView(map, tex) {
   const minY = Math.min(...P.boundary.map(([x, z]) => H(x, z)));
   tex.ground.repeat.set(500, 500);
   // (A suburb's own ground runs on well beyond its edge, round its hills.)
-  if (!kit) add(new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000).rotateX(-Math.PI / 2).translate(0, minY - 3, 0), new THREE.MeshLambertMaterial({ map: tex.ground })));
+  if (!kit && !only) add(new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000).rotateX(-Math.PI / 2).translate(0, minY - 3, 0), new THREE.MeshLambertMaterial({ map: tex.ground })));
   tex.skyline.repeat.set(6, 1);
   const sky = new THREE.Mesh(new THREE.CylinderGeometry(1500, 1500, 320, 48, 1, true), new THREE.MeshBasicMaterial({ map: tex.skyline, side: THREE.BackSide, alphaTest: 0.5, fog: false }));
   sky.position.set(0, minY + 130, 0);
   sky.renderOrder = -1;
-  add(sky);
+  if (!only) add(sky);
 
   // The arena structures (the valet ramp) stand in every event.
-  const structures = buildAuthoredStructures(style, tex, H);
+  const structures = only ? null : buildAuthoredStructures(style, tex, H);
   add(structures);
 
   // Sim time t (seconds) drives the structures; real time drives the neon.
   group.userData.animate = (t, real = t) => {
-    structures.userData.animate(t);
+    structures?.userData.animate(t);
     sub?.animate(t, real);
     flickerMeshes.forEach((m, k) => {
       const f = Math.sin(real * (7 + k * 3.1)) + Math.sin(real * (13.7 + k)) * 0.8;

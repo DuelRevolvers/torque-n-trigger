@@ -162,10 +162,11 @@ export function moveItem(src, m) {
 }
 
 // The move taking item src's middle to (x, z), turned by yaw, kept at its
-// height above the ground (plus lift).
-function moveTo(src, x, z, yaw, lift, heightAt) {
+// height above the ground (plus lift). (ground: the ground under it where it
+// came from, for an object from another district.)
+function moveTo(src, x, z, yaw, lift, heightAt, ground) {
   const [px, pz] = itemCentre(src);
-  const rise = heightAt ? heightAt(x, z) - heightAt(px, pz) : 0;
+  const rise = heightAt ? heightAt(x, z) - (ground ?? heightAt(px, pz)) : 0;
   return { px, pz, dx: x - px, dz: z - pz, dy: rise + (lift || 0), yaw: yaw || 0 };
 }
 
@@ -205,16 +206,19 @@ export function applyEdits(items, edits, heightAt) {
     draw.push(it);
   }
   (edits.add || []).forEach((a, n) => {
-    const src = byKey.get(a.from);
+    // (From another district: the object as it was there, carried in the edit;
+    // guest: that district, whose own view draws it: render/districtView.js.)
+    const src = a.item ? { ...a.item, key: `${a.district}:${a.from}` } : byKey.get(a.from);
     if (!src || !canMove(src)) {
       orphans.push({ op: 'add', key: a.from, id: a.id });
       return;
     }
-    const m = moveTo(src, a.x, a.z, a.yaw, a.dy, heightAt);
+    const m = moveTo(src, a.x, a.z, a.yaw, a.dy, heightAt, a.item ? a.ground : undefined);
     const it = moveItem(src, m);
     it.key = `+${a.id}`;
     if (typeof src.id === 'number') it.id = COPY_ID + n;
     it.xf = { src, m };
+    if (a.item) it.guest = a.district;
     out.push(it);
     draw.push(it);
   });

@@ -19,7 +19,12 @@ const CATEGORY = {
   Breakables: 'brk',
 };
 // Ground surfaces: painted with the Terrain tab's Paint, not placed as objects.
-const GROUND = new Set(['patch', 'pond', 'pondWater', 'river', 'water', 'fairway', 'driveway', 'footpath']);
+const GROUND = new Set(['patch', 'pond', 'pondWater', 'river', 'water', 'fairway', 'driveway', 'footpath', 'backyardWay', 'hazard', 'gatePlaza']);
+// Parts drawn with their whole (an arch's legs, a water tower's): the whole is placed.
+const PARTS = new Set(['archLeg', 'archPier', 'towerLeg', 'gapJump']);
+// Drawn with its district's own set piece (a quay crane on the quay's rails):
+// placed in its own district only, never another.
+export const HOME_ONLY = new Set(['quayCrane']);
 const categoryOf = new Map(Object.entries(CATEGORY).flatMap(([c, list]) => list.split(' ').map((t) => [t, c])));
 export const CATEGORIES = [...Object.keys(CATEGORY), 'Other'];
 
@@ -32,7 +37,7 @@ const humanize = (s) => {
 export function catalogue(items) {
   const byId = new Map();
   for (const it of items) {
-    if (!canMove(it) || GROUND.has(it.t)) continue;
+    if (!canMove(it) || GROUND.has(it.t) || PARTS.has(it.t)) continue;
     const id = it.kind ? `${it.t}.${it.kind}` : it.t;
     const e = byId.get(id);
     if (e) {

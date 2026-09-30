@@ -20,7 +20,7 @@ import { npcCar, NPC_COLORS } from './npcCars.js';
 const DS = THREE.DoubleSide;
 const CAR_COLORS = ['#c8ccd4', '#2a2a30', '#3a6ab8', '#b83a3a', '#e8e8f0', '#3a8a8a', '#6a6a78'];
 
-export function buildRoofDistrictView(map, tex) {
+export function buildRoofDistrictView(map, tex, { only = null } = {}) {
   const style = map.style;
   const P = style.plan;
   const R = P.roof;
@@ -29,7 +29,7 @@ export function buildRoofDistrictView(map, tex) {
   const street = R.street ?? 0;
   const group = new THREE.Group();
   const add = (m) => m && group.add(m);
-  const layout = districtLayout(map);
+  const layout = only ? { draw: only, items: only } : districtLayout(map);
   const items = layout.items;
   const flags = []; // flag mounts (lamp masts), windsocks, crane jibs: gathered as the items are drawn
   const socks = [];
@@ -125,14 +125,17 @@ export function buildRoofDistrictView(map, tex) {
     list.push(g);
   };
 
-  cityBelow();
-  towers();
-  roofRoads();
+  if (!only) {
+    cityBelow();
+    towers();
+    roofRoads();
+  }
   const drawItem = itemDrawer(B, texts, blink, flags, socks, jibList, group);
-  for (const it of layout.draw) drawItem(it, draw);
+  // (Another district's objects placed here are drawn by its own view: districtView.js.)
+  for (const it of layout.draw) if (only || !it.guest) drawItem(it, draw);
   const props = breakables();
-  const traffic = trafficMeshes();
-  const gustFx = gustEffects();
+  const traffic = only ? null : trafficMeshes();
+  const gustFx = only ? null : gustEffects();
 
   // Merge.
   for (const [k, list] of Object.entries(B)) {
@@ -145,16 +148,18 @@ export function buildRoofDistrictView(map, tex) {
   const beacons = blink.length ? new THREE.Mesh(mergeGeometries(blink), mats.red) : null;
   add(beacons);
   const jibs = craneJibs();
-  const structures = buildAuthoredStructures(style, tex, H);
+  const structures = only ? null : buildAuthoredStructures(style, tex, H);
   add(structures);
-  const sky = new THREE.Mesh(new THREE.CylinderGeometry(1700, 1700, 360, 48, 1, true), new THREE.MeshBasicMaterial({ map: tex.skyline, side: THREE.BackSide, alphaTest: 0.5, fog: false }));
-  tex.skyline.repeat.set(6, 1);
-  sky.position.set(0, 60, 0);
-  sky.renderOrder = -1;
-  add(sky);
+  if (!only) {
+    const sky = new THREE.Mesh(new THREE.CylinderGeometry(1700, 1700, 360, 48, 1, true), new THREE.MeshBasicMaterial({ map: tex.skyline, side: THREE.BackSide, alphaTest: 0.5, fog: false }));
+    tex.skyline.repeat.set(6, 1);
+    sky.position.set(0, 60, 0);
+    sky.renderOrder = -1;
+    add(sky);
+  }
 
   group.userData.animate = (t, real = t) => {
-    structures.userData.animate(t);
+    structures?.userData.animate(t);
     if (beacons) beacons.visible = Math.floor(real * 1.1) % 2 === 0;
     for (const j of jibs) j.mesh.rotation.y = j.a0 + Math.sin(t * 0.05 + j.k) * 1.3;
     traffic?.(real);

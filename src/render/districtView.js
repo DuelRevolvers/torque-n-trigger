@@ -3,7 +3,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
 import { makeRng, textTexture } from './textures.js';
 import { setUvRect, streetRoadMaterial } from './trackView.js';
-import { SETBACK, STREET, edgeSpans, TUNNEL_HALF } from '../sim/city.js';
+import { SETBACK, STREET, edgeSpans, TUNNEL_HALF, districtMap } from '../sim/city.js';
 import { districtLayout, archEdge, samplePath } from '../sim/cityLayout.js';
 import { CRANE_LEGS } from '../sim/authoredLayout.js';
 import { rampGeometry } from './shapes.js';
@@ -73,8 +73,18 @@ const HOUSE_COLORS = ['#c8b8a0', '#a8b8c8', '#b8a8c0', '#d0c0a8', '#a0b0a0', '#c
 const SHACK_COLORS = ['#6a5a48', '#4a6a6a', '#7a4a3a', '#5a5a62', '#6a6a3a', '#3a4a5a', '#5a3a4a'];
 
 // A district, and the Spire on its skyline (every district but the Spire's own).
+// Where the official districts' styles come from (set by the game and the
+// T&T SDK: career/districts.js), for drawing objects placed from one district
+// in another.
+let styleOf = () => null;
+export function setDistrictStyles(fn) {
+  styleOf = fn;
+}
+
 export function buildDistrictView(map, tex) {
   const group = districtViewOf(map, tex);
+  const guests = guestViews(map, tex);
+  if (guests) group.add(guests);
   const paint = paintView(map, tex); // ground painted in the T&T SDK
   if (paint) group.add(paint);
   const extra = extraStreetsView(map, tex); // streets drawn off a grid district's grid
@@ -88,11 +98,55 @@ export function buildDistrictView(map, tex) {
       far.userData.animate(real);
     };
   }
+  if (guests) {
+    const inner = group.userData.animate;
+    group.userData.animate = (t, real = t) => {
+      inner?.(t, real);
+      guests.userData.animate(t, real);
+    };
+    for (const k of ['setBroken', 'breakEvent', 'knock']) {
+      const own = group.userData[k];
+      group.userData[k] = (...a) => {
+        own?.(...a);
+        guests.userData[k](...a);
+      };
+    }
+  }
   return group;
 }
 
-function districtViewOf(map, tex) {
-  if (map.plan) return buildPlanDistrictView(map, tex);
+// Just some of a district's objects (draw entries), drawn by its own view:
+// none of the district itself.
+export const buildObjectsView = (map, tex, only) => districtViewOf(map, tex, { only });
+
+// Objects placed here from other districts (sim/layoutEdits.js: guest), each
+// district's drawn by its own view with only those objects: its look, its
+// materials, its moving and breaking parts. Null if there are none.
+function guestViews(map, tex) {
+  const by = new Map();
+  for (const it of districtLayout(map).draw) {
+    if (!it.guest || it.hidden) continue;
+    if (!by.has(it.guest)) by.set(it.guest, []);
+    by.get(it.guest).push(it);
+  }
+  const views = [];
+  for (const [id, list] of by) {
+    const style = styleOf(id);
+    if (!style) continue;
+    views.push(districtViewOf(districtMap(style), tex, { only: list }));
+  }
+  if (!views.length) return null;
+  const group = new THREE.Group();
+  group.name = 'guests';
+  group.add(...views);
+  const each = (k) => (...a) => views.forEach((v) => v.userData[k]?.(...a));
+  Object.assign(group.userData, { animate: each('animate'), setBroken: each('setBroken'), breakEvent: each('breakEvent'), knock: each('knock') });
+  return group;
+}
+
+// only: just these objects (draw entries), none of the district itself (see buildPlanDistrictView).
+function districtViewOf(map, tex, { only = null } = {}) {
+  if (map.plan) return buildPlanDistrictView(map, tex, { only });
   const { style, heightAt, nodes } = map;
   const look = style.look;
   const roof = style.rooftop || 0;
@@ -194,20 +248,20 @@ function districtViewOf(map, tex) {
     const L = Math.hypot(B.x - A.x, B.z - A.z);
     return { A, B, L, ux: (B.x - A.x) / L, uz: (B.z - A.z) / L, spans: edgeSpans(map, A, B, L) };
   });
-  for (const { A, L, ux, uz, spans } of edgeList) {
+  for (const { A, L, ux, uz, spans } of only ? [] : edgeList) {
     for (const [t0, t1] of spans) {
       strip(road, A, ux, uz, Math.max(HW, t0), Math.min(L - HW, t1), -HW, HW, -0.03, 16);
       strip(walk, A, ux, uz, Math.max(SETBACK, t0), Math.min(L - SETBACK, t1), HW, SETBACK, -0.035, 4);
       strip(walk, A, ux, uz, Math.max(SETBACK, t0), Math.min(L - SETBACK, t1), -SETBACK, -HW, -0.035, 4);
     }
   }
-  for (const n of nodes) {
+  for (const n of only ? [] : nodes) {
     if (!map.adj[n.id].length) continue;
     flat(junctionRoad, n.x - HW, n.x + HW, n.z - HW, n.z + HW, -0.03);
     flat(walk, n.x - SETBACK, n.x + SETBACK, n.z - SETBACK, n.z + SETBACK, -0.04, 4);
   }
 
-  if (roof) {
+  if (roof && !only) {
     // Rooftops: every deck and lot is the top of a building standing on the
     // ground far below, so the gaps between them are real drops.
     const mass = (x0, x1, z0, z1) => {
@@ -263,7 +317,7 @@ function districtViewOf(map, tex) {
     buildings: 'lot', warehouses: 'lot', fish: 'lot', shop: 'lot', yard: 'lot', terminal: 'lot', alley: 'lot', arena: 'lot', tanks: 'lot', plaza: 'tiles', quad: 'tiles', market: 'tiles', casino: 'tiles',
     construction: 'dirt', railyard: 'dirt', parking: 'parking', park: 'grass', housing: 'grass',
   };
-  for (const c of map.cells) flat(lotSurf[surfFor[c.kind]], c.lot[0], c.lot[1], c.lot[2], c.lot[3], -0.06, c.kind === 'parking' ? 12 : 8);
+  for (const c of only ? [] : map.cells) flat(lotSurf[surfFor[c.kind]], c.lot[0], c.lot[1], c.lot[2], c.lot[3], -0.06, c.kind === 'parking' ? 12 : 8);
   add(lotSurf.lot.mesh(mats.lot));
   add(lotSurf.tiles.mesh(mats.tiles));
   add(lotSurf.dirt.mesh(mats.dirt));
@@ -416,7 +470,8 @@ function districtViewOf(map, tex) {
 
   // --- Everything in the layout ---
   const drawItem = itemDrawer(bGeos, darkGeos, signGeos, steelGeos, yellowGeos, coneGeos, barrierGeos, paintedGeos, containerGeos, plantGeos, glowGeos, waterGeos, windowGeos, shackGeos, beaconGeos, shutterGeos, crossingGeos, quayCranes, group);
-  for (const it of layout.draw) if (!it.hidden) drawItem(it, drawLayoutItem);
+  // (Another district's objects placed here are drawn by its own view: buildDistrictView.)
+  for (const it of only || layout.draw) if (!it.hidden && (only || !it.guest)) drawItem(it, drawLayoutItem);
   function drawLayoutItem(it) {
     const { x, z } = it;
     switch (it.t) {
@@ -900,7 +955,7 @@ function districtViewOf(map, tex) {
 
   // --- Decoration on sites and special lots (nothing here is solid) ---
   const pathOf = new Map(map.corridors.map((c) => [c.cell, samplePath(c.points)]));
-  for (const c of [...map.cells.filter((q) => !q.site), ...map.sites]) {
+  for (const c of only ? [] : [...map.cells.filter((q) => !q.site), ...map.sites]) {
     const [lx0, lx1, lz0, lz1] = c.lot;
     const path = pathOf.get(c);
     const clear = (x, z, m) => !path || path.every(([px, pz]) => Math.hypot(px - x, pz - z) > m);
@@ -987,7 +1042,7 @@ function districtViewOf(map, tex) {
   const lampGeos = [];
   const headGeos = [];
   const poolGeos = [];
-  if (!roof) {
+  if (!roof && !only) {
     for (const { A, L, ux, uz } of edgeList) {
       for (let t = 20; t < L - 20; t += 38) {
         for (const side of [-1, 1]) {
@@ -1017,7 +1072,7 @@ function districtViewOf(map, tex) {
   }
 
   // --- Undercity: cables and lanterns strung across the streets ---
-  if (style.ramshackle) {
+  if (style.ramshackle && !only) {
     for (const { A, L, ux, uz } of edgeList) {
       for (let k = 0, n = Math.floor(rng() * 4); k < n; k++) {
         const t = SETBACK + rng() * Math.max(1, L - 2 * SETBACK);
@@ -1030,7 +1085,7 @@ function districtViewOf(map, tex) {
   }
 
   // --- Tunnels: covered stretches of street under the upper city ---
-  for (const [a, b] of map.tunnels || []) {
+  for (const [a, b] of only ? [] : map.tunnels || []) {
     const A = nodes[a];
     const B = nodes[b];
     const L = Math.hypot(B.x - A.x, B.z - A.z);
@@ -1046,7 +1101,7 @@ function districtViewOf(map, tex) {
   }
 
   // --- The freight line: rails on their own right of way, a buffer stop on the quay ---
-  if (map.freight) {
+  if (map.freight && !only) {
     const { x, z0, z1 } = map.freight;
     for (let z = z0; z < z1; z += 10) {
       const len = Math.min(10, z1 - z);
@@ -1058,7 +1113,7 @@ function districtViewOf(map, tex) {
   }
 
   // --- Landmarks ---
-  const f = style.features;
+  const f = only ? [] : style.features;
   const bounds = map.bounds;
   const minY = Math.min(...nodes.map((n) => n.y));
   if (f.includes('waterfront')) {
@@ -1214,7 +1269,7 @@ function districtViewOf(map, tex) {
   const RING_H = [0.2, 0.7, 0.4, 0.9, 0.1, 0.6, 0.3, 0.8, 0.5];
   const exits = (map.stubs || []).map((st) => nodes[st.a].z);
   let ringK = 0;
-  for (const [x0, x1, z0, z1] of ring) {
+  for (const [x0, x1, z0, z1] of only ? [] : ring) {
     const alongX = x1 - x0 > z1 - z0;
     const len = alongX ? x1 - x0 : z1 - z0;
     for (let p = 0; p < len; ) {
@@ -1271,15 +1326,17 @@ function districtViewOf(map, tex) {
   }
 
   // Ground far beyond (and, up on the rooftops, far below) the district, and the skyline.
-  tex.ground.repeat.set(500, 500);
-  add(new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000).rotateX(-Math.PI / 2).translate(0, minY - 2 - roof, 0), new THREE.MeshLambertMaterial({ map: tex.ground })));
-  tex.skyline.repeat.set(6, 1);
-  const sky = new THREE.Mesh(new THREE.CylinderGeometry(1500, 1500, 320, 48, 1, true), new THREE.MeshBasicMaterial({ map: tex.skyline, side: THREE.BackSide, alphaTest: 0.5, fog: false }));
-  sky.position.set(0, minY + 130, 0);
-  sky.renderOrder = -1;
-  add(sky);
+  if (!only) {
+    tex.ground.repeat.set(500, 500);
+    add(new THREE.Mesh(new THREE.PlaneGeometry(5000, 5000).rotateX(-Math.PI / 2).translate(0, minY - 2 - roof, 0), new THREE.MeshLambertMaterial({ map: tex.ground })));
+    tex.skyline.repeat.set(6, 1);
+    const sky = new THREE.Mesh(new THREE.CylinderGeometry(1500, 1500, 320, 48, 1, true), new THREE.MeshBasicMaterial({ map: tex.skyline, side: THREE.BackSide, alphaTest: 0.5, fog: false }));
+    sky.position.set(0, minY + 130, 0);
+    sky.renderOrder = -1;
+    add(sky);
+  }
   // An authored district's arena structures stand in every event.
-  if (map.authored) {
+  if (map.authored && !only) {
     const structures = buildAuthoredStructures(style, tex);
     add(structures);
     group.userData.animate = structures.userData.animate;

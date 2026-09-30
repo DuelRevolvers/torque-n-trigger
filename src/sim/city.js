@@ -17,7 +17,10 @@ import { districtLayout } from './cityLayout.js';
 import { authoredGridMap } from './authoredMap.js';
 import { planMap } from './planMap.js';
 import { sculptMap, paintOf } from './ground.js';
-import { addGadgets } from './gadgets.js';
+import { addGadgets, dropsOf, rampsOf, oilOf, barrelsOf } from './gadgets.js';
+import { arenasOf, middleOf, reachIn } from './arenaEdits.js';
+import { buildArena } from './arena.js';
+import * as G from './geom2d.js';
 import { planTrack, planRoam } from './planRoute.js';
 import { isSpot, spotEnds, RUN_UP, RUN_OFF } from './routePoints.js';
 
@@ -1083,6 +1086,69 @@ function authoredArena(map, site, spec) {
   };
 }
 
+// An arena on ground drawn in the T&T SDK (sim/arenaEdits.js): an authored
+// arena (authoredArena) inside the outline, walled by it (def.boundary; its
+// barriers along it). A district's own arena redrawn keeps what of its own
+// stands inside the new outline (its gap-closing cars go: the outline's
+// barriers close it). Where the cars start and the drops are, if it has too
+// few of its own: round its middle, where there's room.
+function drawnArena(map, a) {
+  const poly = a.poly;
+  const inside = (x, z) => G.pointInPoly(x, z, poly);
+  const b = G.polyBounds(poly);
+  const own = a.spec || {};
+  const keep = (list) => (list || []).filter((o) => inside(o.x, o.z));
+  const spec = {
+    ...own,
+    bounds: [b.minX - 1, b.maxX + 1, b.minZ - 1, b.maxZ + 1],
+    barriers: poly.map((p, k) => [p[0], p[1], ...poly[(k + 1) % poly.length]]),
+    limos: [],
+    fence: null,
+    obstacles: keep(own.obstacles),
+    platforms: keep(own.platforms),
+    ramps: keep(own.ramps),
+    lifts: keep(own.lifts),
+    movers: keep(own.movers),
+    pickups: keep(own.pickups),
+    spawns: keep(own.spawns),
+  };
+  const def = authoredArena(map, a.site || { name: a.name }, spec);
+  Object.assign(def, { name: a.name, drawn: true, boundary: poly.map(([x, z]) => [x - def.cx, z - def.cz]) });
+  // Round the middle, where a car has room (walls and what stands in it as the arena has them).
+  const probe = buildArena({ ...def, spawnPoints: [{ x: 0, z: 0, yaw: 0 }] });
+  const room = (x, z, r) => inside(x, z) && Math.abs(probe.query(x, z).lateral) - probe.wallDist < -r;
+  const [mx, mz] = middleOf(poly);
+  const ring = (n, frac, a0, r) => {
+    const out = [];
+    for (let k = 0; k < n; k++) {
+      const ang = a0 + (k / n) * Math.PI * 2;
+      const [dx, dz] = [Math.cos(ang), Math.sin(ang)];
+      const reach = Math.min(reachIn(poly, mx, mz, dx, dz), 120);
+      for (const f of [frac, frac * 0.7, frac * 0.45]) {
+        const [x, z] = [mx + dx * reach * f, mz + dz * reach * f];
+        if (room(x, z, r) && out.every(([px, pz]) => Math.hypot(px - x, pz - z) > 6)) {
+          out.push([x, z]);
+          break;
+        }
+      }
+    }
+    return out;
+  };
+  if (def.spawnPoints.length < 4) {
+    for (const [x, z] of ring(8, 0.62, 0.3, 3)) {
+      if (def.spawnPoints.some((p) => Math.hypot(p.x + def.cx - x, p.z + def.cz - z) < 6)) continue;
+      def.spawnPoints.push({ x: x - def.cx, z: z - def.cz, yaw: yawFromDirection(mx - x, mz - z) });
+    }
+  }
+  if (!def.spawnPoints.length) throw new Error(`${a.name} has no room to start the cars in.`);
+  def.spawns = def.spawnPoints.length;
+  if (!def.pickups.length) {
+    const types = ['health', 'nitro', 'health', 'ammo'];
+    def.pickups = ring(6, 0.34, 0.9, 2).map(([x, z], k) => ({ type: types[k % 4], x: x - def.cx, z: z - def.cz, y: (map.plan ? map.heightAt(x, z) - def.y : 0) + 0.8 }));
+  }
+  return def;
+}
+
 // Free roam in an authored district: exactly what the layout holds (buildings,
 // fences, loading docks and their ramps, the goods platform), the arenas'
 // structures (they're there all the time), the dry dock basin and the bay.
@@ -1409,6 +1475,51 @@ function authoredRoute(map, style, route) {
 // route: { kind: 'circuit'|'sprint'|'drag'|'arena'|'roam', seed, cells?, length?, jumps?,
 //   around? (circuit: site kind), from?/to? (sprint: site kind or 'pier'), site? (arena: event ground index) }
 export function cityVenue(style, route) {
+  const venue = cityVenueOf(style, route);
+  const gadgets = style.edits?.gadgets;
+  const atmosphere = style.edits?.atmosphere;
+  if (!gadgets?.length && !atmosphere) return venue;
+  // What's placed in the T&T SDK (sim/gadgets.js): drops, ramps, oil,
+  // barrels, the start and spawn points (an arena event: those inside it);
+  // and the map's rain (grip).
+  const H = districtMap(style).heightAt;
+  const d = venue.def;
+  const arena = venue.kind === 'arena';
+  const [cx, cz] = arena ? [d.cx || 0, d.cz || 0] : [0, 0];
+  const [hx, hz] = [(d.sizeX ?? d.size) / 2, (d.sizeZ ?? d.size) / 2];
+  // (A drawn arena: inside its outline.)
+  const inside = (p) => route.kind !== 'arena' || (d.boundary ? G.pointInPoly(p.x - cx, p.z - cz, d.boundary) : Math.abs(p.x - cx) <= hx && Math.abs(p.z - cz) <= hz);
+  const drops = dropsOf(gadgets, H).filter(inside);
+  if (drops.length) d.drops = drops;
+  // (An arena's ramps are in its own coordinates; a track's in the world's.)
+  const ramps = rampsOf(gadgets, H).filter(inside).map((r) => (arena ? { ...r, x: r.x - cx, z: r.z - cz } : r));
+  if (ramps.length) d.ramps = [...(d.ramps || []), ...ramps];
+  const oil = oilOf(gadgets, H).filter(inside);
+  if (oil.length) d.oil = oil;
+  const barrels = barrelsOf(gadgets, H).filter(inside);
+  if (barrels.length) d.breakables = [...(d.breakables || []), ...barrels];
+  // (A car's yaw faces -z at 0; a gadget's arrow +z.)
+  const facing = (g) => yawFromDirection(Math.sin(g.yaw || 0), Math.cos(g.yaw || 0));
+  const start = route.kind === 'roam' && (gadgets || []).find((g) => g.type === 'start');
+  if (start) d.spawnAt = { x: start.x, z: start.z, yaw: facing(start) };
+  const spawns = route.kind === 'arena' ? (gadgets || []).filter((g) => g.type === 'spawn' && inside(g)) : [];
+  if (spawns.length) {
+    // Placed first, then the arena's own (clear of them) for the cars after.
+    const n = d.spawns || 8;
+    const own = d.spawnPoints || Array.from({ length: n }, (_, k) => {
+      const a = (k / n) * Math.PI * 2 + 0.3;
+      const [x, z] = [Math.cos(a) * (d.spawnRadius || 20), Math.sin(a) * (d.spawnRadius || 20)];
+      return { x, z, yaw: yawFromDirection(-x, -z) };
+    });
+    const mine = spawns.map((g) => ({ x: g.x - cx, z: g.z - cz, yaw: facing(g) }));
+    d.spawnPoints = [...mine, ...own.filter((p) => mine.every((q) => Math.hypot(q.x - p.x, q.z - p.z) > 5))];
+    d.spawns = d.spawnPoints.length;
+  }
+  if (atmosphere?.rain !== undefined) d.rain = atmosphere.rain;
+  return venue;
+}
+
+function cityVenueOf(style, route) {
   const map = districtMap(style);
   if (route.kind === 'roam') {
     const def = map.plan ? planRoam(map) : map.authored ? authoredRoam(map) : cityRoam(map);
@@ -1417,6 +1528,12 @@ export function cityVenue(style, route) {
     if (paint) Object.assign(def, { paintAt: paint.paintAt, waterAt: paint.waterAt });
     addGadgets(def, style.edits?.gadgets, map.heightAt); // (the SDK's gadgets)
     return { kind: 'arena', def };
+  }
+  if (route.kind === 'arena' && style.edits?.arenas?.length) {
+    const a = arenasOf(style, map)[route.site || 0];
+    if (!a) throw new Error('That arena is not on this map any more.');
+    if (a.removed) throw new Error(`${a.name} has been taken out of this map.`);
+    if (a.poly) return { kind: 'arena', def: addGadgets(drawnArena(map, a), style.edits?.gadgets, map.heightAt, true) };
   }
   if (route.kind === 'arena') {
     const site = route.site || 0;

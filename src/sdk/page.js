@@ -48,7 +48,7 @@ export const SDK_CSS = `
       #tools { margin-bottom: 8px; }
       #tools button { width: 100%; padding: 4px; }
       #tabs { display: flex; gap: 2px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
-      #tabs button { flex: 1; min-width: 0; padding: 4px 0; font-size: 12px; border-bottom: none; border-radius: 3px 3px 0 0; color: var(--dim); }
+      #tabs button { flex: 1 1 auto; min-width: 0; padding: 4px 1px; font-size: 12px; border-bottom: none; border-radius: 3px 3px 0 0; color: var(--dim); }
       #tabs button.on { color: var(--cyan); border-color: var(--cyan); }
       .toolgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-bottom: 8px; }
       .toolgrid button { padding: 3px 4px; }
@@ -60,6 +60,17 @@ export const SDK_CSS = `
       input.num { width: 100%; box-sizing: border-box; padding: 1px 2px; font: inherit; color: inherit; background: transparent; border: 1px solid transparent; border-radius: 3px; text-align: right; cursor: text; }
       input.num:hover { border-color: var(--line); }
       input.num:focus { border-color: var(--cyan); background: var(--night); outline: none; }
+      /* A placed light's, drop's or gadget's settings on the right. */
+      .sliders { display: grid; gap: 6px; margin: 8px 0; }
+      .sliders label { display: grid; grid-template-columns: 70px 1fr 44px; gap: 6px; align-items: center; }
+      .sliders label.check { display: flex; align-items: flex-start; }
+      .sliders select, .sliders .swatches, .sliders input:not([type]):not(.num) { grid-column: 2 / 4; }
+      .sliders input, .sliders select { min-width: 0; }
+      .sliders input[type=range] { width: 100%; }
+      .swatches { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+      .swatches .sw { width: 20px; height: 20px; padding: 0; border: 2px solid var(--line); }
+      .swatches .sw.on { border-color: var(--ink); }
+      .swatches input[type=color] { width: 28px; height: 22px; padding: 0 1px; }
       #brush-opts label.check { display: flex; }
       #brush-opts select { grid-column: 2 / 4; }
       #brush-opts input[type=range] { width: 100%; }
@@ -70,7 +81,8 @@ export const SDK_CSS = `
       .opts label { display: grid; grid-template-columns: 62px 1fr; gap: 6px; }
       .opts input, .opts select { width: 100%; }
       .opts .tip { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.4; }
-      #search { width: 100%; margin-bottom: 6px; }
+      #search, #from { width: 100%; margin-bottom: 6px; }
+      #cat .loading { color: var(--dim); font-size: 12px; margin: 8px 0; }
       #cat h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
       .entry { display: flex; justify-content: space-between; gap: 6px; padding: 3px 6px; border-radius: 3px; cursor: grab; }
       .entry:hover { background: #2a1a48; }
@@ -125,7 +137,11 @@ export const SDK_CSS = `
       .evrow.on { background: #3a1a40; outline: 1px solid var(--pink); }
       .evrow i { color: var(--dim); font-style: normal; white-space: nowrap; }
       #events-list h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
-      #events-list .toolgrid { margin-top: 4px; }
+      #events-list .toolgrid, #arenas-list .toolgrid { margin-top: 4px; }
+      #arenas-list .toolgrid { grid-template-columns: 1fr; }
+      #arenas-list h4 { margin: 4px 0; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+      #arena-panel .row { margin: 6px 0; flex-wrap: wrap; }
+      #arena-panel input { width: 100%; }
       #events-panel h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
       #events-panel textarea { width: 100%; min-height: 48px; font: inherit; color: var(--ink); background: var(--night); border: 1px solid var(--line); border-radius: 3px; }
       .chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
@@ -185,6 +201,11 @@ export const SDK_HTML = `
         <button data-tab="terrain" title="Shape and paint the ground">Terrain</button>
         <button data-tab="roads" title="Streets and blocks">Roads</button>
         <button data-tab="events" title="Make and edit this district's events (0)">Events</button>
+        <button data-tab="sky" title="This map's atmosphere: haze, fog, darkness and rain">Sky</button>
+      </div>
+      <div id="pane-sky" class="pane" hidden>
+        <p class="tip">Start from one of these, then set it on the right.</p>
+        <div id="sky-list" class="toolgrid"></div>
       </div>
       <div id="pane-terrain" class="pane" hidden>
         <div class="toolgrid">
@@ -216,6 +237,7 @@ export const SDK_HTML = `
       </div>
       </div>
       <div id="pane-events" class="pane" hidden>
+        <div id="arenas-list"></div>
         <div id="events-list"></div>
       </div>
       <div id="pane-objects" class="pane">
@@ -223,6 +245,7 @@ export const SDK_HTML = `
         <label>Place <select id="place-mode"><option value="one">One at a time</option><option value="line">Along a line</option><option value="scatter">Scatter (hold and brush)</option></select></label>
         <label>Spacing <input type="number" id="spacing" min="1" max="100" step="1" value="8" /></label>
       </div>
+      <select id="from" title="Objects from this map's district, or from any district"><option value="all">From every district</option></select>
       <input id="search" placeholder="Search objects" />
       <div id="cat"></div>
       </div>
@@ -271,6 +294,8 @@ export const SDK_HTML = `
         <p class="tip" id="brush-tip"></p>
       </div>
       <div id="events-panel" hidden></div>
+      <div id="sky-panel" hidden></div>
+      <div id="arena-panel" hidden></div>
       <div id="inspector"></div>
       <div id="edits"></div>
     </div>

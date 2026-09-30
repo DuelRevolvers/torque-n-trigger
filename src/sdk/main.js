@@ -4,18 +4,23 @@ import { createTextures, createEnvMap } from '../render/textures.js';
 import { createCityTextures } from '../render/cityTextures.js';
 import { createStreetTextures } from '../render/streetTextures.js';
 import { retroUniforms } from '../render/retroMaterial.js';
-import { buildDistrictView } from '../render/districtView.js';
-import { docFromDistrict, districtFromDoc, serializeDoc, parseDoc, baseChanged } from '../content/mapDoc.js';
-import { canMove, LINKED } from '../sim/layoutEdits.js';
+import { buildDistrictView, setDistrictStyles } from '../render/districtView.js';
+import { docFromDistrict, districtFromDoc, serializeDoc, parseDoc, baseChanged, hashOf } from '../content/mapDoc.js';
+import { canMove, LINKED, itemCentre } from '../sim/layoutEdits.js';
+import { baseLayout } from '../sim/cityLayout.js';
 import { brokenEvents, gridProblem, wayProblem } from './checks.js';
 import { isSpot } from '../sim/routePoints.js';
-import { layoutObstacle } from '../sim/city.js';
+import { layoutObstacle, districtMap } from '../sim/city.js';
 import { onFoot } from '../sim/track.js';
 import { TYPES, MODES, MODIFIER_LABELS, DRIVERS, newEvent, nextKey, routePoint, shortcutOptions, arenaSites, routePreview, aiTestRun } from './events.js';
+import { arenasOf, outlineOf, outlineProblem, middleOf } from '../sim/arenaEdits.js';
 import { Session, footBox } from './session.js';
-import { catalogue, CATEGORIES } from './catalogue.js';
+import { catalogue, CATEGORIES, HOME_ONLY } from './catalogue.js';
 import { brush, lift } from './brush.js';
-import { GADGETS, addGadgets } from '../sim/gadgets.js';
+import { GADGETS, addGadgets, SETTINGS, DROPS, GROUPS, NO_TURN, SIGN_STYLES, signSize, LIGHT_FIXTURES, LIGHT_FLICKER, LIGHT_COLORS, MAX_REAL_LIGHTS } from '../sim/gadgets.js';
+import { placedView, startMarkers } from '../render/placedView.js';
+import { Rain, RAIN_MAX, RAIN_USUAL } from '../render/rain.js';
+import { makePickupMesh } from '../render/pickupMesh.js';
 import { SPECIALS, progress, triggerText, specialOfType, specialOfGadget } from '../career/unlocks.js';
 import { buildArena } from '../sim/arena.js';
 import { gadgetView } from '../render/gadgetView.js';
@@ -53,7 +58,8 @@ const street = createStreetTextures();
 Object.assign(tex, { road: street.road, roadRough: street.roadRough, wall: street.wallChevron, wallConcrete: street.wallConcrete, building: street.building, buildingGlow: street.buildingGlow });
 
 const scene = new THREE.Scene();
-scene.add(new THREE.HemisphereLight(0xc8d0ff, 0x302838, 1.6));
+const hemi = new THREE.HemisphereLight(0xc8d0ff, 0x302838, 1.6);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff0e0, 1.2);
 sun.position.set(300, 600, 200);
 scene.add(sun);
@@ -74,7 +80,13 @@ const PAINT_COLOR = { dirt: 0x9a7a58, grass: 0x4a9a58, sand: 0xe0cc98, road: 0x9
 
 let session = null;
 let view = null; // the district as drawn
-let cat = [];
+let cat = []; // this map's own objects
+// Every other district's (loaded in the background after a map opens, and
+// kept in this browser: othersOf): { ...entry, uid, district, from: the object }.
+let others = [];
+let othersLoading = null; // the district being loaded, or null
+// (Objects placed from another district are drawn by that district's own view.)
+setDistrictStyles((id) => DISTRICTS.find((d) => d.id === id)?.city || null);
 let selected = null;
 let hovered = null;
 let placing = null; // the catalogue entry being placed
@@ -109,6 +121,8 @@ const forward = () => new THREE.Vector3(Math.sin(cam.yaw) * Math.cos(cam.pitch),
 const flat = () => [Math.sin(cam.yaw), Math.cos(cam.yaw)];
 const right = () => [-Math.cos(cam.yaw), Math.sin(cam.yaw)];
 const altitude = () => Math.max(2, cam.y - (session ? H(cam.x, cam.z) : 0));
+// How near (m) the cursor must be to grab a handle at (x, z): about the same on screen, near or far.
+const grabR = (x, z, least = 3) => Math.max(least, Math.hypot(x - cam.x, H(x, z) - cam.y, z - cam.z) * 0.02);
 
 // --- Opening, building, saving -------------------------------------------
 
@@ -124,7 +138,8 @@ function open(doc) {
     session = new Session(doc);
     selected = hovered = placing = drag = ghostAt = stroke = null;
     clearGroup(preview);
-    cat = catalogue([...session.base.values()]);
+    cat = catalogue([...session.base.values()]).map((e) => ({ ...e, uid: e.id }));
+    loadOthers();
     $('district').value = doc.base || '';
     const b = session.map.bounds || { minX: -500, maxX: 500, minZ: -500, maxZ: 500 };
     Object.assign(cam, { x: (b.minX + b.maxX) / 2, z: b.maxZ + 150, yaw: Math.PI, pitch: -0.55, top: null });
@@ -139,11 +154,26 @@ function open(doc) {
   }, 30);
 }
 
-function applyFog() {
+function applyFog(trying = null) {
   const theme = session.district.theme || {};
-  const haze = new THREE.Color(theme.haze || '#101018');
+  const a = trying || atmosOf();
+  const haze = new THREE.Color(a.haze || theme.haze || '#101018');
   scene.background = haze;
-  scene.fog = $('fog').checked ? new THREE.FogExp2(haze, theme.fog || 0.004) : null;
+  const sky = tool === 'sky';
+  scene.fog = $('fog').checked || sky ? new THREE.FogExp2(haze, (theme.fog || 0.004) * (a.fog ?? 1)) : null;
+  // (Its darkness and rain while the Sky tab's open.)
+  const dark = sky ? a.darkness || 0 : 0;
+  hemi.intensity = 1.6 * (1 - 0.8 * dark);
+  sun.intensity = 1.2 * (1 - 0.85 * dark);
+  const rain = sky ? a.rain ?? RAIN_USUAL : 0;
+  if (rain > 0 && !skyRain) {
+    skyRain = new Rain(RAIN_MAX);
+    scene.add(skyRain.mesh);
+  }
+  if (skyRain) {
+    skyRain.setAmount(Math.round(RAIN_MAX * rain));
+    skyRain.mesh.visible = rain > 0;
+  }
 }
 
 function dispose(g) {
@@ -412,9 +442,8 @@ function showOverlay() {
     box({ ...fb, x: fb.x + drag.x - p.x, z: fb.z + drag.z - p.z, yaw: fb.yaw + drag.yaw - p.yaw }, H(drag.x, drag.z) + lift, it.h || 2, 0x05d9e8, 0.25);
   } else if (selected) shown(selected, 0xffb000, 0.15);
   if (placing && ghostAt) {
-    const src = session.base.get(placing.from);
+    const { src, lift } = placingSource();
     const fb = footBox(src);
-    const lift = session.baseY(src) - H(fb.x, fb.z);
     const ghost = (x, z, yaw) => box({ x, z, w: fb.w, d: fb.d, yaw: fb.yaw + yaw }, H(x, z) + lift, src.h || 2, 0x05d9e8, 0.25);
     if (scatter) for (const [x, z, yaw] of scatter) ghost(x, z, yaw);
     else if (lineFrom) for (const [x, z, yaw] of linePoses(lineFrom, [ghostAt.x, ghostAt.z])) ghost(x, z, yaw);
@@ -433,8 +462,8 @@ const brushOpts = (dt) => ({ radius: Number($('radius').value), strength: Number
 const ANGLED = new Set(['smooth', 'flatten']);
 
 // The tool tabs (Select is always there, above them): each tab's tools, and the one it last had.
-const TAB_OF = { height: 'terrain', raise: 'terrain', lower: 'terrain', smooth: 'terrain', flatten: 'terrain', paint: 'terrain', erase: 'terrain', road: 'roads', lot: 'roads', events: 'events' };
-const tabTool = { objects: 'select', terrain: 'height', roads: 'road', events: 'events' };
+const TAB_OF = { height: 'terrain', raise: 'terrain', lower: 'terrain', smooth: 'terrain', flatten: 'terrain', paint: 'terrain', erase: 'terrain', road: 'roads', lot: 'roads', events: 'events', arena: 'events', sky: 'sky' };
+const tabTool = { objects: 'select', terrain: 'height', roads: 'road', events: 'events', sky: 'sky' };
 let tab = 'objects';
 function showTab(t) {
   tab = t;
@@ -482,7 +511,20 @@ function setTool(t) {
   $('brush-tip').textContent = keyText(BRUSH_TIPS[t] || '');
   $('road-opts').hidden = t !== 'road';
   $('events-panel').hidden = t !== 'events';
-  $('inspector').hidden = t === 'events' || BRUSHES.has(t);
+  $('sky-panel').hidden = t !== 'sky';
+  $('arena-panel').hidden = t !== 'arena';
+  $('inspector').hidden = t === 'events' || t === 'sky' || t === 'arena' || BRUSHES.has(t);
+  if (t !== 'arena') {
+    arenaDraw = null;
+    arenaSpawning = false;
+  }
+  if (session) {
+    if (t === 'sky') renderSky();
+    if (t === 'events' || t === 'arena') renderArenas();
+    if (t === 'arena') renderEvents();
+    drawArenas();
+    applyFog();
+  }
   if (t === 'events') renderEvents();
   else showEventLine();
   $('lot-opts').hidden = t !== 'lot';
@@ -527,8 +569,10 @@ function numberBox(box) {
     const v = Number(box.value.replace(',', '.'));
     if (box.value.trim() !== '' && Number.isFinite(v)) {
       const kept = Math.min(max, Math.max(min, min + Math.round((v - min) / step) * step));
+      if (kept.toFixed(places) === range.value) return;
       range.value = kept.toFixed(places);
       range.dispatchEvent(new Event('input'));
+      range.dispatchEvent(new Event('change'));
     }
   };
   range.addEventListener('input', show);
@@ -712,7 +756,7 @@ const roadHandle = (k) => roadBends[k] || [(roadPts[k][0] + roadPts[k + 1][0]) /
 
 // The handle at ground point g: { point } or { bend }.
 function roadHandleAt(g) {
-  const near = Math.max(3, altitude() * 0.02);
+  const near = grabR(g.x, g.z);
   const d = ([x, z]) => Math.hypot(x - g.x, z - g.z);
   const p = roadPts.findIndex((q) => d(q) < near);
   if (p >= 0) return { point: p };
@@ -963,10 +1007,22 @@ function showLotHover() {
   else setLine(blockLine, lot.poly);
 }
 
+// What's being placed: the object copied (this district's, or one carried from another)
+// and how high it stands off the ground.
+function placingSource() {
+  const f = placing.from;
+  if (typeof f === 'string') {
+    const src = session.base.get(f);
+    const fb = footBox(src);
+    return { src, lift: session.baseY(src) - H(fb.x, fb.z) };
+  }
+  return { src: f.item, lift: typeof f.item.y === 'number' ? f.item.y - f.ground : 0 };
+}
+
 // Copies along a line from a to b, turned to run along it.
 function linePoses(a, b) {
   const { pts, yaw } = linePoints(a, b, spacing());
-  const fb = footBox(session.base.get(placing.from));
+  const fb = footBox(placingSource().src);
   return pts.slice(0, 300).map(([x, z]) => [x, z, yaw - fb.yaw + placeYaw]);
 }
 
@@ -1172,7 +1228,7 @@ function routeClick(g) {
 
 function renderEvents() {
   const panel = $('events-panel');
-  if (!session || tool !== 'events') return;
+  if (!session || (tool !== 'events' && tool !== 'arena')) return;
   const list = allEvents();
   const row = (e) => `<div class="evrow${e.key === evKey ? ' on' : ''}" data-key="${esc(e.key)}"><span>${esc(e.name)}</span><i>${e.key === 'boss' ? 'boss' : TYPES[e.type] || e.type}${e.rival ? ', rival' : ''}</i></div>`;
   $('events-list').innerHTML = `<h4>This district's events</h4>${list.map(row).join('') || '<p class="note">None yet.</p>'}
@@ -1197,6 +1253,7 @@ function renderEvents() {
       <div class="checks">
         ${isBoss() || CREATOR ? '' : `<label><input type="checkbox" id="ev-rival"${d.rival ? ' checked' : ''} /> Rival race (the district's rival drives it)</label>`}
         ${Object.entries(MODIFIER_LABELS).map(([k, n]) => `<label><input type="checkbox" data-mod="${k}"${(d.modifiers || []).includes(k) ? ' checked' : ''} /> ${esc(n)}</label>`).join('')}
+        ${d.type === 'drag' ? '' : `<label title="Health, ammo and nitro drops the game puts along the route (or round the arena). The drops placed on the map are there either way."><input type="checkbox" id="ev-autodrops"${d.autoDrops === false ? '' : ' checked'} /> Automatic drops</label>`}
       </div>
       <h4>Route</h4>
       ${r.kind === 'sprint' || r.kind === 'circuit' ? `<div class="row">
@@ -1241,6 +1298,10 @@ function readEvent() {
   d.name = $('ev-name').value.trim() || d.name;
   d.desc = $('ev-desc').value;
   d.cars = Math.max(2, Math.min(8, Math.round(num('ev-cars', d.cars))));
+  if ($('ev-autodrops')) {
+    if ($('ev-autodrops').checked) delete d.autoDrops;
+    else d.autoDrops = false;
+  }
   d.purse = Math.max(0, Math.round(num('ev-purse', d.purse)));
   if (d.type === 'circuit') d.laps = Math.max(1, Math.round(num('ev-laps', d.laps)));
   if (d.type === 'drag') d.finishS = Math.max(100, num('ev-finish', d.finishS));
@@ -1278,9 +1339,14 @@ function saveEvent() {
 function bindEvents() {
   const panel = $('events-panel');
   const side = $('events-list');
-  side.querySelectorAll('.evrow').forEach((el) => el.addEventListener('click', () => editEvent(el.dataset.key, savedEvent(el.dataset.key))));
+  side.querySelectorAll('.evrow').forEach((el) =>
+    el.addEventListener('click', () => {
+      if (tool !== 'events') setTool('events');
+      editEvent(el.dataset.key, savedEvent(el.dataset.key));
+    }));
   side.querySelectorAll('[data-new]').forEach((el) =>
     el.addEventListener('click', () => {
+      if (tool !== 'events') setTool('events');
       const all = allEvents();
       editEvent(nextKey(all), newEvent(el.dataset.new));
     }));
@@ -1451,16 +1517,19 @@ function placeEntry(entry, g, e, dropped) {
   changed();
 }
 
+// (The selected object; or a light, drop, gadget, junction or site.)
 function focus() {
-  if (!selected) return;
-  const it = session.item(selected);
-  const fb = footBox(it);
-  const dist = Math.max(25, Math.max(fb.w, fb.d, it.h || 2) * 2.2);
+  const it = selected && session.item(selected);
+  const spot = !it && feature && typeof feature.x === 'number';
+  if (!it && !spot) return;
+  const fb = it ? footBox(it) : { x: feature.x, z: feature.z, w: 2 * (feature.r || 4), d: 2 * (feature.r || 4) };
+  const h = it ? it.h || 2 : 4;
+  const dist = Math.max(25, Math.max(fb.w, fb.d, h) * 2.2);
   cam.pitch = Math.min(cam.pitch, -0.35);
   const f = forward();
   cam.x = fb.x - f.x * dist;
   cam.z = fb.z - f.z * dist;
-  cam.y = session.baseY(it) + (it.h || 2) / 2 - f.y * dist;
+  cam.y = (it ? session.baseY(it) : H(fb.x, fb.z)) + h / 2 - f.y * dist;
 }
 
 function toggleTop() {
@@ -1477,7 +1546,74 @@ function toggleTop() {
 
 function nameOf(it) {
   const id = it.kind ? `${it.t}.${it.kind}` : it.t;
-  return cat.find((c) => c.id === id)?.name || id;
+  const name = cat.find((c) => c.id === id)?.name || others.find((c) => c.id === id)?.name || id;
+  return it.guest ? `${name} (${DISTRICTS.find((d) => d.id === it.guest)?.name || it.guest})` : name;
+}
+
+// --- Objects from every district ------------------------------------------------------
+// The catalogue has this map's own objects, and every other district's: a
+// copy of one of those carries the object with it (its district's view draws
+// it, render/districtView.js; the sim reads it: sim/layoutEdits.js). Each
+// district's list takes a second or two to make the first time, so they're
+// made in the background, one at a time, and kept in this browser.
+
+const OTHERS_VERSION = 1; // (bump when what an object carries changes)
+const entryOf = (uid) => cat.find((c) => c.uid === uid) || others.find((c) => c.uid === uid) || null;
+
+function loadOthers() {
+  others = [];
+  const own = session.doc.base || null;
+  const queue = DISTRICTS.filter((d) => d.id !== own);
+  const token = {};
+  othersLoading = token;
+  $('from').innerHTML = `<option value="all">From every district</option><option value="here">From this map</option>${queue.map((d) => `<option value="${d.id}">From ${esc(d.name)}</option>`).join('')}`;
+  const next = () => {
+    if (othersLoading !== token) return;
+    const d = queue.shift();
+    if (!d) {
+      othersLoading = null;
+      renderCatalogue();
+      return;
+    }
+    othersLoading = token;
+    others.push(...othersOf(d));
+    renderCatalogue();
+    setTimeout(next, 60);
+  };
+  setTimeout(next, 300);
+}
+
+// A district's objects for the catalogue, each carrying the object (kept in this browser).
+function othersOf(d) {
+  const key = `catalogue:${d.id}:${hashOf(d.city)}:${OTHERS_VERSION}`;
+  let list = sdkGet(key);
+  if (!list) {
+    try {
+      const map = districtMap(d.city);
+      const items = baseLayout(map).items;
+      const byKey = new Map(items.map((it) => [it.key, it]));
+      list = catalogue(items).filter((e) => !HOME_ONLY.has(e.t)).map((e) => {
+        const src = byKey.get(e.from);
+        const [cx, cz] = itemCentre(src);
+        return { ...e, from: { from: e.from, district: d.id, item: JSON.parse(JSON.stringify(src)), ground: Math.round(map.heightAt(cx, cz) * 1000) / 1000 } };
+      });
+      sdkPut(key, list).catch(() => {});
+    } catch (err) {
+      console.warn(`T&T SDK: ${d.name}'s objects:`, err);
+      return [];
+    }
+  }
+  return list.map((e) => ({ ...e, uid: `${d.id}/${e.id}`, district: d.id, districtName: d.name }));
+}
+
+// A copy's source, as the inspector names it (another district's: which).
+const sourceName = (src) => (typeof src === 'string' ? src : `${src.from} from ${DISTRICTS.find((d) => d.id === src.district)?.name || src.district}`);
+
+// The Creator: another district's objects wait until the career reaches it.
+function districtLock(e, career) {
+  if (!CREATOR || !e.district) return null;
+  const i = DISTRICTS.findIndex((d) => d.id === e.district);
+  return districtUnlocked(career || { district: 0 }, i) ? null : `reach ${e.districtName} in the career`;
 }
 
 function refresh() {
@@ -1500,7 +1636,7 @@ function refresh() {
     const field = (id, label, value, step) => `<label for="${id}">${label}</label><input id="${id}" type="number" step="${step}" value="${+value.toFixed(3)}" ${movable ? '' : 'disabled'} />`;
     ins.innerHTML = `
       <h3>${esc(nameOf(it))}</h3>
-      <div class="key">${esc(selected.startsWith('+') ? `copy of ${session.source(selected)}` : selected)}</div>
+      <div class="key">${esc(selected.startsWith('+') ? `copy of ${sourceName(session.source(selected))}` : selected)}</div>
       <div class="grid">
         ${field('in-x', 'x (m)', p.x, 0.5)}
         ${field('in-z', 'z (m)', p.z, 0.5)}
@@ -1536,14 +1672,22 @@ function refresh() {
   $('edits').innerHTML = `
     <div>Deleted: ${e.remove.length} · Moved: ${Object.keys(e.move).length} · Added: ${e.add.length}</div>
     ${lost ? `<div class="warn">${lost} edit${lost > 1 ? 's' : ''} lost ${lost > 1 ? 'their objects' : 'its object'} (the district changed since).</div>` : ''}
-    <div>${session.map.style.name || doc.name}: ${session.layout.items.length} objects</div>`;
+    <div>${session.map.style.name || doc.name}: ${session.layout.items.filter((it) => !it.hidden).length} objects</div>`;
   hint();
 }
 
 function hint() {
   $('hint').textContent = !session
     ? 'Open a built-in district or a .ttmap file to start'
-    : tool === 'events'
+    : tool === 'arena'
+      ? arenaDraw
+        ? 'Arena: click round its edge (it snaps to blocks, sites, kerbs and arenas) · click the first point, or Space, to close it · Backspace takes a point back · Esc stops'
+        : arenaSpawning
+          ? 'Arena: click inside it to place a spawn point (it faces the middle) · Esc stops'
+          : 'Arena: drag a corner to move it, a blue midpoint to add one · select a corner and press Delete to take it out · click another arena to pick it'
+      : tool === 'sky'
+      ? 'Sky: pick a starting point on the left, then set the haze, fog, darkness and rain on the right · 1 back to Select · Ctrl+Z undo'
+      : tool === 'events'
       ? 'Events: pick one on the left or make a new one; its settings are on the right · Place start, then click its route on the map · Save event · Shift+P races it · 1 back to Select'
       : tool === 'road'
       ? roadStage === 'shaping'
@@ -1582,28 +1726,37 @@ const lockAttrs = (lock) => (lock ? ` data-lock="${esc(lock)}" title="Locked: ${
 function renderCatalogue() {
   const q = $('search').value.trim().toLowerCase();
   const career = CREATOR ? loadCareer() : null;
+  const from = $('from').value || 'all';
+  const pool = from === 'here' ? cat : from === 'all' ? [...cat, ...others] : others.filter((e) => e.district === from);
+  const short = (e) => (e.districtName || 'this map').replace(/^The /, '').split(' ')[0];
   const html = CATEGORIES.map((c) => {
-    const list = cat.filter((e) => e.category === c && (!q || e.name.toLowerCase().includes(q)));
+    const list = pool.filter((e) => e.category === c && (!q || e.name.toLowerCase().includes(q) || (e.districtName || '').toLowerCase().includes(q)));
     if (!list.length) return '';
     return `<h4>${c}</h4>${list
       .map((e) => {
-        const lock = lockOf(specialOfType(e.t), career);
-        return `<div class="entry${placing === e ? ' on' : ''}${lock ? ' locked' : ''}" draggable="${!lock}" data-id="${esc(e.id)}" title="${e.count} in this district · ${e.size.map((v) => v.toFixed(1)).join(' × ')} m"${lockAttrs(lock)}><span>${lock ? '🔒 ' : ''}${esc(e.name)}</span><i>${e.count}</i></div>`;
+        const lock = districtLock(e, career) || lockOf(specialOfType(e.t), career);
+        const tip = `${e.count} in ${e.districtName || 'this map'} · ${e.size.map((v) => v.toFixed(1)).join(' × ')} m`;
+        return `<div class="entry${placing === e ? ' on' : ''}${lock ? ' locked' : ''}" draggable="${!lock}" data-id="${esc(e.uid)}" title="${esc(tip)}"${lockAttrs(lock)}><span>${lock ? '🔒 ' : ''}${esc(e.name)}</span><i>${from === 'all' ? esc(short(e)) : e.count}</i></div>`;
       })
       .join('')}`;
   }).join('');
   const gadgets = Object.entries(GADGETS).filter(([, g]) => !q || g.name.toLowerCase().includes(q));
-  const gadgetHtml = gadgets.length ? `<h4>Gadgets</h4>${gadgets.map(([t, g]) => {
-    const lock = lockOf(specialOfGadget(t), career);
-    return `<div class="entry${placingGadget === t ? ' on' : ''}${lock ? ' locked' : ''}" data-gadget="${t}" title="${esc(g.about)}"${lockAttrs(lock)}><span>${lock ? '🔒 ' : ''}${esc(g.name)}</span></div>`;
-  }).join('')}` : '';
-  $('cat').innerHTML = gadgetHtml + (html || '<p class="none">Nothing matches.</p>');
+  const gadgetHtml = GROUPS.map((group) => {
+    const list = gadgets.filter(([, g]) => (g.group || 'Gadgets') === group);
+    return list.length ? `<h4>${group}</h4>${list.map(([t, g]) => {
+      const lock = lockOf(specialOfGadget(t), career);
+      return `<div class="entry${placingGadget === t ? ' on' : ''}${lock ? ' locked' : ''}" data-gadget="${t}" title="${esc(g.about)}"${lockAttrs(lock)}><span>${lock ? '🔒 ' : ''}${esc(g.name)}</span></div>`;
+    }).join('')}` : '';
+  }).join('');
+  const loading = othersLoading && from !== 'here' ? '<p class="loading">Loading the other districts\' objects…</p>' : '';
+  $('cat').innerHTML = gadgetHtml + (html || (loading ? '' : '<p class="none">Nothing matches.</p>')) + loading;
   $('place-opts').hidden = !placing;
 }
 
 // --- Input ------------------------------------------------------------------------
 
 $('search').addEventListener('input', renderCatalogue);
+$('from').addEventListener('change', renderCatalogue);
 $('left').addEventListener('click', (e) => {
   const b = e.target.closest('button');
   if (!b || !session) return;
@@ -1652,7 +1805,8 @@ $('cat').addEventListener('click', (e) => {
   const el = e.target.closest('.entry');
   if (!el || !session) return;
   placingGadget = null;
-  const entry = cat.find((c) => c.id === el.dataset.id);
+  if (el.dataset.lock) return toast(`Locked: ${el.dataset.lock}`);
+  const entry = entryOf(el.dataset.id);
   if (tool !== 'select') setTool('select');
   placing = placing === entry ? null : entry;
   placeYaw = 0;
@@ -1666,7 +1820,7 @@ $('cat').addEventListener('dragstart', (e) => {
   if (el.dataset.lock) return e.preventDefault();
   e.dataTransfer.setData('text/plain', el.dataset.id);
   if (tool !== 'select') setTool('select');
-  placing = cat.find((c) => c.id === el.dataset.id);
+  placing = entryOf(el.dataset.id);
   placeYaw = 0;
 });
 canvas.addEventListener('dragover', (e) => {
@@ -1734,6 +1888,11 @@ canvas.addEventListener('mousedown', (e) => {
   if (tool === 'lot') {
     const g = groundHit();
     if (g) setLot(g);
+    return;
+  }
+  if (tool === 'arena') {
+    const g = groundHit();
+    if (g) arenaDown(g, e);
     return;
   }
   if (tool === 'events') {
@@ -1857,6 +2016,7 @@ window.addEventListener('mousemove', (e) => {
   setRay(e);
   const g = groundHit();
   $('coords').textContent = g ? `x ${g.x.toFixed(1)}   z ${g.z.toFixed(1)}   ground ${g.y.toFixed(1)} m` : '';
+  if (tool === 'arena') return arenaMove(g, e);
   if (tool !== 'select' && !drag?.road && drag?.routePoint === undefined) {
     brushAt = g ? { ...g, snapped: tool === 'road' ? roadSnap([g.x, g.z], e) : null } : null;
     showBrush();
@@ -1950,6 +2110,7 @@ window.addEventListener('mouseup', (e) => {
     const d = drag;
     drag = null;
     if (d.road) return showRoad();
+    if (d.arena) return arenaDrop(d);
     if (d.routePoint !== undefined) {
       // (A route point dropped: where it's let go, as if clicked there.)
       if (d.moved) {
@@ -2042,6 +2203,7 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (ctrl) return;
+  if (tool === 'arena' && arenaKey(e)) return;
   if (tool === 'height') {
     const up = actionFor(e.code, 'terrain');
     if (up && up !== 'liftFine') {
@@ -2245,6 +2407,7 @@ function frame(now) {
   camera.lookAt(cam.x + f.x, cam.y + f.y, cam.z + f.z);
   view?.userData.animate?.(now / 1000, now / 1000);
   gadgetGroup?.userData.animate(now / 1000);
+  if (skyRain?.mesh.visible) skyRain.update(camera.position, dt);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
@@ -2365,21 +2528,40 @@ if (CREATOR) {
 
 // The gadgets as the game draws them, running on their own clock (a gate
 // linked to a trigger pad stays shut here: drive over the pad to see it open).
-function rebuildGadgets() {
+// Lights (render/lightView.js) and drops (as the game floats them) with them.
+// (trying: { id, patch }, a setting being dragged, shown before it's kept.)
+function rebuildGadgets(trying = null) {
   if (gadgetGroup) {
     scene.remove(gadgetGroup);
     dispose(gadgetGroup);
     gadgetGroup = null;
   }
   if (!session?.gadgets().length) return;
-  const def = addGadgets({ cx: 0, cz: 0, y: 0, size: 1e6, obstacles: [], ramps: [], lifts: [], sweepers: [], hazards: [], movers: [] }, session.gadgets(), H);
-  gadgetGroup = gadgetView(buildArena(def), tex, { ownClock: true });
-  if (gadgetGroup) scene.add(gadgetGroup);
+  const all = session.gadgets().map((g) => (trying && g.id === trying.id ? { ...g, ...trying.patch } : g));
+  const def = addGadgets({ cx: 0, cz: 0, y: 0, size: 1e6, obstacles: [], ramps: [], lifts: [], sweepers: [], hazards: [], movers: [] }, all, H);
+  const parts = [gadgetView(buildArena(def), tex, { ownClock: true }), placedView(all, H, tex), startMarkers(all, H)].filter(Boolean);
+  const drops = all.filter((g) => DROPS.has(g.type)).map((g, k) => {
+    const m = makePickupMesh(g.type);
+    m.position.set(g.x, H(g.x, g.z) + 0.8 + (g.height || 0), g.z);
+    m.userData.spin = (t) => {
+      m.rotation.y = t * 2;
+      m.position.y = H(g.x, g.z) + 0.8 + (g.height || 0) + Math.sin(t * 3 + k) * 0.2;
+    };
+    return m;
+  });
+  gadgetGroup = new THREE.Group();
+  gadgetGroup.add(...parts, ...drops);
+  gadgetGroup.userData.animate = (t) => {
+    for (const p of parts) p.userData.animate?.(t);
+    for (const m of drops) m.userData.spin(t);
+  };
+  scene.add(gadgetGroup);
 }
 
 // How far a gadget reaches from its middle (for picking it and outlining it).
 const reachOf = (g) =>
-  g.type === 'lift' ? Math.hypot(g.w, g.d) / 2 : g.type === 'gate' ? g.width / 2 : g.type === 'sweeper' ? g.len : g.type === 'mover' ? g.travel + Math.hypot(g.w, g.d) / 2 : g.r;
+  g.type === 'lift' ? Math.hypot(g.w, g.d) / 2 : g.type === 'gate' ? g.width / 2 : g.type === 'sweeper' ? g.len : g.type === 'mover' ? g.travel + Math.hypot(g.w, g.d) / 2
+    : g.type === 'ramp' || g.type === 'kicker' ? Math.max(g.len, g.width) / 2 : g.type === 'sign' ? signSize(g).w / 2 : g.type === 'barrel' ? 1 : g.r ?? 2;
 
 function gadgetAt(x, z) {
   let best = null;
@@ -2398,31 +2580,556 @@ function gadgetFeature(id) {
 function gadgetInspector(ins, f) {
   const g = session.gadgets().find((q) => q.id === f.id);
   if (!g) return;
-  const LABELS = { w: 'width (m)', d: 'depth (m)', width: 'width (m)', hMax: 'height (m)', period: 'every (s)', openFor: 'open for (s)', r: 'radius (m)', len: 'arm (m)', speed: 'speed', travel: 'travel (m)', dps: 'burn' };
-  const nums = Object.keys(LABELS).filter((k) => typeof g[k] === 'number');
+  const G = GADGETS[g.type];
+  const kind = { Lights: 'light', Drops: 'drop', Ramps: 'ramp', Hazards: 'hazard', Signs: 'sign', Starts: 'start' }[G.group] || 'gadget';
+  const turns = !NO_TURN.has(g.type);
+  const sliders = (SETTINGS[g.type] || []).filter(([k]) => typeof g[k] === 'number');
   const triggers = session.gadgets().filter((q) => q.type === 'trigger');
+  const realOn = session.gadgets().filter((q) => q.type === 'light' && q.real).length;
+  const slider = (id, label, min, max, step, unit, value, k = '') => `<label>${esc(label)} <input type="range" id="${id}"${k ? ` data-k="${k}"` : ''} min="${min}" max="${max}" step="${step}" value="${value}" /><input class="num" id="${id}-v" data-for="${id}" data-unit="${unit}" inputmode="decimal" /></label>`;
+  const options = (table, on) => Object.entries(table).map(([v, n]) => `<option value="${v}"${on === v ? ' selected' : ''}>${esc(n)}</option>`).join('');
+  const WHERE = {
+    ramp: 'In every event on this map and free roam (a race only uses it if the route runs over it).',
+    hazard: g.type === 'oil' ? 'In every event on this map and free roam.' : 'In every event on this map and free roam: once it has gone off it stays gone for the rest of the event.',
+    sign: 'In every event on this map and free roam. Its posts are solid; so is the sign itself when its bottom is below 2.2 m.',
+    start: g.type === 'start' ? 'Free roam on this map starts here (Test drive still starts where you are looking).' : 'Only in arena events, and only inside the arena\'s ground.',
+    light: 'Lights show in every event on this map and in free roam; a lamp post or floodlight tower is solid.',
+    drop: "Drops are in every event on this map (not drag races) and in free roam, as well as the event's own (an event can turn its own off).",
+    gadget: 'Gadgets work in free roam and in arena events.',
+  };
   ins.innerHTML = `
-    <h3>${esc(GADGETS[g.type].name)}</h3><div class="key">gadget ${esc(g.id)}</div>
-    <p class="note">${esc(GADGETS[g.type].about)}</p>
-    <div class="grid">
-      <label for="gd-turn">turn (°)</label><input id="gd-turn" type="number" step="15" value="${Math.round(((g.yaw || 0) * 180) / Math.PI)}" />
-      ${nums.map((k) => `<label for="gd-${k}">${LABELS[k]}</label><input id="gd-${k}" data-k="${k}" type="number" step="${k === 'speed' ? 0.1 : 1}" value="${g[k]}" />`).join('')}
-      ${g.type === 'gate' ? `<label for="gd-link">opened by</label><select id="gd-link"><option value="">its timer</option>${triggers.map((t) => `<option value="${t.id}"${g.link === t.id ? ' selected' : ''}>trigger pad ${t.id}</option>`).join('')}</select>` : ''}
+    <h3>${esc(G.name)}</h3><div class="key">${kind} ${esc(g.id)}</div>
+    <p class="note">${esc(G.about)}</p>
+    <div class="sliders">
+      ${g.type === 'sign' ? `<label>Words <input id="gd-text" maxlength="24" value="${esc(g.text || '')}" /></label>
+        <label>Style <select id="gd-style">${options(SIGN_STYLES, g.style)}</select></label>` : ''}
+      ${g.type === 'light' || g.type === 'sign' ? `<label>Colour <span class="swatches">${LIGHT_COLORS.map((c) => `<button class="sw${g.color === c ? ' on' : ''}" data-color="${c}" title="${c}" style="background:${c}"></button>`).join('')}<input type="color" id="gd-color" value="${g.color}" title="Any colour" /></span></label>` : ''}
+      ${g.type === 'light' ? `<label>Fixture <select id="gd-fixture">${options(LIGHT_FIXTURES, g.fixture)}</select></label>` : ''}
+      ${sliders.map(([k, label, min, max, step, unit]) => slider(`gd-${k}`, label, min, max, step, unit, g[k], k)).join('')}
+      ${turns ? slider('gd-turn', 'Turn', 0, 359, 1, '°', Math.round((((g.yaw || 0) * 180) / Math.PI + 360) % 360)) : ''}
+      ${g.type === 'sign' ? `<label class="check"><input type="checkbox" id="gd-posts"${g.posts ? ' checked' : ''} /> On posts (solid, down to the ground)</label>` : ''}
+      ${g.type === 'light' ? `<label>Flicker <select id="gd-flicker">${options(LIGHT_FLICKER, g.flicker)}</select></label>
+        <label class="check" title="A real light shines on the cars and the walls round it, not just the ground. Each one costs a little speed, so a map can have ${MAX_REAL_LIGHTS}."><input type="checkbox" id="gd-real"${g.real ? ' checked' : ''}${!g.real && realOn >= MAX_REAL_LIGHTS ? ' disabled' : ''} /> Real light: shines on cars and walls (${realOn} of ${MAX_REAL_LIGHTS} on this map)</label>` : ''}
+      ${g.type === 'gate' ? `<label>Opened by <select id="gd-link"><option value="">its timer</option>${triggers.map((t) => `<option value="${t.id}"${g.link === t.id ? ' selected' : ''}>trigger pad ${t.id}</option>`).join('')}</select></label>` : ''}
     </div>
-    <div class="row"><button id="gd-left" title="Turn 15° (Q)">⟲ 15°</button><button id="gd-right" title="Turn the other way 15° (E)">⟳ 15°</button><button id="f-del" class="danger">Delete</button></div>
-    <p class="note">Drag it to move it; drag its ring (or Q/E) to turn it. Gadgets work in free roam and in arena events.</p>`;
-  const apply = () => {
-    const patch = { yaw: (Number($('gd-turn').value) * Math.PI) / 180 };
-    for (const el of ins.querySelectorAll('[data-k]')) if (Number.isFinite(Number(el.value)) && el.value !== '') patch[el.dataset.k] = Math.max(0.1, Number(el.value));
+    <div class="row">${!turns ? '' : '<button id="gd-left" title="Turn 15° (Q)">⟲ 15°</button><button id="gd-right" title="Turn the other way 15° (E)">⟳ 15°</button>'}<button id="f-del" class="danger">Delete</button></div>
+    <p class="note">Drag it to move it${!turns ? '' : '; drag its ring (or Q/E) to turn it'}. ${WHERE[kind]}</p>`;
+  // (What the controls say now: shown while a slider's dragged, kept when it's let go.)
+  const read = () => {
+    const patch = $('gd-turn') ? { yaw: (Number($('gd-turn').value) * Math.PI) / 180 } : {};
+    for (const el of ins.querySelectorAll('input[type=range][data-k]')) patch[el.dataset.k] = Number(el.value);
     if ($('gd-link')) patch.link = $('gd-link').value;
-    if (session.setGadget(g.id, patch)) changed(false);
+    if ($('gd-fixture')) Object.assign(patch, { fixture: $('gd-fixture').value, flicker: $('gd-flicker').value, real: $('gd-real').checked });
+    if ($('gd-color')) patch.color = $('gd-color').value;
+    if ($('gd-text')) Object.assign(patch, { text: signText($('gd-text').value) || g.text, style: $('gd-style').value, posts: $('gd-posts').checked });
+    return patch;
+  };
+  const apply = (extra = {}) => {
+    if (session.setGadget(g.id, { ...read(), ...extra })) changed(false);
     feature = gadgetFeature(g.id);
     showOverlay();
   };
-  for (const el of ins.querySelectorAll('input, select')) el.addEventListener('change', apply);
-  $('gd-left').addEventListener('click', (ev) => turn(1, ev.shiftKey));
-  $('gd-right').addEventListener('click', (ev) => turn(-1, ev.shiftKey));
+  ins.querySelectorAll('input.num[data-for]').forEach(numberBox);
+  for (const el of ins.querySelectorAll('input[type=range], #gd-color')) {
+    el.addEventListener('input', () => rebuildGadgets({ id: g.id, patch: read() }));
+    el.addEventListener('change', () => apply());
+  }
+  for (const el of ins.querySelectorAll('select, #gd-real, #gd-posts, #gd-text')) el.addEventListener('change', () => apply());
+  $('gd-text')?.addEventListener('input', () => {
+    // (The letters the game's pixel font has, capitals.)
+    const t = signText($('gd-text').value);
+    if (t !== $('gd-text').value) $('gd-text').value = t;
+    rebuildGadgets({ id: g.id, patch: read() });
+  });
+  ins.querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => apply({ color: b.dataset.color })));
+  $('gd-left')?.addEventListener('click', (ev) => turn(1, ev.shiftKey));
+  $('gd-right')?.addEventListener('click', (ev) => turn(-1, ev.shiftKey));
   $('f-del').addEventListener('click', deleteFeature);
+}
+
+// A sign's words: capitals, the characters the pixel font draws, 24 at most.
+const signText = (t) => t.toUpperCase().replace(/[^A-Z0-9 .,:!?'&+\-/#%$*()]/g, '').slice(0, 24);
+
+// --- Atmosphere (the Sky tab) ---------------------------------------------------------
+// A map's own haze colour, fog, darkness and rain (edits.atmosphere), over the
+// district's: every event on the map and free roam have it (the race screen);
+// heavy rain costs grip (sim/gadgets.js rainGrip). The SDK shows it while the
+// Sky tab's open (or Fog's on), with the rain.
+
+const SKY_PRESETS = {
+  own: { name: "District's own", atmos: null },
+  clear: { name: 'Clear night', atmos: { fog: 0.5, rain: 0 } },
+  drizzle: { name: 'Neon drizzle', atmos: { fog: 1, rain: 0.4 } },
+  downpour: { name: 'Downpour', atmos: { fog: 1.6, rain: 1, darkness: 0.25 } },
+  fog: { name: 'Thick fog', atmos: { fog: 3, rain: 0, haze: '#3a3448' } },
+  toxic: { name: 'Toxic haze', atmos: { fog: 2.2, rain: 0.2, haze: '#24401c' } },
+  blackout: { name: 'Blackout', atmos: { fog: 1.5, rain: 0.3, darkness: 0.8 } },
+};
+const HAZES = ['#101018', '#1e0d30', '#2a1030', '#0c1a2a', '#3a3448', '#24401c', '#402a10', '#301018'];
+let skyRain = null;
+
+const atmosOf = () => session?.doc.edits.atmosphere || {};
+
+function renderSky() {
+  const a = atmosOf();
+  const theme = session.district.theme || {};
+  const haze = a.haze || theme.haze || '#101018';
+  const pct = (v) => Math.round(v * 100);
+  $('sky-list').innerHTML = Object.entries(SKY_PRESETS).map(([k, p]) => `<button data-sky="${k}">${esc(p.name)}</button>`).join('');
+  $('sky-panel').innerHTML = `<h3>Atmosphere</h3>
+    <p class="note">This map's sky, over the district's own: in every event on it and in free roam. Heavy rain (past the usual 40%) costs grip; an event's Blackout makes it darker still.</p>
+    <div class="sliders">
+      <label>Haze <span class="swatches">${HAZES.map((c) => `<button class="sw${haze === c ? ' on' : ''}" data-haze="${c}" title="${c}" style="background:${c}"></button>`).join('')}<input type="color" id="sky-haze" value="${haze}" title="Any colour" /></span></label>
+      <label>Fog <input type="range" id="sky-fog" min="0" max="4" step="0.1" value="${a.fog ?? 1}" /><input class="num" id="sky-fog-v" data-for="sky-fog" data-unit="×" inputmode="decimal" /></label>
+      <label>Darkness <input type="range" id="sky-dark" min="0" max="90" step="5" value="${pct(a.darkness || 0)}" /><input class="num" id="sky-dark-v" data-for="sky-dark" data-unit="%" inputmode="decimal" /></label>
+      <label>Rain <input type="range" id="sky-rain" min="0" max="100" step="5" value="${pct(a.rain ?? RAIN_USUAL)}" /><input class="num" id="sky-rain-v" data-for="sky-rain" data-unit="%" inputmode="decimal" /></label>
+    </div>
+    <div class="row"><button id="sky-reset" title="The district's own sky">Reset</button></div>`;
+  $('sky-panel').querySelectorAll('input.num[data-for]').forEach(numberBox);
+  const read = (extra = {}) => ({ haze: $('sky-haze').value, fog: Number($('sky-fog').value), darkness: Number($('sky-dark').value) / 100, rain: Number($('sky-rain').value) / 100, ...extra });
+  const keep = (atmos) => {
+    if (session.change((e) => (atmos ? (e.atmosphere = atmos) : delete e.atmosphere))) changed(false);
+    applyFog();
+    renderSky();
+  };
+  for (const el of $('sky-panel').querySelectorAll('input[type=range], #sky-haze')) {
+    el.addEventListener('input', () => applyFog(read()));
+    el.addEventListener('change', () => keep(read()));
+  }
+  $('sky-panel').querySelectorAll('[data-haze]').forEach((b) => b.addEventListener('click', () => keep(read({ haze: b.dataset.haze }))));
+  $('sky-reset').addEventListener('click', () => keep(null));
+  $('sky-list').querySelectorAll('[data-sky]').forEach((b) => b.addEventListener('click', () => keep(SKY_PRESETS[b.dataset.sky].atmos && { haze, ...SKY_PRESETS[b.dataset.sky].atmos })));
+}
+
+// --- Arenas (the Events tab) ----------------------------------------------------------
+// The map's arenas (sim/arenaEdits.js: the district's own, redrawn or taken
+// out, and new ones drawn), listed over the events. Drawing one: click round
+// its edge (snapping to the blocks, sites, kerbs and other arenas), then
+// close it (the first point, or Space): its ground is an arena event's. Its
+// corners drag, its midpoints add corners; spawn points are placed in it
+// (Arena spawn point gadgets, facing its middle).
+
+let arenaSel = null; // the selected arena (its index: an arena event's route.site)
+let arenaDraw = null; // { pts, of (redrawing that arena), block (taking a block's outline) } while drawing
+let arenaSpawning = false;
+let arenaHover = null; // the snapped point under the cursor while drawing
+let arenaCorner = null; // the selected corner (for Delete)
+const arenaMarks = new THREE.Group();
+scene.add(arenaMarks);
+
+const arenaList = () => (session ? arenasOf(session.district.city, session.map) : []);
+const arenaEvents = (i) => allEvents().filter((e) => e.type === 'arena' && (e.route?.site || 0) === i);
+
+function renderArenas() {
+  if (!session) return;
+  const list = arenaList();
+  if (arenaSel !== null && !list[arenaSel]) arenaSel = null;
+  const row = (a) => {
+    const n = arenaEvents(a.index).length;
+    const note = a.removed ? 'taken out' : `${n} event${n === 1 ? '' : 's'}`;
+    return `<div class="evrow${a.index === arenaSel && tool === 'arena' ? ' on' : ''}" data-arena="${a.index}"><span>${esc(a.name)}</span><i>${note}</i></div>`;
+  };
+  $('arenas-list').innerHTML = `<h4>Arenas</h4>${list.map(row).join('') || '<p class="note">None yet.</p>'}
+    <div class="toolgrid"><button id="arena-new" title="Click round its edge on the map">+ Draw an arena</button></div>`;
+  $('arenas-list').querySelectorAll('[data-arena]').forEach((el) => el.addEventListener('click', () => pickArena(Number(el.dataset.arena))));
+  $('arena-new').addEventListener('click', () => {
+    arenaSel = null;
+    startArenaDraw(null);
+  });
+  renderArenaPanel();
+}
+
+function pickArena(i) {
+  arenaSel = i;
+  arenaDraw = null;
+  arenaSpawning = false;
+  arenaCorner = null;
+  if (tool !== 'arena') setTool('arena');
+  else {
+    renderArenas();
+    drawArenas();
+    hint();
+  }
+}
+
+function startArenaDraw(of) {
+  arenaDraw = { pts: [], of, block: false };
+  arenaSpawning = false;
+  if (tool !== 'arena') setTool('arena');
+  else {
+    renderArenas();
+    drawArenas();
+    hint();
+  }
+}
+
+function renderArenaPanel() {
+  const panel = $('arena-panel');
+  if (tool !== 'arena') return;
+  const list = arenaList();
+  if (arenaDraw) {
+    const name = arenaDraw.of !== null ? list[arenaDraw.of]?.name : null;
+    panel.innerHTML = `<h3>${name ? `Redrawing ${esc(name)}` : 'Drawing an arena'}</h3>
+      <p class="note">Click round its edge: it snaps to the corners and edges of blocks, sites, kerbs and other arenas. Click the first point (or press Space) to close it; that's its ground. Backspace takes a point back, Esc stops.</p>
+      <div class="row"><button id="arena-block" class="${arenaDraw.block ? 'on' : ''}" title="Then click inside a block or site">Take a block's outline</button><button id="arena-close"${arenaDraw.pts.length < 3 ? ' disabled' : ''}>Close it</button><button id="arena-stop">Stop</button></div>
+      <p class="note">${arenaDraw.pts.length} point${arenaDraw.pts.length === 1 ? '' : 's'} so far.</p>`;
+    $('arena-block').addEventListener('click', () => {
+      arenaDraw.block = !arenaDraw.block;
+      renderArenaPanel();
+    });
+    $('arena-close').addEventListener('click', closeArena);
+    $('arena-stop').addEventListener('click', stopArenaDraw);
+    return;
+  }
+  const a = list[arenaSel];
+  if (!a) {
+    panel.innerHTML = '<h3>Arenas</h3><p class="note">Pick an arena on the left to change it, or draw a new one. An arena is the ground of the arena events set there.</p>';
+    return;
+  }
+  const poly = outlineOf(a);
+  const b = poly ? G.polyBounds(poly) : null;
+  const spawns = session.gadgets().filter((g) => g.type === 'spawn' && poly && G.pointInPoly(g.x, g.z, poly)).length;
+  const evs = arenaEvents(a.index);
+  panel.innerHTML = `<h3>${esc(a.name)}</h3>
+    <div class="key">${a.custom ? 'drawn on this map' : a.removed ? "the district's own, taken out" : a.poly ? "the district's own, redrawn" : "the district's own"}</div>
+    <label>Name <input id="arena-name" value="${esc(a.name)}" maxlength="40" /></label>
+    ${b ? `<p class="note">${Math.round(b.maxX - b.minX)} × ${Math.round(b.maxZ - b.minZ)} m, ${Math.round(Math.abs(G.polyArea(poly)))} m² inside.</p>` : ''}
+    ${a.removed ? '' : '<p class="note">Drag a corner (amber) to move it, a midpoint (blue) to add a corner; select a corner and press Delete to take it out.</p>'}
+    <div class="row">
+      ${a.removed ? '' : '<button id="arena-redraw">Redraw it</button>'}
+      ${a.removed ? '' : `<button id="arena-spawn" class="${arenaSpawning ? 'on' : ''}" title="Then click inside it">Place spawn points</button>`}
+      ${a.removed ? '' : '<button id="arena-event">+ Arena event here</button>'}
+    </div>
+    ${a.removed ? '' : `<p class="note">Spawn points in it: ${spawns}. Cars start on them first, then ${a.custom ? 'round its middle' : 'on its own'}.</p>`}
+    <p class="note">${evs.length ? `Its events: ${evs.map((e) => esc(e.name)).join(', ')}.` : 'No events here yet.'}</p>
+    <div class="row">
+      ${a.custom ? '<button id="arena-del" class="danger">Delete it</button>' : a.removed ? '<button id="arena-back">Put it back</button>' : `${a.poly ? '<button id="arena-own">Back to its own outline</button>' : ''}<button id="arena-del" class="danger">Take it out</button>`}
+    </div>`;
+  $('arena-name').addEventListener('change', () => {
+    const name = $('arena-name').value.trim() || a.name;
+    arenaEdit((list2) => {
+      const e = a.custom ? list2.find((q) => q.id === a.edit.id) : ensureEdit(list2, a);
+      e.name = name;
+    });
+  });
+  $('arena-redraw')?.addEventListener('click', () => startArenaDraw(a.index));
+  $('arena-spawn')?.addEventListener('click', () => {
+    arenaSpawning = !arenaSpawning;
+    renderArenaPanel();
+    hint();
+  });
+  $('arena-event')?.addEventListener('click', () => {
+    setTool('events');
+    const ev = newEvent('arena');
+    ev.route = { ...ev.route, site: a.index };
+    editEvent(nextKey(allEvents()), ev);
+  });
+  $('arena-del')?.addEventListener('click', () => {
+    if (a.custom) arenaEdit((list2) => list2.splice(list2.findIndex((q) => q.id === a.edit.id), 1));
+    else arenaEdit((list2) => Object.assign(ensureEdit(list2, a), { removed: true, poly: undefined }));
+  });
+  $('arena-back')?.addEventListener('click', () => arenaEdit((list2) => list2.splice(list2.findIndex((q) => q.of === a.site.name), 1)));
+  $('arena-own')?.addEventListener('click', () => arenaEdit((list2) => {
+    const e = ensureEdit(list2, a);
+    delete e.poly;
+    if (!e.name && !e.removed) list2.splice(list2.indexOf(e), 1);
+  }));
+}
+
+// A district's own arena's edit (made if it has none).
+function ensureEdit(list, a) {
+  let e = list.find((q) => q.of === a.site.name);
+  if (!e) {
+    let n = list.length + 1;
+    while (list.some((q) => q.id === `r${n}`)) n++;
+    e = { id: `r${n}`, of: a.site.name };
+    list.push(e);
+  }
+  return e;
+}
+
+// One change to the arenas, as one step. A change that stops events working asks first.
+function arenaEdit(mutate) {
+  const before = session.broken ?? brokenEvents(session.withEvents());
+  let kept = false;
+  try {
+    kept = session.change((e) => {
+      const list = JSON.parse(JSON.stringify(e.arenas || []));
+      mutate(list);
+      for (const q of list) for (const k of Object.keys(q)) if (q[k] === undefined) delete q[k];
+      if (list.length) e.arenas = list;
+      else delete e.arenas;
+    });
+  } catch (err) {
+    toast(err.message);
+    return false;
+  }
+  if (!kept) return false;
+  const after = brokenEvents(session.withEvents());
+  const newly = after.filter((b) => !before.some((q) => q.key === b.key));
+  if (newly.length && !window.confirm(`This stops ${newly.length === 1 ? 'an event' : 'these events'} working:\n\n${newly.map((b) => `• ${b.name}: ${b.error}`).join('\n')}\n\nKeep the change anyway?`)) {
+    session.undo();
+    session.future.pop();
+    session.broken = before;
+    kept = false;
+  } else session.broken = after;
+  changed(false);
+  renderArenas();
+  drawArenas();
+  hint();
+  return kept;
+}
+
+// The outlines a point snaps to: blocks, sites, the district's edge, other arenas (and kerbs: arenaSnap).
+function areaOutlines(skip = null) {
+  const m = session.map;
+  const out = [];
+  for (const b of m.blocks || []) if (b.lot?.length > 2) out.push(b.lot);
+  for (const s of m.sites || []) if (s.poly?.length > 2) out.push(s.poly);
+  for (const c of m.cells || []) if (Array.isArray(c.lot)) out.push([[c.lot[0], c.lot[2]], [c.lot[1], c.lot[2]], [c.lot[1], c.lot[3]], [c.lot[0], c.lot[3]]]);
+  if (m.boundary?.length > 2) out.push(m.boundary);
+  for (const a of arenaList()) if (a.index !== skip && !a.removed && outlineOf(a)) out.push(outlineOf(a));
+  return out;
+}
+
+// Where a point at g snaps (a corner, then an edge, then a kerb; closing on the first point): { p, close }.
+function arenaSnap(g, skip = null) {
+  const R = grabR(g.x, g.z, 4);
+  const at = [g.x, g.z];
+  if (arenaDraw?.pts.length >= 3 && Math.hypot(arenaDraw.pts[0][0] - g.x, arenaDraw.pts[0][1] - g.z) < R * 1.5) return { p: arenaDraw.pts[0], close: true };
+  let corner = null;
+  let edge = null;
+  for (const poly of areaOutlines(skip)) {
+    const b = G.polyBounds(poly);
+    if (g.x < b.minX - R || g.x > b.maxX + R || g.z < b.minZ - R || g.z > b.maxZ + R) continue;
+    for (const p of poly) {
+      const d = Math.hypot(p[0] - g.x, p[1] - g.z);
+      if (d < R && (!corner || d < corner.d)) corner = { d, p: [...p] };
+    }
+    const q = G.nearestOnLine([...poly, poly[0]], g.x, g.z);
+    if (q.d < R && (!edge || q.d < edge.d)) edge = { d: q.d, p: q.p };
+  }
+  if (corner) return { p: corner.p };
+  if (!edge) {
+    for (const e of session.map.edgeList || []) {
+      if (!e.street || e.street.tunnel) continue;
+      const q = G.nearestOnLine(e.pts, g.x, g.z);
+      const h = e.street.half;
+      if (Math.abs(q.d - h) > R) continue;
+      const f = G.pointAlong(e.pts, q.s);
+      const side = (g.x - f.x) * -f.dz + (g.z - f.z) * f.dx > 0 ? 1 : -1;
+      const p = [f.x - f.dz * side * h, f.z + f.dx * side * h];
+      const d = Math.hypot(p[0] - g.x, p[1] - g.z);
+      if (!edge || d < edge.d) edge = { d, p };
+    }
+  }
+  return { p: edge ? edge.p : at };
+}
+
+function arenaDown(g, e) {
+  const list = arenaList();
+  if (arenaDraw) {
+    if (arenaDraw.block) {
+      // A block's (or site's, or lot's) outline, as it is.
+      const poly = areaOutlines().find((q) => q !== session.map.boundary && G.pointInPoly(g.x, g.z, q));
+      if (!poly) return toast('Click inside a block or site.');
+      arenaDraw.pts = poly.map((p) => [...p]);
+      return closeArena();
+    }
+    const s = arenaSnap(g, arenaDraw.of);
+    if (s.close || (e.detail >= 2 && arenaDraw.pts.length >= 3)) return closeArena();
+    arenaDraw.pts.push(s.p.map((v) => Math.round(v * 100) / 100));
+    renderArenaPanel();
+    drawArenas();
+    return;
+  }
+  const a = list[arenaSel];
+  const poly = a && !a.removed ? outlineOf(a) : null;
+  if (arenaSpawning && a) {
+    if (!poly || !G.pointInPoly(g.x, g.z, poly)) return toast(`Put it inside ${a.name}.`);
+    const [mx, mz] = middleOf(poly);
+    session.addGadget('spawn', g.x, g.z, Math.atan2(mx - g.x, mz - g.z));
+    changed(false);
+    renderArenaPanel();
+    return;
+  }
+  if (poly) {
+    // A corner, or a midpoint (a new corner there).
+    const near = grabR(g.x, g.z);
+    const k = poly.findIndex((p) => Math.hypot(p[0] - g.x, p[1] - g.z) < near);
+    if (k >= 0) {
+      arenaCorner = k;
+      drag = { arena: { index: a.index, poly: poly.map((p) => [...p]), k }, sx: e.clientX, sy: e.clientY, moved: false };
+      drawArenas();
+      return;
+    }
+    const m = poly.findIndex((p, i) => {
+      const q = poly[(i + 1) % poly.length];
+      return Math.hypot((p[0] + q[0]) / 2 - g.x, (p[1] + q[1]) / 2 - g.z) < near;
+    });
+    if (m >= 0) {
+      const pts = poly.map((p) => [...p]);
+      const q = pts[(m + 1) % pts.length];
+      pts.splice(m + 1, 0, [(pts[m][0] + q[0]) / 2, (pts[m][1] + q[1]) / 2]);
+      arenaCorner = m + 1;
+      drag = { arena: { index: a.index, poly: pts, k: m + 1, added: true }, sx: e.clientX, sy: e.clientY, moved: false };
+      drawArenas();
+      return;
+    }
+  }
+  // Another arena: picked.
+  const hit = list.find((q) => !q.removed && outlineOf(q) && G.pointInPoly(g.x, g.z, outlineOf(q)));
+  if (hit) pickArena(hit.index);
+}
+
+function arenaMove(g, e) {
+  if (!g) return;
+  if (drag?.arena) {
+    if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
+    drag.moved = true;
+    drag.arena.poly[drag.arena.k] = arenaSnap(g, drag.arena.index).p;
+    drawArenas();
+    return;
+  }
+  arenaHover = arenaDraw && !arenaDraw.block ? arenaSnap(g, arenaDraw.of) : null;
+  drawArenas();
+}
+
+function arenaDrop(d) {
+  if (!d.moved && !d.arena.added) return drawArenas();
+  setArenaOutline(d.arena.index, d.arena.poly.map((p) => p.map((v) => Math.round(v * 100) / 100)));
+}
+
+// An arena's outline set (checked first): a new arena's, or a district's own redrawn.
+function setArenaOutline(index, poly) {
+  const why = outlineProblem(poly);
+  if (why) {
+    toast(why);
+    drawArenas();
+    return false;
+  }
+  const a = arenaList()[index];
+  return arenaEdit((list) => {
+    if (a.custom) list.find((q) => q.id === a.edit.id).poly = poly;
+    else ensureEdit(list, a).poly = poly;
+  });
+}
+
+function closeArena() {
+  const d = arenaDraw;
+  if (!d || d.pts.length < 3) return toast('Place at least three points round it.');
+  const why = outlineProblem(d.pts);
+  if (why) return toast(why);
+  if (d.of !== null) {
+    arenaDraw = null;
+    setArenaOutline(d.of, d.pts);
+    return;
+  }
+  // A new arena, named in turn.
+  const count = arenaList().filter((a) => a.custom).length;
+  let id = 1;
+  while ((session.doc.edits.arenas || []).some((q) => q.id === `r${id}`)) id++;
+  arenaDraw = null;
+  if (arenaEdit((list) => list.push({ id: `r${id}`, name: `Arena ${count + 1}`, poly: d.pts }))) {
+    arenaSel = arenaList().length - 1;
+    toast('Arena made: place spawn points, or make an arena event here.');
+  }
+  renderArenas();
+  drawArenas();
+  hint();
+}
+
+function stopArenaDraw() {
+  arenaDraw = null;
+  arenaHover = null;
+  renderArenas();
+  drawArenas();
+  hint();
+}
+
+// Keys for the arena tool, as bound in Controls (true: used).
+function arenaKey(e) {
+  const act = actionFor(e.code, 'edit');
+  if (arenaDraw) {
+    const place = actionFor(e.code, 'place');
+    if (place === 'endPlacing' || place === 'buildRoad') closeArena();
+    else if (place === 'backPoint') {
+      arenaDraw.pts.pop();
+      renderArenaPanel();
+      drawArenas();
+    } else if (act === 'cancel') stopArenaDraw();
+    else return false;
+    e.preventDefault();
+    return true;
+  }
+  if (act === 'cancel' && arenaSpawning) {
+    arenaSpawning = false;
+    renderArenaPanel();
+    hint();
+    e.preventDefault();
+    return true;
+  }
+  const a = arenaList()[arenaSel];
+  if (act === 'delete' && a && !a.removed && arenaCorner !== null) {
+    const poly = outlineOf(a).map((p) => [...p]);
+    if (poly.length <= 3) {
+      toast('An arena needs at least three corners.');
+    } else {
+      poly.splice(arenaCorner, 1);
+      arenaCorner = null;
+      setArenaOutline(a.index, poly);
+    }
+    e.preventDefault();
+    return true;
+  }
+  return false;
+}
+
+// On the map: every arena's outline (the selected one's corners and midpoints), the one being drawn.
+function drawArenas() {
+  clearGroup(arenaMarks);
+  if (!session || (tool !== 'arena' && tool !== 'events')) return;
+  const size = Math.max(1.2, altitude() * 0.012);
+  const y = (x, z) => H(x, z) + 0.7;
+  const line = (pts, color, loop = true) => {
+    const L = new (loop ? THREE.LineLoop : THREE.Line)(new THREE.BufferGeometry().setFromPoints(pts.map(([x, z]) => new THREE.Vector3(x, y(x, z), z))), new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, fog: false }));
+    L.renderOrder = 13;
+    arenaMarks.add(L);
+  };
+  const mark = ([x, z], color, s = size) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), new THREE.MeshBasicMaterial({ color, depthTest: false, fog: false }));
+    m.position.set(x, y(x, z) + 0.2, z);
+    m.renderOrder = 14;
+    arenaMarks.add(m);
+  };
+  // (Following the ground: a point every few metres along each edge.)
+  const along = (poly) => poly.flatMap((p, k) => {
+    const q = poly[(k + 1) % poly.length];
+    const n = Math.max(1, Math.ceil(Math.hypot(q[0] - p[0], q[1] - p[1]) / 6));
+    return [...Array(n).keys()].map((i) => [p[0] + ((q[0] - p[0]) * i) / n, p[1] + ((q[1] - p[1]) * i) / n]);
+  });
+  for (const a of arenaList()) {
+    let poly = outlineOf(a);
+    if (!poly) continue;
+    if (drag?.arena?.index === a.index) poly = drag.arena.poly;
+    const on = a.index === arenaSel && tool === 'arena' && !arenaDraw;
+    line(along(poly), a.removed ? 0xff2a6d : on ? 0xffb000 : 0x05d9e8);
+    if (on && !a.removed) {
+      poly.forEach((p, k) => mark(p, k === arenaCorner ? 0xffffff : 0xffb000));
+      poly.forEach((p, k) => {
+        const q = poly[(k + 1) % poly.length];
+        mark([(p[0] + q[0]) / 2, (p[1] + q[1]) / 2], 0x05d9e8, size * 0.6);
+      });
+    }
+  }
+  if (arenaDraw) {
+    const pts = [...arenaDraw.pts];
+    if (arenaHover) pts.push(arenaHover.p);
+    // (Open: point to point, and on to the cursor.)
+    if (pts.length > 1) line([...along(pts).slice(0, -Math.max(1, Math.ceil(Math.hypot(pts[0][0] - pts[pts.length - 1][0], pts[0][1] - pts[pts.length - 1][1]) / 6))), pts[pts.length - 1]], 0xffb000, false);
+    arenaDraw.pts.forEach((p, k) => mark(p, k === 0 ? 0x39ff14 : 0xffb000));
+    if (arenaHover) mark(arenaHover.p, arenaHover.close ? 0x39ff14 : 0x05d9e8, size * 0.8);
+  }
 }
 
 // --- Playtest marks ------------------------------------------------------------------
@@ -2586,10 +3293,10 @@ const ACTIONS = [
     ['liftUp', 'Up a step, where the brush is', 'KeyW'], ['liftDown', 'Down a step', 'KeyS'],
     ['liftFine', 'Hold for 25 cm steps (the wheel, the keys above)', 'AltLeft'],
   ]],
-  ['Roads and races (while placing points)', 'place', [
-    ['endPlacing', 'Stop placing points (a race: the last is the finish)', 'Space'],
-    ['backPoint', 'Road: take the last point back', 'Backspace'],
-    ['buildRoad', 'Road: build the street', 'Enter', 'NumpadEnter'],
+  ['Roads, races and arenas (while placing points)', 'place', [
+    ['endPlacing', 'Stop placing points (a race: the last is the finish; an arena: close it)', 'Space'],
+    ['backPoint', 'Road or arena: take the last point back', 'Backspace'],
+    ['buildRoad', 'Road: build the street (an arena: close it)', 'Enter', 'NumpadEnter'],
   ]],
   ['Editing', 'edit', [
     ['delete', 'Delete the selection', 'Delete', 'Backspace'], ['turnLeft', 'Turn left 15° (Shift: 1°)', 'KeyQ'], ['turnRight', 'Turn right 15° (Shift: 1°)', 'KeyE'],
@@ -2654,6 +3361,7 @@ const MOUSE = [
   ['Look around, and fly with the keys', 'Hold right'], ['Pan', 'Middle drag'], ['Zoom', 'Wheel'], ['Turn while moving or placing (Shift: 1°)', 'Wheel'],
   ['Raise / lower: a grid step up or down', 'Wheel'], ['Raise / lower: a 25 cm step up or down', '{fine} + wheel'], ['Raise / lower: zoom', 'Hold right + wheel'],
   ['Road: curve a stretch, or move a point', 'Drag a handle'], ['Road: stop placing points, or straighten a curve', 'Double-click'],
+  ['Arena: move a corner, or add one at a midpoint', 'Drag a handle'], ['Arena: close the outline', 'Click its first point'],
 ];
 const GAMEPAD = [
   ['Fly, and look round', 'Sticks'], ['Down / up', 'LT / RT'], ['Faster', 'Left stick in'], ['Act at the crosshair (a click)', 'A'],
@@ -2798,7 +3506,7 @@ function ringOf() {
   }
   if (feature?.type === 'gadget') {
     const g = session.gadgets().find((q) => q.id === feature.id);
-    if (g) return { x: g.x, z: g.z, y: H(g.x, g.z), r: Math.max(3, feature.r || 3) + 1.5, yaw: g.yaw || 0, drag: { feature, ox: 0, oz: 0, x: g.x, z: g.z, yaw: g.yaw || 0, yaw0: g.yaw || 0, cx: g.x, cz: g.z } };
+    if (g && !NO_TURN.has(g.type)) return { x: g.x, z: g.z, y: H(g.x, g.z), r: Math.max(3, feature.r || 3) + 1.5, yaw: g.yaw || 0, drag: { feature, ox: 0, oz: 0, x: g.x, z: g.z, yaw: g.yaw || 0, yaw0: g.yaw || 0, cx: g.x, cz: g.z } };
   }
   return null;
 }

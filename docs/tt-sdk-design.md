@@ -198,7 +198,10 @@ A versioned JSON document (`src/content/mapDoc.js`), file extension `.ttmap`.
   "edits": {
     "remove": ["car@120,-44"],
     "move":   { "bldg.hotel@-210,88": { "dx": 4, "dz": 0, "yaw": 0.26, "dy": 0 } },
-    "add":    [{ "id": "a1", "from": "lamp@33,61", "x": 40, "z": 61, "yaw": 0 }]
+    "add":    [{ "id": "a1", "from": "lamp@33,61", "x": 40, "z": 61, "yaw": 0 }],
+    "arenas": [{ "id": "r1", "name": "Arena 1", "poly": [[x, z], ...] },       // drawn new
+               { "id": "r2", "of": "<another of its own>", "poly": [[x, z], ...] }, // the district's own, redrawn
+               { "id": "r3", "of": "Casino Car Park", "removed": true }]      // the district's own, taken out
   },
   "meta": { "created": "...", "modified": "...", "editor": "T&T SDK 0.1" }
 }
@@ -263,10 +266,28 @@ used anywhere.
   the rooftop crossings).
 - **Copies of breakables and sprinklers get their own ids.** The world state
   tells them apart by id, so each copy breaks or waters on its own.
-- **Using an asset in another district** (a Maple Hollow tree in the
-  Undercity) needs the district kits' drawers available in every view. This
-  is a Studio feature for E4: kit drawers depend on kit materials, so they'll
-  be set up on demand.
+- **Using an asset in another district** (a Maple Hollow house in the Strip):
+  **as built**, every district's objects can be placed in every map. Here's
+  how it works:
+  - **The list:** the catalogue has a **From** filter (every district by
+    default, this map, or one district). Other districts' lists are made in
+    the background after a map opens, one at a time, and kept in this browser
+    (`sdk` store, `catalogue:<id>:<hash>:<OTHERS_VERSION>`).
+  - **The copy:** it carries the object. Its `edits.add` entry has
+    `district`, `item` (the object's data there) and `ground` (the ground
+    under it there). The sim reads it like any copy, marked `guest`
+    (`sim/layoutEdits.js`), so it's solid in every event.
+  - **Drawing:** `buildDistrictView` has its own district's view draw it,
+    in an objects-only mode (`{ only }`: none of that district's ground,
+    streets, skyline or set pieces; the Undercity kit leaves out its flood).
+    It keeps its own look, materials and breaking. The official districts'
+    styles come from `setDistrictStyles` (set by the race screen and the
+    SDK).
+  - **Left out of the list:** parts drawn with their whole (arch legs and
+    piers, a water tower's legs, gap jumps) and ground surfaces. A quay crane's
+    drawn on its quay, so it's placed in Rustline only.
+  - **The Creator:** another district's objects are locked until the career
+    reaches it.
 - Decorative assets with no collision (signs high on walls, cables overhead)
   must sit above car height or on another asset's surface. Otherwise
   placement warns: "looks solid, isn't".
@@ -579,6 +600,83 @@ drawbridge, moving platform, lift, sweeper, trap zone. A later version adds
 simple wiring (trigger zone → gate). All gadget state lives in `world.state`,
 so it survives snapshot/restore and stays in sync online.
 
+**As built** (`src/sim/gadgets.js`; `edits.gadgets`). The catalogue lists them
+under **Lights**, **Drops**, **Ramps**, **Hazards**, **Signs**, **Starts** and
+**Gadgets** (`GROUPS`). Everything that stands in the district is drawn by
+`render/placedView.js`, with the district in every event (the race screen
+adds it to its district view) and in the SDK's preview. A placed one's settings are on the
+right as sliders (typed too; `SETTINGS` per type), shown live while dragged
+and kept on release.
+
+- **Gadgets:** lift pad, gate (timer or trigger pad), trigger pad, spinning
+  bar, moving block, live plate. They run in free roam and arena events.
+- **Lights** (`render/lightView.js`):
+  - **Fixture:** lamp post, floodlight tower, or just the light.
+  - **Colour:** swatches or any colour.
+  - **Height, reach, brightness, turn and flicker** (steady, breathing,
+    buzzing, failing).
+  - **Real light:** shines on cars and walls. Up to `MAX_REAL_LIGHTS` (8) per
+    map, because each costs speed; without it, only the glow on the ground.
+  - **Where they show:** the glow and fixture are drawn with the district in
+    every event (the race screen adds them to its district view) and in the
+    SDK's preview.
+  - **Collision:** a post or tower is solid in every event, as a hidden layout
+    item (`gadgetItems`, `lightPost@<id>`: not drawn, not pickable).
+- **Drops** (health, ammo, nitro):
+  - **Settings:** health repairs 5–100% (35); nitro gives 1–5 charges (1);
+    back in 3–120 s (18); height above the ground.
+  - **Where they are:** every event on the map (not drag races) and free roam
+    have them as pickups, along with the event's automatic ones. They come
+    from each venue's `def.drops` (`dropsOf` in `cityVenue`; arenas: those
+    inside), read by `createEventState`; `updatePickups` uses their amount and
+    respawn.
+  - **Automatic drops:** an event's own checkbox (`autoDrops: false`) turns
+    them off.
+  - **Drawing:** the same model in the game and the SDK
+    (`render/pickupMesh.js`).
+- **Ramps** (ramp, jump kicker):
+  - **Settings:** length, height and width, rising the way they face.
+  - **In the events:** ramps in every event's def (`rampsOf`: world
+    coordinates for a race track, the arena's own for free roam and arenas;
+    `placed: true`, so the arena view doesn't draw them twice). A race only
+    uses one its route runs over.
+- **Hazards:**
+  - **Oil slick** (radius): a car on it has 35% grip (`def.oil`; `onOil` in
+    combat.js `updateMods`, as the oil weapon's zones do).
+  - **Explosive barrel** (blast radius, damage): a breakable (`barrel:<id>`)
+    that goes off when hit. It uses the weapons' `explode`, throws cars out
+    and up, and sets off barrels within 60% of its blast
+    (`breakables.js blowUp`); the view hides it once gone.
+- **Neon signs:**
+  - **Settings:** words (capitals, the pixel font, up to 24), colour, style
+    (on a board, or bare letters), letter size, height, turn, and on posts.
+  - **Size:** worked out exactly from the font (`signSize`).
+  - **Solid:** its posts, and the sign itself when its bottom is below 2.2 m
+    (`gadgetItems`).
+- **Starts:**
+  - **Free roam start** (one per map; placing another moves it): free
+    roam's `spawnAt`.
+  - **Arena spawn points:** an arena event's first spawn points (those
+    inside it), topped up from the arena's own.
+  - **Headings:** a car's yaw faces −z at 0 and a gadget's arrow +z, so
+    `cityVenue` converts.
+  - **Markers:** arrows only in the SDK (`startMarkers`).
+- **Turning:** drops, oil and barrels don't turn (`NO_TURN`).
+
+**Atmosphere** (the **Sky** tab; `edits.atmosphere`: `{ haze, fog, darkness,
+rain }`):
+
+- **Presets** on the left, sliders on the right.
+- **In the game:** over the district's theme in every event on the map and
+  free roam (`raceScreen`):
+  - **Fog:** density × fog.
+  - **Darkness:** dims the sky light and moon (an event's Blackout on top).
+  - **Rain:** the share of `RAIN_MAX` drops falling (the game's usual is 40%;
+    0 is dry; players who've turned rain off don't see it).
+- **Grip:** rain past 40% costs up to a fifth (`rainGrip`, via the venue's
+  `def.rain`).
+- **In the SDK:** shown while the Sky tab is open (or Fog is on).
+
 ### 7.10 Test drive
 
 - **P:** drive from the cursor position, in your current garage car or a
@@ -688,7 +786,32 @@ converted to node/site ids on import. Names stay visible in the UI.
 - **Drag races:** Place start on a street, then click the finish further
   along the same street; both can be dragged along it. Clear route works here
   too.
-- **Arenas:** pick the ground (a site).
+- **Arenas** (the Arenas list at the top of the Events tab; `src/sim/arenaEdits.js`):
+  - **+ Draw an arena:** click round its edge like a path. Each click snaps to
+    the nearest corner, then edge, of a block, site, lot, the district's
+    boundary or another arena, then to a kerb. Click the first point (or
+    press Space / Enter, or **Close it**) to close it: the enclosed shape is
+    the arena's ground. Backspace takes a point back; Esc stops.
+    **Take a block's outline** fills it from the block or site clicked.
+  - The outline is refused if it crosses itself or is under about 25 × 25 m
+    (`outlineProblem`).
+  - **Editing one:** click it in the list or on the map. Drag an amber corner
+    to move it, or a blue midpoint to add one; select a corner and press
+    Delete to take it out. **Redraw it** draws it again from scratch. A
+    district's own arena, redrawn, has **Back to its own outline**.
+  - **Delete it** (a new one) or **Take it out** (the district's own; **Put
+    it back** undoes it). Events on it are named first, and asked about.
+  - **Place spawn points:** click inside it; each faces the middle. Cars
+    start on them first, then on its own.
+  - **+ Arena event here:** a new arena event on it.
+  - **In the game** (`cityVenueOf`, `drawnArena` in `src/sim/city.js`):
+    an event's `route.site` is its place in `arenasOf` (the district's own
+    first, a removed one keeping its place, then the drawn ones), so events
+    keep their ground. A drawn arena is an authored arena inside the outline:
+    barriers along every edge, and the outline itself is a wall in the arena
+    sim (`def.boundary`, `arena.js`). A redrawn one keeps what of its own
+    stands inside. Where it has too few spawns or no pickups, they're put
+    round its middle where a car has room.
 - **Readouts:** the route the game builds is drawn with its length, or why it
   can't be set up.
 - **Checks** (`checks.js`), live under the route:
@@ -805,8 +928,9 @@ key can be changed. It's kept in this browser (`localStorage` `tt-sdk:keys`,
 
 - **Columns:** each action has a **Key** and an **Alt** key. The alts are
   only filled where they make sense; × clears one.
-- **Groups:** Flying (read only while the right button's held), Roads and
-  races (read only while placing points), Editing, View and play, and Tools.
+- **Groups:** Flying (read only while the right button's held), Roads,
+  races and arenas (read only while placing points), Editing, View and play,
+  and Tools.
   A group's keys can be the same as another group's; picking a key another
   action in the same group has swaps it over. An action's only key can't be
   taken from it.
@@ -816,7 +940,7 @@ key can be changed. It's kept in this browser (`localStorage` `tt-sdk:keys`,
 |---|---|
 | Flying | W A S D; Up Space (alt E); Down Ctrl (alt Q); Faster Shift. Either Shift or Ctrl works |
 | Terrain (with the Raise / lower tool) | Up a step W; Down a step S (held, a step every 150 ms); hold for 25 cm steps Alt (the wheel, W / S and the step buttons; Alt can only be bound in this group). Holding the right button, W and S fly as ever |
-| Roads and races | Stop placing points Space; Road: take the last point back Backspace; Road: build the street Enter (alt Num Enter) |
+| Roads, races and arenas | Stop placing points Space (an arena: close it); Road or arena: take the last point back Backspace; Road: build the street Enter (alt Num Enter; an arena: close it) |
 | Editing | Delete (alt Backspace); turn Q/E; nudge arrows; focus F; snapping on/off G; cancel/deselect Esc |
 | View and play | Top view Tab; Test drive P (Shift: race the event) |
 | Tools | 1–9, 0 (Select … Events); brush smaller [ and bigger ] |
@@ -860,6 +984,10 @@ The owner's follow-up requests, done in this order:
 | **Top bar:** Test drive, Controls, then the map's name at the far right | `src/sdk/page.js` |
 | **Sculpted terrain drawn in the Neon Strip and Chrome Heights** (it was only felt, not seen) | `src/render/shapes.js` (`drapePoly`), `planView.js`, `roofView.js`, `src/sim/ground.js` |
 | **Tool tabs** (Select always there; Objects, Terrain, Roads, Events); **raise and lower with the mouse wheel**, a grid step at a time (a toggle goes back to holding); **angled Smooth and Flatten**; terrain options on the right; ground surfaces painted, not in the Objects list (§7.4) | `src/sdk/page.js`, `main.js`, `src/sdk/brush.js` (`lift`, `angle`), `src/sdk/catalogue.js` |
+| **Lights and drops** (§7.9): lights with fixture, colour, height, reach, brightness, flicker and real light; health, ammo and nitro drops with amount, respawn and height; the settings on the right as sliders; an event's automatic drops can be turned off; F focuses a light, drop or gadget too | `src/sim/gadgets.js`, `src/render/lightView.js`, `src/render/pickupMesh.js`, `src/sim/event.js`, `city.js` (`cityVenue`), `cityLayout.js`, `track.js`, `raceScreen.js`, `main.js` |
+| **Ramps, hazards, signs, starts and atmosphere** (§7.9): ramps and jump kickers; oil slicks and explosive barrels; neon signs with your own words; the free roam start and arena spawn points; the Sky tab (haze, fog, darkness, rain, presets) | `src/sim/gadgets.js`, `src/render/placedView.js`, `src/render/rain.js`, `src/sim/breakables.js`, `combat.js`, `city.js` (`cityVenue`), `raceScreen.js`, `main.js` |
+| **Every district's objects in every map** (§6.3): the From filter; copies carry the object; its own district's view draws it | `src/sim/layoutEdits.js`, `src/render/districtView.js` (`guestViews`, `buildObjectsView`, `setDistrictStyles`), `planView.js`, `roofView.js`, `underView.js`, `src/sdk/main.js`, `session.js`, `catalogue.js` |
+| **Arenas drawn, redrawn and taken out** (§8.3): a path tool that snaps to blocks, sites, lots and kerbs and closes into the arena's ground; corners dragged, added and taken out; the district's own redrawn, taken out or put back; spawn points placed in it; + Arena event here. Handles are grabbed by how near they look, near or far | `src/sim/arenaEdits.js`, `city.js` (`drawnArena`), `arena.js` (`boundary`), `src/sdk/events.js` (`arenaSites`), `mapDoc.js`, `page.js`, `main.js` |
 | **Races start and finish anywhere, really** (§8.3): off the streets and up on things, never inside them; route points anywhere; the grid fits or it's flagged; a warning where a race runs into something. **Place start works on circuits** (a panel field had the button's id) | `main.js`, `src/sim/routePoints.js`, `planRoute.js`, `city.js`, `track.js` (tops, ramps), `event.js`, `world.js`, `checks.js`, `trackView.js` |
 
 ## 14. Risks

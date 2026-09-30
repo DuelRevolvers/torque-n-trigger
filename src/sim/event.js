@@ -33,7 +33,8 @@ export function createEventState(def, track) {
     time: 0,
     modifiers: def.modifiers || [],
     // Health, nitro and ammo pickups that respawn after being taken.
-    pickups: def.type === 'drag' ? [] : pickupSpots(track, def.seed ?? 1).map((p, id) => ({ id, ...p, active: true, timer: 0 })),
+    // (The automatic ones unless the event turns them off; and the drops placed in the T&T SDK.)
+    pickups: def.type === 'drag' ? [] : [...(def.autoDrops === false ? [] : pickupSpots(track, def.seed ?? 1)), ...(track.drops || track.def?.drops || [])].map((p, id) => ({ id, ...p, active: true, timer: 0 })),
     half: false,
     weaponsLocked: (def.modifiers || []).includes('weaponsLate'),
     finished: [],
@@ -213,11 +214,11 @@ function updatePickups(world, dt) {
       const p = params[i];
       if (pk.type === 'health') {
         if (car.hp >= car.maxHp) continue;
-        car.hp = Math.min(car.maxHp, car.hp + car.maxHp * 0.35);
+        car.hp = Math.min(car.maxHp, car.hp + (car.maxHp * (pk.amount ?? 35)) / 100);
         car.burning = 0;
       } else if (pk.type === 'nitro') {
         if (!p.nitro.charges || ev.modifiers.includes('noNitro') || car.nitro.charges >= p.nitro.charges) continue;
-        car.nitro.charges++;
+        car.nitro.charges = Math.min(p.nitro.charges, car.nitro.charges + (pk.amount ?? 1));
       } else if (pk.type === 'ammo') {
         for (const slot of ['primary', 'secondary']) {
           const w = p.weapons?.[slot];
@@ -227,7 +228,7 @@ function updatePickups(world, dt) {
         car.overheated = false;
       }
       pk.active = false;
-      pk.timer = PICKUP_RESPAWN;
+      pk.timer = pk.respawn ?? PICKUP_RESPAWN;
       world.events.push({ type: 'pickup', car: i, kind: pk.type });
       break;
     }

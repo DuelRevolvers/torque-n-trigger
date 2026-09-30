@@ -20,7 +20,7 @@ const SHACK = ['#6a4a3a', '#5a6a70', '#7a6a4a', '#4a5a48', '#6a3a3a', '#58506a',
 const CONTAINER = ['#8a3a2a', '#2a5a7a', '#c8902a', '#3a6a3a', '#6a6a70', '#9a4a1a'];
 const CARS = ['#6a3a2a', '#4a4a50', '#5a5a3a', '#3a4a5a', '#7a5a3a', '#505048'];
 
-export function underView({ map, tex, H, group, items, text, clipToConvex, merged }) {
+export function underView({ map, tex, H, group, items, text, clipToConvex, merged, guest = false }) {
   const P = map.style.plan;
   const U = P.under;
   const look = map.style.look;
@@ -580,7 +580,8 @@ export function underView({ map, tex, H, group, items, text, clipToConvex, merge
       m.visible = false;
       add(m);
     }
-    // The surge down the drain, and the Sump's wet floor.
+    // The surge down the drain, and the Sump's wet floor (not for its objects placed elsewhere).
+    if (guest) return { animate() {} };
     const surge = new THREE.Mesh(new THREE.PlaneGeometry(1, drain.bed + 3).rotateX(-Math.PI / 2), mats.flood);
     surge.visible = false;
     add(surge);
