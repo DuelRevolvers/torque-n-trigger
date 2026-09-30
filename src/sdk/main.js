@@ -989,7 +989,7 @@ function renderEvents() {
         <div class="chips">${r.path.map((p, k) => `<span class="chip">${esc(p)}<b data-drop="${k}" title="Take it out">×</b></span>`).join('') || '<span class="note">No junctions yet.</span>'}</div>
         <div class="row"><button id="ev-clear">Clear route</button></div>
         <div class="checks">${shortcutOptions(session).map((c) => `<label><input type="checkbox" data-cut="${esc(c)}"${(r.shortcuts || []).includes(c) ? ' checked' : ''} /> Shortcut: ${esc(c)}</label>`).join('')}</div>` : ''}
-      ${r.kind === 'drag' ? `<div class="row"><button id="ev-start" class="${evStage === 'start' ? 'on' : ''}" title="Then click the start on a street">⚑ Place start</button></div>
+      ${r.kind === 'drag' ? `<div class="row"><button id="ev-start" class="${evStage === 'start' ? 'on' : ''}" title="Then click the start on a street">⚑ Place start</button><button id="ev-clear">Clear route</button></div>
         <p class="note">${r.along ? `Along ${esc(r.along)}. ` : ''}${routeStageText(r)}</p>` : ''}
       <div id="ev-preview">${previewText()}</div>
       <div class="row">
@@ -1094,7 +1094,8 @@ function bindEvents() {
   $('ev-clear')?.addEventListener('click', () => {
     evStage = null;
     evSel = null;
-    evDraft.route.path = [];
+    if (evDraft.route.kind === 'drag') Object.assign(evDraft.route, { along: '', from: [0, 0], to: null });
+    else evDraft.route.path = [];
     renderEvents();
     previewEvent();
   });
