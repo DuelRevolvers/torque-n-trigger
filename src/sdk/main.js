@@ -17,7 +17,7 @@ import { SPECIALS, progress, triggerText, specialOfType, specialOfGadget } from 
 import { buildArena } from '../sim/arena.js';
 import { gadgetView } from '../render/gadgetView.js';
 import { readStore } from '../content/idb.js';
-import { roadEdit, gridRoadEdit, lotEdit, gridLotEdit, lotAt, lotKinds, linePoints, featureAt, deleteStreet, setStreet, moveNode, removeNode, deleteSite, gridRemove, gridMoveLine } from './roads.js';
+import { curvePts, roadEdit, gridRoadEdit, lotEdit, gridLotEdit, lotAt, lotKinds, linePoints, featureAt, deleteStreet, setStreet, moveNode, removeNode, deleteSite, gridRemove, gridMoveLine } from './roads.js';
 import * as G from '../sim/geom2d.js';
 import { saveOverride, listOverrides, removeOverride, setOverrideOn, shippedMap } from '../content/store.js';
 import { listMaps, saveMap, deleteMap, sdkGet, sdkPut } from '../content/library.js';
@@ -80,6 +80,8 @@ let tool = 'select';
 let stroke = null; // a ground brush stroke under way (Session.stroke())
 let brushAt = null; // where the brush is on the ground
 let roadPts = []; // the road tool's points so far
+let roadBends = []; // per stretch: the handle its curve passes through halfway, or null
+let roadStage = 'drawing'; // 'drawing' (placing points), then 'shaping' (curves; Build street)
 let lineFrom = null; // placing along a line: where it starts
 let scatter = null; // placing by scatter: [[x, z, yaw]] so far
 let feature = null; // a street, junction, site or gadget selected (sdk/roads.js featureAt)
@@ -423,6 +425,8 @@ const brushOpts = (dt) => ({ radius: Number($('radius').value), strength: Number
 function setTool(t) {
   tool = t;
   roadPts = [];
+  roadBends = [];
+  roadStage = 'drawing';
   for (const b of document.querySelectorAll('#tools button')) b.classList.toggle('on', b.dataset.tool === t);
   $('brush-opts').hidden = !BRUSHES.has(t);
   $('kind-row').hidden = t !== 'paint';
@@ -542,15 +546,71 @@ function setLine(line, pts) {
   line.visible = pts.length > 1;
 }
 
-// The street being drawn, along the ground, to the cursor.
+// The street being drawn (its curves too), along the ground, to the cursor
+// while placing; and its handles: amber for points, blue for curves.
+const roadMarks = new THREE.Group();
+scene.add(roadMarks);
 function showRoad() {
+  clearGroup(roadMarks);
   if (tool !== 'road' || !session) {
     roadLine.visible = false;
     return;
   }
   const pts = [...roadPts];
-  if (brushAt && roadPts.length) pts.push([brushAt.x, brushAt.z]);
-  setLine(roadLine, densify(pts));
+  if (roadStage === 'drawing' && brushAt?.snapped && roadPts.length) pts.push(brushAt.snapped);
+  const line = [];
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const seg = roadBends[k] ? curvePts(pts[k], roadBends[k], pts[k + 1], 16) : [pts[k], pts[k + 1]];
+    line.push(...(k ? seg.slice(1) : seg));
+  }
+  if (pts.length === 1) line.push(pts[0]);
+  setLine(roadLine, densify(line));
+  const mark = (x, z, color, s) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), new THREE.MeshBasicMaterial({ color, depthTest: false, fog: false }));
+    m.position.set(x, H(x, z) + 0.8, z);
+    m.renderOrder = 14;
+    roadMarks.add(m);
+  };
+  const size = Math.max(1.2, altitude() * 0.012);
+  roadPts.forEach(([x, z]) => mark(x, z, 0xffb000, size));
+  if (roadStage === 'shaping') roadPts.slice(1).forEach((b, k) => mark(...roadHandle(k), 0x05d9e8, size));
+}
+
+// Where stretch k's curve handle is: its bend, or halfway along it.
+const roadHandle = (k) => roadBends[k] || [(roadPts[k][0] + roadPts[k + 1][0]) / 2, (roadPts[k][1] + roadPts[k + 1][1]) / 2];
+
+// The handle at ground point g: { point } or { bend }.
+function roadHandleAt(g) {
+  const near = Math.max(3, altitude() * 0.02);
+  const d = ([x, z]) => Math.hypot(x - g.x, z - g.z);
+  const p = roadPts.findIndex((q) => d(q) < near);
+  if (p >= 0) return { point: p };
+  const b = roadPts.slice(1).findIndex((_, k) => d(roadHandle(k)) < near);
+  return b >= 0 ? { bend: b } : null;
+}
+
+// A point placed at a 15° step from the last one's heading (Alt, or snapping off: any angle).
+function roadSnap([x, z], e) {
+  const last = roadPts[roadPts.length - 1];
+  if (!last || !snapping(e)) return [x, z];
+  const L = Math.hypot(x - last[0], z - last[1]);
+  const a = Math.round(Math.atan2(x - last[0], z - last[1]) / TURN) * TURN;
+  return [last[0] + Math.sin(a) * L, last[1] + Math.cos(a) * L];
+}
+
+// Space (or a double-click): no more points; now curve it, and Build street.
+function endRoadPlacing() {
+  if (roadPts.length < 2) return toast('Place at least two points first.');
+  roadStage = 'shaping';
+  showRoad();
+  hint();
+}
+
+function clearRoad() {
+  roadPts = [];
+  roadBends = [];
+  roadStage = 'drawing';
+  showRoad();
 }
 
 // A point every few metres along a line (so it follows the ground).
@@ -682,13 +742,13 @@ function featureInspector(ins) {
 
 function buildRoad() {
   const pts = roadPts;
-  roadPts = [];
-  showRoad();
+  const bends = roadBends;
+  clearRoad();
   if (pts.length < 2) return;
   const name = $('road-name').value;
   let patch;
   try {
-    patch = session.map.plan ? { plan: roadEdit(session, pts, { width: $('road-width').value, surface: $('road-surface').value, name }) } : { grid: gridRoadEdit(session, pts, name) };
+    patch = session.map.plan ? { plan: roadEdit(session, pts, { width: $('road-width').value, surface: $('road-surface').value, name, bends }) } : { grid: gridRoadEdit(session, pts, name) };
   } catch (err) {
     window.alert(err.message);
     return;
@@ -1216,7 +1276,9 @@ function hint() {
     : tool === 'events'
       ? 'Events: pick one or make one, click junctions on the map for its route · Save event · Shift+P races it · 1 back to Select'
       : tool === 'road'
-      ? 'Road: click along the way · Enter or double-click to build · Backspace takes a point back · Esc cancels · 1 back to Select'
+      ? roadStage === 'shaping'
+        ? 'Road: drag a blue handle to curve that stretch (double-click it: straight), an amber one to move a point · Build street (or Enter) · Esc cancels'
+        : 'Road: click to place points (15° steps; Alt: any angle) · Space or double-click: stop placing · Backspace takes a point back · Esc cancels'
       : tool === 'lot'
         ? 'Lot: click a block to make it the chosen kind · 1 back to Select · Ctrl+Z undo'
         : tool !== 'select'
@@ -1355,9 +1417,21 @@ canvas.addEventListener('mousedown', (e) => {
   setRay(e);
   if (tool === 'road') {
     const g = groundHit();
-    if (g && e.detail < 2) roadPts.push([g.x, g.z]);
-    if (e.detail >= 2) buildRoad();
-    else showRoad();
+    if (!g) return;
+    if (roadStage === 'shaping') {
+      const h = roadHandleAt(g);
+      if (h && h.bend !== undefined && e.detail >= 2) {
+        roadBends[h.bend] = null; // (straightened)
+        showRoad();
+      } else if (h) drag = { road: h, sx: e.clientX, sy: e.clientY, moved: false };
+      return;
+    }
+    if (e.detail >= 2) endRoadPlacing();
+    else {
+      roadPts.push(roadSnap([g.x, g.z], e));
+      roadBends.push(null);
+      showRoad();
+    }
     return;
   }
   if (tool === 'lot') {
@@ -1460,8 +1534,8 @@ window.addEventListener('mousemove', (e) => {
   setRay(e);
   const g = groundHit();
   $('coords').textContent = g ? `x ${g.x.toFixed(1)}   z ${g.z.toFixed(1)}   ground ${g.y.toFixed(1)} m` : '';
-  if (tool !== 'select') {
-    brushAt = g;
+  if (tool !== 'select' && !drag?.road) {
+    brushAt = g ? { ...g, snapped: tool === 'road' ? roadSnap([g.x, g.z], e) : null } : null;
     showBrush();
     showRoad();
     showLotHover();
@@ -1470,6 +1544,15 @@ window.addEventListener('mousemove', (e) => {
   if (drag) {
     if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
     drag.moved = true;
+    if (drag.road) {
+      // A road handle: a stretch's bend, or a point.
+      if (g) {
+        if (drag.road.bend !== undefined) roadBends[drag.road.bend] = [g.x, g.z];
+        else roadPts[drag.road.point] = [snap(g.x, e), snap(g.z, e)];
+      }
+      showRoad();
+      return;
+    }
     if (drag.rotating) {
       // (Turned by the angle the cursor has gone round the middle; 15° steps, Alt: free.)
       if (g) {
@@ -1530,6 +1613,7 @@ window.addEventListener('mouseup', (e) => {
   if (e.button === 0 && drag) {
     const d = drag;
     drag = null;
+    if (d.road) return showRoad();
     if (d.moved && d.feature?.type === 'gadget') {
       if (session.setGadget(d.feature.id, { x: Math.round(d.x * 100) / 100, z: Math.round(d.z * 100) / 100, ...(d.rotating ? { yaw: d.yaw } : {}) })) changed(false);
       feature = gadgetFeature(d.feature.id);
@@ -1588,12 +1672,17 @@ window.addEventListener('keydown', (e) => {
     return;
   }
   if (flying || ctrl) return; // WASD and Q/E fly while the right button is held
-  if (tool === 'road' && roadPts.length && ['Enter', 'NumpadEnter', 'Backspace', 'Escape'].includes(e.code)) {
+  if (tool === 'road' && roadPts.length && ['Enter', 'NumpadEnter', 'Backspace', 'Escape', 'Space'].includes(e.code)) {
     e.preventDefault();
-    if (e.code === 'Backspace') roadPts.pop();
-    else if (e.code === 'Escape') roadPts = [];
+    if (e.code === 'Space') endRoadPlacing();
+    else if (e.code === 'Backspace') {
+      roadPts.pop();
+      roadBends.pop();
+      if (roadPts.length < 2) roadStage = 'drawing';
+    } else if (e.code === 'Escape') clearRoad();
     else buildRoad();
     showRoad();
+    hint();
     return;
   }
   const step = e.shiftKey ? 0.1 : gridSize();

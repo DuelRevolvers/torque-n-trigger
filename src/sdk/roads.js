@@ -11,7 +11,23 @@ import { RULES } from '../sim/planLayout.js';
 const SNAP_NODE = 14; // metres: a click this close to a junction is at it
 const NEAR_END = 3; // a crossing this close to a junction is at that junction
 
-export function roadEdit(session, clicks, { width = 'street', surface = 'asphalt', name }) {
+// A curved stretch from a to b whose middle is at handle h: a quadratic curve,
+// as points (a and b included).
+export function curvePts(a, h, b, n = 8) {
+  const q = [2 * h[0] - (a[0] + b[0]) / 2, 2 * h[1] - (a[1] + b[1]) / 2];
+  const out = [];
+  for (let k = 0; k <= n; k++) {
+    const t = k / n;
+    const u = 1 - t;
+    out.push([u * u * a[0] + 2 * u * t * q[0] + t * t * b[0], u * u * a[1] + 2 * u * t * q[1] + t * t * b[1]]);
+  }
+  return out;
+}
+
+// bends: per stretch between clicks k and k + 1, the handle its curve passes
+// through halfway (null: straight). The street runs through the curve's
+// points (the plan smooths it through them).
+export function roadEdit(session, clicks, { width = 'street', surface = 'asphalt', name, bends = [] }) {
   const map = session.map;
   const P = session.district.city.plan;
   if (!P) throw new Error('New streets in Rustline Docks run along its grid.');
@@ -64,24 +80,45 @@ export function roadEdit(session, clicks, { width = 'street', surface = 'asphalt
     if (best) return split(best.e, best.q.p);
     return newNode(x, z);
   });
-  const path = anchors.filter((id, k) => k === 0 || id !== anchors[k - 1]);
+  // (Each junction with the click it came from, so a stretch keeps its bend.)
+  const path = anchors.map((name, click) => ({ name, click })).filter((p, k, all) => k === 0 || p.name !== all[k - 1].name);
   if (path.length < 2) throw new Error('Click at least two different places for a street.');
 
-  // Crossings: a junction wherever the new street crosses another.
-  const full = [path[0]];
+  // Along each stretch (straight, or its curve's points), a junction wherever
+  // the new street crosses another; a curve's points go in as shape points.
+  const full = [path[0].name];
+  const r2 = (p) => [Math.round(p[0] * 100) / 100, Math.round(p[1] * 100) / 100];
   for (let k = 0; k + 1 < path.length; k++) {
-    const a = pos(path[k]);
-    const b = pos(path[k + 1]);
-    const hits = [];
-    for (const e of streetEdges) {
-      for (let q = 0; q + 1 < e.pts.length; q++) {
-        const h = G.segHit(a, b, e.pts[q], e.pts[q + 1]);
-        if (!h || Math.hypot(h[0] - a[0], h[1] - a[1]) < NEAR_END || Math.hypot(h[0] - b[0], h[1] - b[1]) < NEAR_END) continue;
-        hits.push({ d: Math.hypot(h[0] - a[0], h[1] - a[1]), name: split(e, h) });
+    const a = pos(path[k].name);
+    const b = pos(path[k + 1].name);
+    const bend = path[k + 1].click === path[k].click + 1 ? bends[path[k].click] : null;
+    const line = bend ? curvePts(a, bend, b) : [a, b];
+    const along = [];
+    let run = 0;
+    for (let q = 0; q + 1 < line.length; q++) {
+      const [p0, p1] = [line[q], line[q + 1]];
+      if (q > 0) along.push({ s: run, shape: r2(p0) });
+      for (const e of streetEdges) {
+        for (let m = 0; m + 1 < e.pts.length; m++) {
+          const h = G.segHit(p0, p1, e.pts[m], e.pts[m + 1]);
+          if (!h || Math.hypot(h[0] - a[0], h[1] - a[1]) < NEAR_END || Math.hypot(h[0] - b[0], h[1] - b[1]) < NEAR_END) continue;
+          along.push({ s: run + Math.hypot(h[0] - p0[0], h[1] - p0[1]), name: split(e, h) });
+        }
+      }
+      run += Math.hypot(p1[0] - p0[0], p1[1] - p0[1]);
+    }
+    // (A curve point on a junction, or a junction met twice, goes in once.)
+    const named = along.filter((it) => it.name).map((it) => pos(it.name));
+    const seen = new Set();
+    for (const it of along.sort((p, q) => p.s - q.s)) {
+      if (it.shape) {
+        if (named.every((p) => Math.hypot(p[0] - it.shape[0], p[1] - it.shape[1]) > 3)) full.push(it.shape);
+      } else if (!seen.has(it.name) && full[full.length - 1] !== it.name) {
+        seen.add(it.name);
+        full.push(it.name);
       }
     }
-    for (const h of hits.sort((p, q) => p.d - q.d)) if (full[full.length - 1] !== h.name) full.push(h.name);
-    if (full[full.length - 1] !== path[k + 1]) full.push(path[k + 1]);
+    if (full[full.length - 1] !== path[k + 1].name) full.push(path[k + 1].name);
   }
 
   // The junctions put into existing streets, each in its place along the street.
