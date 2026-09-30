@@ -878,6 +878,8 @@ function editEvent(key, draft) {
   evKey = key;
   evDraft = draft ? JSON.parse(JSON.stringify(draft)) : null;
   evRun = null;
+  evStage = null;
+  evSel = null;
   clearGroup(stuckMarks);
   previewEvent();
   renderEvents();
@@ -898,6 +900,7 @@ function previewEvent() {
 }
 
 function showEventLine() {
+  drawEventMarks();
   if (tool !== 'events' || !evPreview || evPreview.error) {
     eventLine.visible = false;
     return;
@@ -908,7 +911,7 @@ function showEventLine() {
 function previewText() {
   const r = evDraft?.route;
   if (!r) return '';
-  if (!evPreview) return r.kind === 'drag' ? '<p class="note">Click where it starts, then where it finishes, on one street.</p>' : '<p class="note">Click junctions on the map in order (at least two). Ways through sites and lots can be clicked too.</p>';
+  if (!evPreview) return r.kind === 'drag' ? '<p class="note">Click where it starts, then where it finishes, on one street.</p>' : '<p class="note">Place the start, click where the race goes, then Space: the last point is the finish.</p>';
   if (evPreview.error) return `<p class="note warn">Can't be set up: ${esc(evPreview.error)}</p>`;
   if (evPreview.rect) return `<p class="note ok">Arena: ${evPreview.sizeX.toFixed(0)} × ${evPreview.sizeZ.toFixed(0)} m.</p>`;
   const laps = evDraft.type === 'circuit' ? evDraft.laps || 1 : 1;
@@ -920,9 +923,15 @@ function routeClick(g) {
   const r = evDraft?.route;
   if (!r) return;
   if (r.kind === 'sprint' || r.kind === 'circuit') {
+    if (!evStage) return toast('Press Place start first (Route, on the right).');
     const p = routePoint(session, g.x, g.z);
     if (!p) return toast('Click on a junction, or on a way through a site or lot.');
-    if (r.path[r.path.length - 1] !== p.name) r.path.push(p.name);
+    if (evStage === 'start') {
+      // The start: a new route's first point (or a new first point for one already there).
+      if (r.path.length) r.path[0] = p.name;
+      else r.path.push(p.name);
+      evStage = r.path.length > 1 ? 'editing' : 'placing';
+    } else if (evStage === 'placing' && r.path[r.path.length - 1] !== p.name) r.path.push(p.name);
   } else if (r.kind === 'drag') {
     const f = featureAt(session, g.x, g.z);
     const street = f?.type === 'street' || f?.type === 'gridStreet' ? f.name : null;
@@ -966,7 +975,12 @@ function renderEvents() {
         ${Object.entries(MODIFIER_LABELS).map(([k, n]) => `<label><input type="checkbox" data-mod="${k}"${(d.modifiers || []).includes(k) ? ' checked' : ''} /> ${esc(n)}</label>`).join('')}
       </div>
       <h4>Route</h4>
-      ${r.kind === 'sprint' || r.kind === 'circuit' ? `<div class="chips">${r.path.map((p, k) => `<span class="chip">${esc(p)}<b data-drop="${k}" title="Take it out">×</b></span>`).join('') || '<span class="note">No junctions yet.</span>'}</div>
+      ${r.kind === 'sprint' || r.kind === 'circuit' ? `<div class="row">
+          <button id="ev-start" class="${evStage === 'start' ? 'on' : ''}" title="Then click the start on the map">⚑ Place start</button>
+          ${evStage === 'placing' ? '<button id="ev-finish" title="The last point is the finish (Space)">🏁 Finish here</button>' : r.path.length ? '<button id="ev-more" title="Click more points after the last">Continue placing</button>' : ''}
+        </div>
+        <p class="note">${routeStageText(r)}</p>
+        <div class="chips">${r.path.map((p, k) => `<span class="chip">${esc(p)}<b data-drop="${k}" title="Take it out">×</b></span>`).join('') || '<span class="note">No junctions yet.</span>'}</div>
         <div class="row"><button id="ev-clear">Clear route</button></div>
         <div class="checks">${shortcutOptions(session).map((c) => `<label><input type="checkbox" data-cut="${esc(c)}"${(r.shortcuts || []).includes(c) ? ' checked' : ''} /> Shortcut: ${esc(c)}</label>`).join('')}</div>` : ''}
       ${r.kind === 'drag' ? `<p class="note">${r.along ? `Along ${esc(r.along)}, from ${r.from.join(', ')}${r.to ? ` to ${r.to.join(', ')}` : ' (click where it finishes)'}` : 'Click where it starts on a street.'}</p>` : ''}
@@ -1058,7 +1072,21 @@ function bindEvents() {
       renderEvents();
       previewEvent();
     }));
+  $('ev-start')?.addEventListener('click', () => {
+    evStage = 'start';
+    evSel = null;
+    renderEvents();
+    hint();
+  });
+  $('ev-finish')?.addEventListener('click', finishRoute);
+  $('ev-more')?.addEventListener('click', () => {
+    evStage = 'placing';
+    renderEvents();
+    hint();
+  });
   $('ev-clear')?.addEventListener('click', () => {
+    evStage = null;
+    evSel = null;
     evDraft.route.path = [];
     renderEvents();
     previewEvent();
@@ -1457,7 +1485,28 @@ canvas.addEventListener('mousedown', (e) => {
   }
   if (tool === 'events') {
     const g = groundHit();
-    if (g) routeClick(g);
+    if (!g) return;
+    const r = evDraft?.route;
+    if (r?.path && evStage !== 'start') {
+      const at = routePointAt(g);
+      if (at !== null) {
+        evSel = at;
+        drag = { routePoint: at, sx: e.clientX, sy: e.clientY, at: [g.x, g.z], moved: false };
+        renderEvents();
+        drawEventMarks();
+        return;
+      }
+      const seg = evStage === 'editing' ? routeSegmentAt(g) : null;
+      if (seg !== null) {
+        const p = routePoint(session, g.x, g.z);
+        if (!p) return toast('Add a point on a junction, or on a way through a site or lot.');
+        r.path.splice(seg + 1, 0, p.name);
+        evSel = seg + 1;
+        renderEvents();
+        return previewEvent();
+      }
+    }
+    routeClick(g);
     return;
   }
   if (tool !== 'select') {
@@ -1550,7 +1599,7 @@ window.addEventListener('mousemove', (e) => {
   setRay(e);
   const g = groundHit();
   $('coords').textContent = g ? `x ${g.x.toFixed(1)}   z ${g.z.toFixed(1)}   ground ${g.y.toFixed(1)} m` : '';
-  if (tool !== 'select' && !drag?.road) {
+  if (tool !== 'select' && !drag?.road && drag?.routePoint === undefined) {
     brushAt = g ? { ...g, snapped: tool === 'road' ? roadSnap([g.x, g.z], e) : null } : null;
     showBrush();
     showRoad();
@@ -1560,6 +1609,11 @@ window.addEventListener('mousemove', (e) => {
   if (drag) {
     if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
     drag.moved = true;
+    if (drag.routePoint !== undefined) {
+      if (g) drag.at = [g.x, g.z];
+      drawEventMarks();
+      return;
+    }
     if (drag.road) {
       // A road handle: a stretch's bend, or a point.
       if (g) {
@@ -1630,6 +1684,17 @@ window.addEventListener('mouseup', (e) => {
     const d = drag;
     drag = null;
     if (d.road) return showRoad();
+    if (d.routePoint !== undefined) {
+      // (A route point dropped: onto the junction or way nearest where it's let go.)
+      if (d.moved) {
+        const p = routePoint(session, ...d.at);
+        if (p) evDraft.route.path[d.routePoint] = p.name;
+        else toast('Drop it on a junction, or on a way through a site or lot.');
+        renderEvents();
+        previewEvent();
+      }
+      return drawEventMarks();
+    }
     if (d.moved && d.feature?.type === 'gadget') {
       if (session.setGadget(d.feature.id, { x: Math.round(d.x * 100) / 100, z: Math.round(d.z * 100) / 100, ...(d.rotating ? { yaw: d.yaw } : {}) })) changed(false);
       feature = gadgetFeature(d.feature.id);
@@ -1700,6 +1765,20 @@ window.addEventListener('keydown', (e) => {
     showRoad();
     hint();
     return;
+  }
+  // Placing a race: Space ends it (the last point is the finish); Delete takes out the selected point.
+  if (tool === 'events' && evDraft?.route?.path) {
+    if (e.code === 'Space' && evStage === 'placing') {
+      e.preventDefault();
+      return finishRoute();
+    }
+    if ((e.code === 'Delete' || e.code === 'Backspace') && evSel !== null) {
+      e.preventDefault();
+      evDraft.route.path.splice(evSel, 1);
+      evSel = null;
+      renderEvents();
+      return previewEvent();
+    }
   }
   const step = e.shiftKey ? 0.1 : gridSize();
   const [fx, fz] = flat();
@@ -2351,4 +2430,120 @@ function drawRing() {
   handle.position.set(hx, y, hz);
   for (const o of [circle, arm, handle]) o.renderOrder = 14;
   overlay.add(circle, arm, handle);
+}
+
+// --- Races: start, points, finish ----------------------------------------------------
+// A sprint or circuit is placed in stages: Place start (click it), then its
+// points one by one, then Space (or Finish here): the last point is the
+// finish (a circuit comes back round to its start). After that its points
+// can be dragged to other junctions, added (click the route) or taken out
+// (select, Delete). On the map: numbered points, a start gate (green) and a
+// finish gate (chequered), where the game puts them.
+
+let evStage = null; // null, 'start', 'placing', 'editing'
+let evSel = null; // the selected route point
+const eventMarks = new THREE.Group();
+scene.add(eventMarks);
+
+function routeStageText(r) {
+  if (evStage === 'start') return 'Click the start on the map: a junction, or a way through a site or lot.';
+  if (evStage === 'placing') return `Click where the race goes, point by point. Space (or Finish here): the last point is ${r.kind === 'circuit' ? 'the last before it comes back round to the start' : 'the finish'}.`;
+  if (r.path.length) return 'Drag a point to move it to another junction; click the route to add one; select one and press Delete to take it out.';
+  return 'Press Place start, then click the start on the map.';
+}
+
+function finishRoute() {
+  if ((evDraft?.route?.path?.length || 0) < 2) return toast('Place at least one point after the start.');
+  evStage = 'editing';
+  renderEvents();
+  previewEvent();
+  hint();
+}
+
+// Where a route point is: a junction, or a way through (its middle).
+function routePos(name) {
+  const map = session.map;
+  if (map.plan) {
+    const n = map.byName.get(name);
+    if (n) return [n.x, n.z];
+  } else if (name.includes('.')) {
+    const g = session.district.city.grid;
+    const [c, rw] = name.split('.');
+    const n = map.nodes[g.rows[rw] * g.xs.length + g.cols[c]];
+    if (n && g.cols[c] !== undefined && g.rows[rw] !== undefined) return [n.x, n.z];
+  }
+  const c = (map.corridors || []).find((q) => q.id === name);
+  return c?.points?.length ? c.points[Math.floor(c.points.length / 2)] : null;
+}
+
+function routePointAt(g) {
+  const near = Math.max(6, altitude() * 0.02);
+  const path = evDraft.route.path;
+  let best = null;
+  path.forEach((name, k) => {
+    const p = routePos(name);
+    const d = p ? Math.hypot(p[0] - g.x, p[1] - g.z) : Infinity;
+    if (d < near && (!best || d < best.d)) best = { d, k };
+  });
+  return best ? best.k : null;
+}
+
+// The stretch of route (between points k and k + 1) at a ground point, or null.
+function routeSegmentAt(g) {
+  const path = evDraft.route.path;
+  const pts = path.map(routePos);
+  if (evDraft.route.kind === 'circuit' && pts.length > 2) pts.push(pts[0]);
+  let best = null;
+  for (let k = 0; k + 1 < pts.length; k++) {
+    if (!pts[k] || !pts[k + 1]) continue;
+    const { d } = G.segDist(g.x, g.z, pts[k], pts[k + 1]);
+    if (d < 12 && (!best || d < best.d)) best = { d, k };
+  }
+  return best ? Math.min(best.k, path.length - 1) : null;
+}
+
+function drawEventMarks() {
+  clearGroup(eventMarks);
+  const r = evDraft?.route;
+  if (tool !== 'events' || !r || !session) return;
+  const basic = (color) => new THREE.MeshBasicMaterial({ color, depthTest: false, fog: false });
+  const size = Math.max(2, altitude() * 0.015);
+  // The route's points, numbered by colour: the start green, the finish white, the rest amber, selected cyan.
+  (r.path || []).forEach((name, k) => {
+    let p = routePos(name);
+    if (drag?.routePoint === k && drag.at) p = drag.at;
+    if (!p) return;
+    const last = k === r.path.length - 1 && evStage !== 'placing' && r.kind === 'sprint';
+    const color = evSel === k ? 0x05d9e8 : k === 0 ? 0x39ff14 : last ? 0xffffff : 0xffb000;
+    const m = new THREE.Mesh(new THREE.OctahedronGeometry(size), basic(color));
+    m.position.set(p[0], H(p[0], p[1]) + size * 2, p[1]);
+    m.renderOrder = 15;
+    eventMarks.add(m);
+  });
+  // The gates, where the game puts them (the route it builds).
+  const pts = evPreview?.pts;
+  if (!pts || pts.length < 2 || evStage === 'placing' || evStage === 'start') return;
+  const gate = ([x, z], [nx, nz], kind) => {
+    const yaw = Math.atan2(nx - x, nz - z);
+    const half = 12;
+    const y = H(x, z);
+    const g = new THREE.Group();
+    for (const s of [-1, 1]) g.add(new THREE.Mesh(new THREE.BoxGeometry(0.6, 7, 0.6).translate(s * half, 3.5, 0), basic(0x4a4858)));
+    const cells = 12;
+    for (let c = 0; c < cells; c++) {
+      for (const row of [0, 1]) {
+        const color = kind === 'start' ? 0x39ff14 : (c + row) % 2 ? 0xffffff : 0x111111;
+        g.add(new THREE.Mesh(new THREE.BoxGeometry((half * 2) / cells, 0.8, 0.3).translate(-half + ((c + 0.5) * half * 2) / cells, 6.2 + row * 0.8, 0), basic(kind === 'both' ? (c < cells / 2 ? 0x39ff14 : (c + row) % 2 ? 0xffffff : 0x111111) : color)));
+      }
+    }
+    g.position.set(x, y, z);
+    g.rotation.y = yaw; // (its beam runs along its local x: across the road)
+    g.children.forEach((o) => (o.renderOrder = 15));
+    eventMarks.add(g);
+  };
+  if (evPreview.closed) gate(pts[0], pts[1], 'both');
+  else {
+    gate(pts[0], pts[1], 'start');
+    gate(pts[pts.length - 1], pts[pts.length - 2], 'finish');
+  }
 }
