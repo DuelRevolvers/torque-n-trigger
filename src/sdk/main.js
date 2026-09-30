@@ -893,6 +893,7 @@ function previewEvent() {
     const r = evDraft?.route;
     const needs = r && ((r.kind === 'sprint' || r.kind === 'circuit') ? r.path.length >= 2 : r.kind === 'drag' ? !!r.along && !!r.to : true);
     evPreview = needs ? routePreview({ ...session.withEvents(), events: [] }, r) : null;
+    fitEnds();
     showEventLine();
     const box = $('ev-preview');
     if (box) box.innerHTML = previewText();
@@ -924,14 +925,35 @@ function routeClick(g) {
   if (!r) return;
   if (r.kind === 'sprint' || r.kind === 'circuit') {
     if (!evStage) return toast('Press Place start first (Route, on the right).');
-    const p = routePoint(session, g.x, g.z);
-    if (!p) return toast('Click on a junction, or on a way through a site or lot.');
+    const at = [Math.round(g.x), Math.round(g.z)];
     if (evStage === 'start') {
-      // The start: a new route's first point (or a new first point for one already there).
-      if (r.path.length) r.path[0] = p.name;
-      else r.path.push(p.name);
-      evStage = r.path.length > 1 ? 'editing' : 'placing';
-    } else if (evStage === 'placing' && r.path[r.path.length - 1] !== p.name) r.path.push(p.name);
+      // A route there already: the start moves along it. A new one: it starts here.
+      if (r.path.length >= 2) {
+        Object.assign(evDraft, { startAt: at, startFitted: false });
+        evStage = 'editing';
+      } else {
+        const p = pointNames(g, []);
+        if (!p) return toast('Put the start on a street, a junction, or a way through a site or lot.');
+        r.path = p.names;
+        Object.assign(evDraft, { startAt: at, startEdge: p.edge, startFitted: false });
+        delete evDraft.finishAt;
+        delete evDraft.finishS;
+        delete evDraft.startS;
+        evStage = 'placing';
+      }
+    } else if (evStage === 'placing') {
+      const p = pointNames(g, r.path);
+      if (!p) return toast('Click on a street, a junction, or a way through a site or lot.');
+      // (The start's street: its far end first, from where the race is heading.)
+      if (evDraft.startEdge && r.path.length === 2) {
+        const [A, B] = r.path.map(routePos);
+        const q = routePos(p.names[p.names.length - 1]) || at;
+        if (Math.hypot(A[0] - q[0], A[1] - q[1]) < Math.hypot(B[0] - q[0], B[1] - q[1])) r.path.reverse();
+        delete evDraft.startEdge;
+      }
+      for (const nm of p.names) if (r.path[r.path.length - 1] !== nm) r.path.push(nm);
+      evDraft.lastAt = at;
+    }
   } else if (r.kind === 'drag') {
     // A drag: its start on a street, then its finish (one click) further along it.
     if (!evStage) return toast('Press Place start first (Route, on the right).');
@@ -1049,7 +1071,7 @@ function readEvent() {
 
 function saveEvent() {
   readEvent();
-  const { key: _k, ...spec } = evDraft;
+  const { key: _k, lastAt: _l, startEdge: _e, startFitted: _f, ...spec } = evDraft;
   if (session.change((e) => ((e.events ||= {})[evKey] = spec))) {
     session.broken = null;
     changed(false);
@@ -1495,6 +1517,11 @@ canvas.addEventListener('mousedown', (e) => {
     const g = groundHit();
     if (!g) return;
     const r = evDraft?.route;
+    const flag = r?.path && evStage === 'editing' ? flagAt(g) : null;
+    if (flag) {
+      drag = { flag, sx: e.clientX, sy: e.clientY, at: [g.x, g.z], moved: false };
+      return;
+    }
     if ((r?.path || r?.kind === 'drag') && evStage !== 'start') {
       const at = routePointAt(g);
       if (at !== null) {
@@ -1607,7 +1634,7 @@ window.addEventListener('mousemove', (e) => {
   setRay(e);
   const g = groundHit();
   $('coords').textContent = g ? `x ${g.x.toFixed(1)}   z ${g.z.toFixed(1)}   ground ${g.y.toFixed(1)} m` : '';
-  if (tool !== 'select' && !drag?.road && drag?.routePoint === undefined) {
+  if (tool !== 'select' && !drag?.road && drag?.routePoint === undefined && !drag?.flag) {
     brushAt = g ? { ...g, snapped: tool === 'road' ? roadSnap([g.x, g.z], e) : null } : null;
     showBrush();
     showRoad();
@@ -1617,7 +1644,7 @@ window.addEventListener('mousemove', (e) => {
   if (drag) {
     if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
     drag.moved = true;
-    if (drag.routePoint !== undefined) {
+    if (drag.routePoint !== undefined || drag.flag) {
       if (g) drag.at = [g.x, g.z];
       drawEventMarks();
       return;
@@ -1692,6 +1719,15 @@ window.addEventListener('mouseup', (e) => {
     const d = drag;
     drag = null;
     if (d.road) return showRoad();
+    if (d.flag) {
+      // The start or finish flag dropped: onto the route, where it's let go.
+      if (d.moved) {
+        if (d.flag === 'start') Object.assign(evDraft, { startAt: d.at.map(Math.round), startFitted: false });
+        else evDraft.finishAt = d.at.map(Math.round);
+        previewEvent();
+      }
+      return drawEventMarks();
+    }
     if (d.routePoint !== undefined) {
       // (A route point dropped: onto the junction or way nearest where it's let go.)
       if (d.moved) {
@@ -2464,14 +2500,17 @@ function routeStageText(r) {
     if (r.along && r.to !== null && r.to !== undefined) return 'Drag the start or the finish along the street to move it.';
     return 'Press Place start, then click the start on a street.';
   }
-  if (evStage === 'start') return 'Click the start on the map: a junction, or a way through a site or lot.';
-  if (evStage === 'placing') return `Click where the race goes, point by point. Space (or Finish here): the last point is ${r.kind === 'circuit' ? 'the last before it comes back round to the start' : 'the finish'}.`;
-  if (r.path.length) return 'Drag a point to move it to another junction; click the route to add one; select one and press Delete to take it out.';
+  if (evStage === 'start') return r.path.length >= 2 ? 'Click where on the route the start goes.' : 'Click the start anywhere on a street (or a junction, or a way through a site or lot).';
+  if (evStage === 'placing') return `Click where the race goes: anywhere along the streets, junction to junction. Space (or Finish here): ${r.kind === 'circuit' ? 'it comes back round to the start' : 'where you stop is the finish'}.`;
+  if (r.path.length) return `Drag the start${r.kind === 'sprint' ? ' or finish' : ''} flag along the route; drag a junction point to another; click the route to add one; select one and press Delete to take it out.`;
   return 'Press Place start, then click the start on the map.';
 }
 
 function finishRoute() {
   if ((evDraft?.route?.path?.length || 0) < 2) return toast('Place at least one point after the start.');
+  // Where the last click was is the finish (a sprint's; a circuit finishes at its start).
+  if (evDraft.route.kind === 'sprint' && evDraft.lastAt) evDraft.finishAt = evDraft.lastAt;
+  delete evDraft.startEdge;
   evStage = 'editing';
   renderEvents();
   previewEvent();
@@ -2530,7 +2569,7 @@ function drawEventMarks() {
     let p = mp;
     if (drag?.routePoint === k && drag.at) p = drag.at;
     if (!p) return;
-    const last = k === marks.length - 1 && evStage !== 'placing' && r.kind !== 'circuit';
+    const last = k === marks.length - 1 && evStage !== 'placing' && r.kind === 'drag';
     const color = evSel === k ? 0x05d9e8 : k === 0 ? 0x39ff14 : last ? 0xffffff : 0xffb000;
     const m = new THREE.Mesh(new THREE.OctahedronGeometry(size), basic(color));
     m.position.set(p[0], H(p[0], p[1]) + size * 2, p[1]);
@@ -2558,10 +2597,17 @@ function drawEventMarks() {
     g.children.forEach((o) => (o.renderOrder = 15));
     eventMarks.add(g);
   };
-  if (evPreview.closed) gate(pts[0], pts[1], 'both');
+  // (A gate being dragged goes where the cursor is; a sprint's at its startS and finishS.)
+  const at = (s) => {
+    const p = G.pointAlong(pts, Math.max(0, Math.min(s, G.lineLength(pts))));
+    return [[p.x, p.z], [p.x + p.dx, p.z + p.dz]];
+  };
+  const dragged = (flag, fallback) => (drag?.flag === flag && drag.at ? [drag.at, [drag.at[0] + 0.01, drag.at[1] + 1]] : fallback);
+  if (evPreview.closed) gate(...dragged('start', [pts[0], pts[1]]), 'both');
   else {
-    gate(pts[0], pts[1], 'start');
-    gate(pts[pts.length - 1], pts[pts.length - 2], 'finish');
+    const sprint = r.kind === 'sprint';
+    gate(...dragged('start', sprint && evDraft.startS ? at(evDraft.startS) : [pts[0], pts[1]]), 'start');
+    gate(...dragged('finish', sprint && evDraft.finishS ? at(evDraft.finishS) : [pts[pts.length - 1], [2 * pts[pts.length - 1][0] - pts[pts.length - 2][0], 2 * pts[pts.length - 1][1] - pts[pts.length - 2][1]]]), 'finish');
   }
 }
 
@@ -2587,4 +2633,85 @@ function dropDragEnd(k, at) {
   const street = f?.type === 'street' || f?.type === 'gridStreet' ? f.name : null;
   if (street !== r.along) return toast(`Keep it on ${r.along}.`);
   r[k === 0 ? 'from' : 'to'] = [Math.round(at[0]), Math.round(at[1])];
+}
+
+// --- Races: start and finish anywhere ------------------------------------------------
+// A route runs junction to junction (the game's routes do); a click along a
+// street between junctions puts both of that street's junctions in the route,
+// and the start and finish are wherever they were clicked (a sprint's startS
+// and finishS: its grid and finish line that far along the route; a
+// circuit's start: its loop turned to begin on that street, route.start in).
+
+// What a click adds to a route: { names, edge (a street's two ends, if it's along one) }.
+function pointNames(g, path) {
+  const p = routePoint(session, g.x, g.z);
+  if (p) return { names: [p.name] };
+  const map = session.map;
+  let best = null;
+  for (const e of map.edgeList || []) {
+    if (!e.street || e.street.drain) continue;
+    const A = map.nodes[e.a];
+    const B = map.nodes[e.b];
+    const q = G.nearestOnLine(e.pts, g.x, g.z);
+    if (A.name && B.name && q.d < e.street.half + 3 && (!best || q.d < best.q.d)) best = { q, A, B };
+  }
+  if (!best) return null;
+  const { A, B } = best;
+  const prev = path.length ? routePos(path[path.length - 1]) : null;
+  // (From where the route is coming: the nearer end first.)
+  const ab = !prev || Math.hypot(A.x - prev[0], A.z - prev[1]) <= Math.hypot(B.x - prev[0], B.z - prev[1]);
+  return { names: ab ? [A.name, B.name] : [B.name, A.name], edge: true };
+}
+
+// The start and finish, from where they were clicked to how far along the route.
+function fitEnds() {
+  const d = evDraft;
+  const r = d?.route;
+  const pts = evPreview?.pts;
+  if (!r?.path || !pts || evPreview.error) return;
+  if (r.kind === 'circuit') {
+    if (!d.startAt || d.startFitted) return;
+    // The stretch the start is on goes first; the start that far along it.
+    const pos = r.path.map(routePos);
+    let best = null;
+    pos.forEach((a, k) => {
+      const b = pos[(k + 1) % pos.length];
+      if (!a || !b) return;
+      const { d: dd } = G.segDist(d.startAt[0], d.startAt[1], a, b);
+      if (!best || dd < best.dd) best = { dd, k };
+    });
+    if (!best) return;
+    r.path = [...r.path.slice(best.k), ...r.path.slice(0, best.k)];
+    const first = routePreview({ ...session.withEvents(), events: [] }, { ...r, start: 0.5 });
+    if (first.pts) r.start = Math.max(1, Math.round(G.nearestOnLine(first.pts, ...d.startAt).s + 0.5));
+    d.startFitted = true;
+    evPreview = routePreview({ ...session.withEvents(), events: [] }, r);
+    return;
+  }
+  if (r.kind !== 'sprint') return;
+  const L = G.lineLength(pts);
+  const sOf = (p) => G.nearestOnLine(pts, p[0], p[1]).s;
+  if (d.startAt) d.startS = Math.round(Math.min(sOf(d.startAt), L - 60));
+  else delete d.startS;
+  if (d.finishAt) d.finishS = Math.round(Math.max(sOf(d.finishAt), (d.startS || 40) + 50));
+  else delete d.finishS;
+}
+
+// The start or finish gate under a ground point, while editing.
+function flagAt(g) {
+  const pts = evPreview?.pts;
+  if (!pts || evPreview.error) return null;
+  const near = Math.max(10, altitude() * 0.03);
+  const L = G.lineLength(pts);
+  const pointAt = (s) => {
+    const p = G.pointAlong(pts, Math.max(0, Math.min(s, L)));
+    return [p.x, p.z];
+  };
+  const r = evDraft.route;
+  const start = r.kind === 'sprint' && evDraft.startS ? pointAt(evDraft.startS) : pts[0];
+  const finish = r.kind === 'sprint' ? (evDraft.finishS ? pointAt(evDraft.finishS) : pts[pts.length - 1]) : null;
+  const d = (p) => (p ? Math.hypot(p[0] - g.x, p[1] - g.z) : Infinity);
+  if (d(start) < near && d(start) <= d(finish)) return 'start';
+  if (d(finish) < near) return 'finish';
+  return null;
 }

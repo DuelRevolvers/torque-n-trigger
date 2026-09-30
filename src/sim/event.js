@@ -16,7 +16,7 @@ const HOLD = { ...neutralInput(), handbrake: true };
 const COUNTDOWN = 3;
 const STYLE = { driftPerSecond: 25, airPerSecond: 60, nearMiss: 40 };
 
-// def: { type: 'sprint'|'circuit'|'arena'|'drag', laps?, mode?, timeLimit?, pit?, finishS? }
+// def: { type: 'sprint'|'circuit'|'arena'|'drag', laps?, mode?, timeLimit?, pit?, startS?, finishS? }
 export function createEventState(def, track) {
   return {
     type: def.type,
@@ -75,7 +75,8 @@ export function gridPoses(track, def, count) {
     const lanes = m ? (count <= 2 ? [-(m + 4), m + 4] : [-(m + 8), -(m + 3.4), m + 3.4, m + 8]) : count <= 2 ? [-3, 3] : [-6, -2, 2, 6];
     return Array.from({ length: count }, (_, i) => pose(12, lanes[i % lanes.length]));
   }
-  const back = track.closed ? track.length - 10 : 40;
+  // (A sprint can start further along its route: startS, set in the T&T SDK.)
+  const back = track.closed ? track.length - 10 : Math.max(40, def.startS ?? 40);
   return Array.from({ length: count }, (_, i) => {
     const s = back - Math.floor(i / 2) * 8;
     return pose(s, (i % 2 ? 1 : -1) * gridLateral(track, track.closed ? (s + track.length) % track.length : s));
