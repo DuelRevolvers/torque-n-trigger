@@ -11,6 +11,7 @@ import { buildAuthoredStructures } from './arenaView.js';
 import { buildPlanDistrictView } from './planView.js';
 import { distantSpire } from './spireLandmark.js';
 import { itemDrawer } from './itemCapture.js';
+import { npcCar } from './npcCars.js';
 import { paintView } from './groundPaint.js';
 
 // A whole city district, built once and shared by every event held there:
@@ -513,8 +514,7 @@ function districtViewOf(map, tex) {
       }
       case 'car': {
         const y = g0(x, z);
-        paintedGeos.push(colorBox(1.9, 1.1, 4.4, x, y + 0.75, z, CAR_COLORS[Math.floor(rng() * CAR_COLORS.length)], it.yaw));
-        darkGeos.push(box(1.7, 0.55, 2.2, x, y + 1.55, z, it.yaw));
+        paintedGeos.push(npcCar(Math.floor(rng() * 1000), { x, y: y + 0.06, z, yaw: it.yaw || 0 }));
         break;
       }
       case 'planter': {

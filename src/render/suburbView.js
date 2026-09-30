@@ -1,3 +1,4 @@
+import { npcCar } from './npcCars.js';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
@@ -456,15 +457,7 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
     car(it) {
       const o = it.obb;
       const y = H(o.x, o.z);
-      const color = CAR_COLORS[it.color % CAR_COLORS.length];
-      if (it.minivan) {
-        paint(obbBox({ ...o, hw: 0.98, hd: 2.4 }, 1.25, y + 0.3), color);
-        paint(obbBox({ ...o, hw: 0.9, hd: 1.7 }, 0.5, y + 1.55), '#1c1c28');
-        paint(obbBox({ ...o, hw: 0.92, hd: 1.75 }, 0.08, y + 2.05), color);
-      } else {
-        paint(obbBox({ ...o, hw: 0.95, hd: 2.2 }, 0.9, y + 0.3), color);
-        paint(obbBox({ ...o, hw: 0.85, hd: 1.1 }, 0.5, y + 1.2), '#1c1c28');
-      }
+      B.painted.push(npcCar(it.color, { x: o.x, y, z: o.z, yaw: o.yaw, type: it.minivan ? 'van' : undefined }));
     },
     tree(it) {
       const o = it.obb;

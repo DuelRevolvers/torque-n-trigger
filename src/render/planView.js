@@ -13,6 +13,7 @@ import { buildRoofDistrictView } from './roofView.js';
 import { underView } from './underView.js';
 import { spireView } from './spireView.js';
 import { itemDrawer } from './itemCapture.js';
+import { npcCar } from './npcCars.js';
 
 // A plan district (the Neon Strip on): its ground in layers (sidewalk
 // everywhere, the lots on top, then the site surfaces, the roads along their
@@ -744,8 +745,7 @@ function makeDrawers(ctx) {
     car(it) {
       const o = it.obb;
       const y = at(o.x, o.z);
-      B.painted.push(tint(obbBox({ ...o, hw: 0.95, hd: 2.2 }, 0.9, y + 0.3), ['#b83a3a', '#3a6ab8', '#c8c8c8', '#2a2a30', '#d8a020', '#3a8a5a', '#6a3a8a'][it.color % 7]));
-      B.dark.push(obbBox({ ...o, hw: 0.85, hd: 1.1 }, 0.5, y + 1.2));
+      B.painted.push(npcCar(it.color, { x: o.x, y, z: o.z, yaw: o.yaw }));
     },
     mast(it) {
       const y = at(it.x, it.z);

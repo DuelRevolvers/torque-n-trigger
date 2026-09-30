@@ -8,6 +8,7 @@ import { buildAuthoredStructures } from './arenaView.js';
 import { gustAt } from '../sim/gusts.js';
 import * as G from '../sim/geom2d.js';
 import { itemDrawer } from './itemCapture.js';
+import { npcCar, NPC_COLORS } from './npcCars.js';
 
 // A rooftop district (Chrome Heights): the city far below (its streets,
 // lamps, traffic and the river), the glass towers up to their decks, the roof
@@ -531,8 +532,7 @@ export function buildRoofDistrictView(map, tex) {
         return paint(obbBox({ ...o, hd: 0.2 }, 0.5, it.y), '#5a6070');
       }
       case 'car':
-        paint(obbBox({ ...o, hw: 0.95, hd: 2.2 }, 0.9, it.y + 0.3), CAR_COLORS[(it.color || 0) % CAR_COLORS.length]);
-        return paint(obbBox({ ...o, hw: 0.85, hd: 1.1 }, 0.5, it.y + 1.2), '#1c2230');
+        return B.painted.push(npcCar(it.color || 0, { x: o.x, y: it.y, z: o.z, yaw: o.yaw }));
       case 'gate':
         paint(obbBox(o, 1.1, it.y), '#e8e8f0');
         return B.cyan.push(obbBox({ ...o, hd: o.hd + 0.02 }, 0.12, it.y + 1.1));
@@ -664,7 +664,9 @@ export function buildRoofDistrictView(map, tex) {
       for (let q = 0; q < 10; q++) cars.push({ axis, val, L, from, off: (q * 0.137 + val * 0.001) % 1, lane: q % 2 ? 4 : -4, speed: q % 2 ? 9 : -8 });
     }
     if (!cars.length) return null;
-    const body = new THREE.InstancedMesh(new THREE.BoxGeometry(1.9, 1.3, 4.4).translate(0, 0.8, 0), litMaterial({ color: '#8a8e98' }), cars.length);
+    // (The game's own car bodies, white, coloured one by one.)
+    const body = new THREE.InstancedMesh(npcCar(0, { paint: '#ffffff' }), litMaterial({ vertexColors: true }), cars.length);
+    for (let k = 0; k < cars.length; k++) body.setColorAt(k, new THREE.Color(NPC_COLORS[k % NPC_COLORS.length]));
     const lights = new THREE.InstancedMesh(mergeGeometries([box(1.6, 0.25, 0.1, 0, 0.8, 2.25)]), glowMaterial({ color: '#fff4d0', intensity: 2.4 }), cars.length);
     body.frustumCulled = false;
     lights.frustumCulled = false;
