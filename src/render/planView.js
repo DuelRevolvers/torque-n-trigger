@@ -398,9 +398,19 @@ export function buildPlanDistrictView(map, tex) {
         const sA = (wx * B.d[1] - wz * B.d[0]) / den;
         const sB = (wx * A.d[1] - wz * A.d[0]) / den;
         const P = [px + A.d[0] * sA, pz + A.d[1] * sA];
+        // (Kerbs meeting behind the junction, or past where a road ends (a very
+        // tight angle, a short road): no room for a curve; the corner is cut
+        // straight, and the roads kept clear of each other.)
+        const cut = () => {
+          A.need = Math.max(A.need, Math.min(Math.max(sA, 0), A.max));
+          B.need = Math.max(B.need, Math.min(Math.max(sB, 0), B.max));
+          return { A, B, chord: true };
+        };
+        if (sA < 0 || sB < 0 || sA > A.max - 1 || sB > B.max - 1) return cut();
         // ...and the curve round that corner, where it leaves each kerb.
         const tan = Math.tan(phi / 2);
-        const R = Math.max(0.5, Math.min(4 + Math.min(A.h, B.h) * 0.4, (A.max - sA) * tan, (B.max - sB) * tan));
+        const R = Math.min(4 + Math.min(A.h, B.h) * 0.4, (A.max - sA) * tan, (B.max - sB) * tan);
+        if (R < 1.5) return cut();
         const T = R / tan;
         A.need = Math.max(A.need, sA + T);
         B.need = Math.max(B.need, sB + T);
@@ -439,6 +449,10 @@ export function buildPlanDistrictView(map, tex) {
       pts.push(end(A, -1), end(A, 1));
       const k = J.corners[i];
       if (!k || k.chord) return;
+      // (A curve that would start past either road's end: cut straight.)
+      const along = (p, X) => (p[0] - n.x) * X.d[0] + (p[1] - n.z) * X.d[1];
+      const cOf = (X) => clearAt.get(`${X.e.id}:${n.id}`) || 0;
+      if (along(k.ta, A) > cOf(A) + 0.01 || along(k.tb, k.B) > cOf(k.B) + 0.01) return;
       const arc = cornerArc(k);
       pts.push(...arc);
       // (Kerbs: round the curve, and along each road's edge back to its end.)
