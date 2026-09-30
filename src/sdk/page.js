@@ -155,7 +155,7 @@ export const SDK_HTML = `
         <label>Width <select id="road-width"><option value="lane">Lane (7 m)</option><option value="street" selected>Street (12 m)</option><option value="avenue">Avenue (20 m)</option></select></label>
         <label>Surface <select id="road-surface"><option value="asphalt">Asphalt</option><option value="dirt">Dirt (off-road, a shortcut)</option></select></label>
         <button id="road-build">Build street</button>
-        <p class="tip">Click along the way (15° steps; Alt: any angle), then Space (or double-click) to stop placing. Then drag the blue handles to curve a stretch (double-click one to straighten it) and the amber ones to move a point, and Build street. It joins any street it starts, ends or crosses on. Backspace takes a point back, Esc cancels.</p>
+        <p class="tip">Click along the way (15° steps; Alt: any angle), then Space (or double-click) to stop placing. Then drag the blue handles to curve a stretch (double-click one to straighten it) and the amber ones to move a point, and Build street. It joins any street it starts, ends or crosses on. (Rustline Docks: along a row or column between two junctions it's a grid street; any other line, a street laid over the grid that clears what's in its way.) Backspace takes a point back, Esc cancels.</p>
       </div>
       <div id="lot-opts" class="opts" hidden>
         <label>Block <select id="lot-kind"></select></label>

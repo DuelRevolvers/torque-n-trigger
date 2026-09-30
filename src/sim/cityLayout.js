@@ -16,7 +16,8 @@ import { makeRng } from '../parts/generate.js';
 import { SETBACK, quadRing, splitLot, nearPath, edgeSpans, TUNNEL_HALF } from './city.js';
 import { authoredLayout } from './authoredLayout.js';
 import { planLayout } from './planLayout.js';
-import { assignKeys, applyEdits } from './layoutEdits.js';
+import { assignKeys, applyEdits, itemCentre } from './layoutEdits.js';
+import { nearestOnLine } from './geom2d.js';
 
 const bases = new WeakMap();
 const cache = new WeakMap();
@@ -25,10 +26,20 @@ const cache = new WeakMap();
 export function baseLayout(map) {
   if (!bases.has(map)) {
     const layout = map.plan ? planLayout(map) : map.authored ? authoredLayout(map) : buildLayout(map);
+    // Streets drawn off a grid district's grid: what stood in their way is gone.
+    if (map.extraStreets?.length) layout.items = layout.items.filter((it) => !inExtraStreet(map.extraStreets, it));
     assignKeys(layout.items);
     bases.set(map, layout);
   }
   return bases.get(map);
+}
+
+// An item standing in a street drawn off the grid (its footprint's reach
+// within the street and its pavements).
+function inExtraStreet(list, it) {
+  const [x, z] = itemCentre(it);
+  const reach = it.obb ? Math.hypot(it.obb.hw, it.obb.hd) * 0.8 : Array.isArray(it.r) ? Math.hypot(it.r[1] - it.r[0], it.r[3] - it.r[2]) * 0.4 : 1;
+  return list.some((st) => nearestOnLine(st.pts, x, z).d < st.width / 2 + 3 + reach);
 }
 
 // The layout with the district's edits made: { items, draw, orphans }.

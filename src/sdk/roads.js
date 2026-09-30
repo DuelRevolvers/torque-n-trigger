@@ -299,6 +299,10 @@ export function deleteSite(session, f) {
 function gridFeatureAt(session, x, z) {
   const map = session.map;
   const at = [x, z];
+  // A street drawn off the grid (only the edits' own: a published one is the district's).
+  const own = session.doc.edits.grid?.extra || [];
+  const i = own.findIndex((st) => G.nearestOnLine(st.pts, x, z).d < st.width / 2 + 1.5);
+  if (i >= 0) return { type: 'street', at, extra: i, name: own[i].name, pts: own[i].pts };
   let best = null;
   for (const e of map.edges.values()) {
     const A = map.nodes[e.a];
@@ -385,5 +389,27 @@ export function lotAt(session, x, z) {
 export function gridLotEdit(session, [i, j], kind) {
   const ge = structuredClone(session.doc.edits.grid || {});
   ge.lots = [...(ge.lots || []).filter((L) => L.at[0] !== i || L.at[1] !== j), { at: [i, j], kind }];
+  return ge;
+}
+
+// Rustline's road tool off the grid: a street along any line (curves too),
+// drawn over the ground, clearing what stands in its way.
+export function extraRoadEdit(session, clicks, { name, width = 'street', surface = 'asphalt', bends = [] }) {
+  if (clicks.length < 2) throw new Error('Click at least two places for a street.');
+  const pts = [];
+  for (let k = 0; k + 1 < clicks.length; k++) {
+    const seg = bends[k] ? curvePts(clicks[k], bends[k], clicks[k + 1], 12) : [clicks[k], clicks[k + 1]];
+    pts.push(...(k ? seg.slice(1) : seg));
+  }
+  const ge = structuredClone(session.doc.edits.grid || {});
+  const W = { lane: 7, street: 12, avenue: 20 };
+  ge.extra = [...(ge.extra || []), { name: (name || '').trim() || 'New Street', width: W[width] || 12, surface, pts: pts.map(([x, z]) => [Math.round(x * 100) / 100, Math.round(z * 100) / 100]) }];
+  return ge;
+}
+
+// Takes out a street drawn off the grid (the n-th of those the edits added).
+export function removeExtra(session, n) {
+  const ge = structuredClone(session.doc.edits.grid || {});
+  ge.extra = (ge.extra || []).filter((_, k) => k !== n);
   return ge;
 }

@@ -13,6 +13,7 @@ import { distantSpire } from './spireLandmark.js';
 import { itemDrawer } from './itemCapture.js';
 import { npcCar } from './npcCars.js';
 import { paintView } from './groundPaint.js';
+import { extraStreetsView } from './extraStreets.js';
 
 // A whole city district, built once and shared by every event held there:
 // streets and sidewalks in the district's own surface (roof decks with gaps to
@@ -76,6 +77,8 @@ export function buildDistrictView(map, tex) {
   const group = districtViewOf(map, tex);
   const paint = paintView(map, tex); // ground painted in the T&T SDK
   if (paint) group.add(paint);
+  const extra = extraStreetsView(map, tex); // streets drawn off a grid district's grid
+  if (extra) group.add(extra);
   const far = distantSpire(map.style);
   if (far) {
     group.add(far);

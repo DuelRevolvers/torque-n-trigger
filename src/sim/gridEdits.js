@@ -9,10 +9,12 @@
 //   sites: { name: null },         a site taken out
 //   add: [[i, j, 'h' | 'v', name]], a run of street put in between two junctions
 //   lots: [{ at: [i, j], kind }],  what a block is
+//   extra: [{ name, width, surface, pts }], a street off the grid (any line, curves as points):
+//     drawn over the ground, what stands in its way cleared (not on the grid: no event routes)
 // }
 
 export const hasGridEdits = (ge) =>
-  !!ge && (ge.remove?.length || 0) + (ge.add?.length || 0) + (ge.lots?.length || 0) + Object.keys(ge.xs || {}).length + Object.keys(ge.zs || {}).length + Object.keys(ge.sites || {}).length > 0;
+  !!ge && (ge.remove?.length || 0) + (ge.add?.length || 0) + (ge.extra?.length || 0) + (ge.lots?.length || 0) + Object.keys(ge.xs || {}).length + Object.keys(ge.zs || {}).length + Object.keys(ge.sites || {}).length > 0;
 
 // The district's city data with its grid edits made (a new object).
 export function applyGridEdits(city, ge) {
@@ -54,5 +56,5 @@ export function applyGridEdits(city, ge) {
   const same = (L, M) => L.at[0] === M.at[0] && L.at[1] === M.at[1];
   const lots = [...(g.lots || []).filter((L) => !(ge.lots || []).some((M) => same(L, M))), ...(ge.lots || [])];
   const sites = (city.sites || []).filter((s) => !((s.name || s.kind) in (ge.sites || {})));
-  return { ...city, grid: { ...g, xs, zs, streets, lots }, sites };
+  return { ...city, grid: { ...g, xs, zs, streets, lots, extra: [...(g.extra || []), ...(ge.extra || [])] }, sites };
 }

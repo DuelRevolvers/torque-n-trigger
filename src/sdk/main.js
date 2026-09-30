@@ -17,7 +17,7 @@ import { SPECIALS, progress, triggerText, specialOfType, specialOfGadget } from 
 import { buildArena } from '../sim/arena.js';
 import { gadgetView } from '../render/gadgetView.js';
 import { readStore } from '../content/idb.js';
-import { curvePts, roadEdit, gridRoadEdit, lotEdit, gridLotEdit, lotAt, lotKinds, linePoints, featureAt, deleteStreet, setStreet, moveNode, removeNode, deleteSite, gridRemove, gridMoveLine } from './roads.js';
+import { curvePts, roadEdit, gridRoadEdit, extraRoadEdit, removeExtra, lotEdit, gridLotEdit, lotAt, lotKinds, linePoints, featureAt, deleteStreet, setStreet, moveNode, removeNode, deleteSite, gridRemove, gridMoveLine } from './roads.js';
 import * as G from '../sim/geom2d.js';
 import { saveOverride, listOverrides, removeOverride, setOverrideOn, shippedMap } from '../content/store.js';
 import { listMaps, saveMap, deleteMap, sdkGet, sdkPut } from '../content/library.js';
@@ -680,7 +680,8 @@ function deleteFeature() {
     return changed(false);
   }
   const make =
-    f.type === 'street' ? () => ({ plan: deleteStreet(session, f) })
+    f.type === 'street' && f.extra !== undefined ? () => ({ grid: removeExtra(session, f.extra) })
+      : f.type === 'street' ? () => ({ plan: deleteStreet(session, f) })
       : f.type === 'node' ? () => ({ plan: removeNode(session, f.name) })
         : f.type === 'site' ? () => deleteSite(session, f)
           : () => ({ grid: gridRemove(session, f) });
@@ -748,7 +749,20 @@ function buildRoad() {
   const name = $('road-name').value;
   let patch;
   try {
-    patch = session.map.plan ? { plan: roadEdit(session, pts, { width: $('road-width').value, surface: $('road-surface').value, name, bends }) } : { grid: gridRoadEdit(session, pts, name) };
+    const opts = { width: $('road-width').value, surface: $('road-surface').value, name, bends };
+    if (session.map.plan) patch = { plan: roadEdit(session, pts, opts) };
+    else {
+      // Rustline: along a row or column between two junctions, a grid street; any other line, a street off the grid.
+      let grid = null;
+      if (!bends.some(Boolean)) {
+        try {
+          grid = gridRoadEdit(session, pts, name);
+        } catch {
+          grid = null;
+        }
+      }
+      patch = { grid: grid || extraRoadEdit(session, pts, opts) };
+    }
   } catch (err) {
     window.alert(err.message);
     return;

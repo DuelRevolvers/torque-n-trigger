@@ -44,7 +44,7 @@ const painted = (map, style) => Object.assign(map, { paint: style.edits?.paint |
 function generateMap(style) {
   // Authored districts (docs/districts) are built from their data, not generated.
   if (style.plan) return painted(planMap(style), style);
-  if (style.authored) return painted(sculptMap(authoredGridMap(style), style.edits?.terrain), style);
+  if (style.authored) return painted(Object.assign(sculptMap(authoredGridMap(style), style.edits?.terrain), { extraStreets: style.grid?.extra || [] }), style);
   const rng = makeRng(style.seed);
   const span = ([a, b]) => a + rng() * (b - a);
   const { cols, rows } = style;
