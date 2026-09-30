@@ -1577,7 +1577,9 @@ window.addEventListener('keydown', (e) => {
   const step = e.shiftKey ? 0.1 : gridSize();
   const [fx, fz] = flat();
   const [rx, rz] = right();
-  switch (e.code) {
+  // (The key pressed, as the default key of the action it's bound to: see Controls.)
+  const code = boundCode(e.code);
+  switch (code) {
     case 'Digit1':
     case 'Digit2':
     case 'Digit3':
@@ -1587,14 +1589,14 @@ window.addEventListener('keydown', (e) => {
     case 'Digit7':
     case 'Digit8':
     case 'Digit9':
-      setTool(['select', 'raise', 'lower', 'smooth', 'flatten', 'paint', 'erase', 'road', 'lot'][Number(e.code.slice(5)) - 1]);
+      setTool(['select', 'raise', 'lower', 'smooth', 'flatten', 'paint', 'erase', 'road', 'lot'][Number(code.slice(5)) - 1]);
       break;
     case 'Digit0':
       setTool('events');
       break;
     case 'BracketLeft':
     case 'BracketRight':
-      $('radius').value = Number($('radius').value) + (e.code === 'BracketLeft' ? -2 : 2);
+      $('radius').value = Number($('radius').value) + (code === 'BracketLeft' ? -2 : 2);
       $('radius').dispatchEvent(new Event('input'));
       break;
     case 'Delete':
@@ -1603,7 +1605,7 @@ window.addEventListener('keydown', (e) => {
       break;
     case 'KeyQ':
     case 'KeyE':
-      turn(e.code === 'KeyQ' ? 1 : -1, e.shiftKey);
+      turn(code === 'KeyQ' ? 1 : -1, e.shiftKey);
       break;
     case 'ArrowUp':
       nudge(fx * step, fz * step);
@@ -1694,12 +1696,12 @@ function frame(now) {
   last = now;
   pollPad(dt);
   if (flying && session) {
-    const speed = (keys.has('ShiftLeft') || keys.has('ShiftRight') ? 4 : 1) * (20 + altitude() * 0.6) * dt;
+    const speed = (held('flyFast') || keys.has('ShiftRight') ? 4 : 1) * (20 + altitude() * 0.6) * dt;
     const f = forward();
     const [rx, rz] = right();
-    const ax = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
-    const az = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
-    const ay = (keys.has('KeyE') ? 1 : 0) - (keys.has('KeyQ') ? 1 : 0);
+    const ax = (held('flyRight') ? 1 : 0) - (held('flyLeft') ? 1 : 0);
+    const az = (held('flyForward') ? 1 : 0) - (held('flyBack') ? 1 : 0);
+    const ay = (held('flyUp') ? 1 : 0) - (held('flyDown') ? 1 : 0);
     cam.x += (f.x * az + rx * ax) * speed;
     cam.y += (f.y * az + ay) * speed;
     cam.z += (f.z * az + rz * ax) * speed;
@@ -2044,3 +2046,113 @@ canvas.addEventListener('touchend', (e) => {
   if (touch?.mode === 'mouse' && e.changedTouches[0]) mouseAt('mouseup', e.changedTouches[0]);
   if (!e.touches.length) touch = null;
 }, { passive: false });
+
+// --- Controls ------------------------------------------------------------------------
+// Every key the SDK uses, changeable (kept in this browser). Each action has a
+// default key; the keydown handler reads the key pressed as the default key of
+// the action it's bound to (boundCode), and flying reads held(action).
+
+const ACTIONS = [
+  ['Flying (hold the right mouse button)', [
+    ['flyForward', 'Forward', 'KeyW'], ['flyBack', 'Back', 'KeyS'], ['flyLeft', 'Left', 'KeyA'], ['flyRight', 'Right', 'KeyD'],
+    ['flyDown', 'Down', 'KeyQ'], ['flyUp', 'Up', 'KeyE'], ['flyFast', 'Faster', 'ShiftLeft'],
+  ]],
+  ['Editing', [
+    ['delete', 'Delete the selection', 'Delete'], ['turnLeft', 'Turn left 15° (Shift: 1°)', 'KeyQ'], ['turnRight', 'Turn right 15° (Shift: 1°)', 'KeyE'],
+    ['nudgeUp', 'Nudge forward (Shift: 10 cm)', 'ArrowUp'], ['nudgeDown', 'Nudge back', 'ArrowDown'], ['nudgeLeft', 'Nudge left', 'ArrowLeft'], ['nudgeRight', 'Nudge right', 'ArrowRight'],
+    ['focus', 'Focus the selection', 'KeyF'], ['snap', 'Snapping on/off', 'KeyG'], ['cancel', 'Cancel / deselect', 'Escape'],
+  ]],
+  ['View and play', [
+    ['topView', 'Top view', 'Tab'], ['testDrive', 'Test drive (Shift: race the event)', 'KeyP'],
+  ]],
+  ['Tools', [
+    ['tool1', 'Select', 'Digit1'], ['tool2', 'Raise', 'Digit2'], ['tool3', 'Lower', 'Digit3'], ['tool4', 'Smooth', 'Digit4'], ['tool5', 'Flatten', 'Digit5'],
+    ['tool6', 'Paint', 'Digit6'], ['tool7', 'Erase paint', 'Digit7'], ['tool8', 'Road', 'Digit8'], ['tool9', 'Lot', 'Digit9'], ['tool0', 'Events', 'Digit0'],
+    ['smaller', 'Brush smaller', 'BracketLeft'], ['bigger', 'Brush bigger', 'BracketRight'],
+  ]],
+];
+const DEFAULT_KEY = Object.fromEntries(ACTIONS.flatMap(([, list]) => list.map(([a, , k]) => [a, k])));
+const KEYS_STORE = 'tt-sdk:keys';
+let binding = { ...DEFAULT_KEY };
+try {
+  Object.assign(binding, JSON.parse(localStorage.getItem(KEYS_STORE) || '{}'));
+} catch {
+  // (The defaults.)
+}
+const keyOf = (action) => binding[action];
+const held = (action) => keys.has(keyOf(action));
+// The fly keys are only read while flying, so they can share keys with the editing ones.
+const FLY = new Set(ACTIONS[0][1].map(([a]) => a));
+function boundCode(code) {
+  const action = Object.keys(binding).find((a) => !FLY.has(a) && binding[a] === code);
+  // (A key no action has, and that isn't one's default either, passes as itself: Backspace.)
+  return action ? DEFAULT_KEY[action] : Object.values(DEFAULT_KEY).includes(code) ? null : code;
+}
+
+const KEY_NAMES = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', BracketLeft: '[', BracketRight: ']', ShiftLeft: 'Shift', ShiftRight: 'Right Shift', ControlLeft: 'Ctrl', AltLeft: 'Alt', Space: 'Space', Escape: 'Esc', Backquote: '`', Minus: '-', Equal: '=', Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/', Backslash: '\\' };
+const keyName = (code) => KEY_NAMES[code] || code.replace(/^Key|^Digit|^Numpad/, (m) => (m === 'Numpad' ? 'Num ' : ''));
+
+const FIXED_KEYS = [
+  ['Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z)', 'Undo / redo'], ['Ctrl+S', 'Save'], ['Ctrl+D', 'Duplicate'], ['Backspace', 'Delete the selection (also)'],
+  ['Enter / Backspace / Esc', 'Road tool: build / take a point back / cancel'], ['Alt (hold)', 'No snapping while moving or placing'],
+];
+const MOUSE = [
+  ['Left click', 'Select (a street, junction, site or gadget where there\'s no object); place; brush; draw a road'],
+  ['Left drag', 'Move the selection (or brush, or scatter)'], ['Right button (hold)', 'Look around, and fly with the keys'],
+  ['Middle drag', 'Pan'], ['Wheel', 'Zoom; while moving or placing: turn 15° (Shift: 1°)'], ['Double-click', 'Road tool: build the street'],
+];
+
+let waiting = null; // the action whose key is being changed
+function renderControls() {
+  const panel = $('controls-panel');
+  const row = ([a, label]) => `<div class="krow"><span>${esc(label)}</span><button data-bind="${a}" class="${waiting === a ? 'wait' : ''}">${waiting === a ? 'Press a key…' : esc(keyName(keyOf(a)))}</button></div>`;
+  panel.innerHTML = `<h3>Controls</h3>
+    <p class="note">Click a key to change it, then press the new one (Esc keeps it). A key another action had is swapped over.</p>
+    ${ACTIONS.map(([title, list]) => `<h4>${esc(title)}</h4>${list.map(row).join('')}`).join('')}
+    <h4>Fixed keys</h4>${FIXED_KEYS.map(([k, what]) => `<div class="krow fixed"><span>${esc(what)}</span><span>${esc(k)}</span></div>`).join('')}
+    <h4>Mouse</h4>${MOUSE.map(([k, what]) => `<div class="krow fixed"><span>${esc(what)}</span><span>${esc(k)}</span></div>`).join('')}
+    <div class="row" style="margin-top:10px"><button id="keys-reset">Reset to defaults</button><button id="keys-close">Close</button></div>`;
+  panel.querySelectorAll('[data-bind]').forEach((b) => b.addEventListener('click', () => {
+    waiting = b.dataset.bind;
+    renderControls();
+  }));
+  $('keys-reset').addEventListener('click', () => {
+    binding = { ...DEFAULT_KEY };
+    saveKeys();
+    renderControls();
+  });
+  $('keys-close').addEventListener('click', () => toggleControls(false));
+}
+
+function saveKeys() {
+  try {
+    localStorage.setItem(KEYS_STORE, JSON.stringify(binding));
+  } catch {
+    // (Kept for this session only.)
+  }
+}
+
+// The next key pressed, for the action waiting (before any other handler sees it).
+window.addEventListener('keydown', (e) => {
+  if (!waiting) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  if (e.code !== 'Escape' && !['ControlLeft', 'ControlRight', 'MetaLeft', 'MetaRight', 'AltLeft', 'AltRight'].includes(e.code)) {
+    // A key another action in the same group had goes to it in exchange (flying keys only clash with flying ones).
+    const fly = FLY.has(waiting);
+    const other = Object.keys(binding).find((a) => a !== waiting && FLY.has(a) === fly && binding[a] === e.code);
+    if (other) binding[other] = binding[waiting];
+    binding[waiting] = e.code;
+    saveKeys();
+  }
+  waiting = null;
+  renderControls();
+}, { capture: true });
+
+function toggleControls(show = $('controls-panel').hidden) {
+  waiting = null;
+  $('controls-panel').hidden = !show;
+  if (show) renderControls();
+}
+document.body.insertAdjacentHTML('beforeend', '<div id="controls-panel" hidden></div>');
+$('controls').addEventListener('click', () => toggleControls());

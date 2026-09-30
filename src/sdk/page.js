@@ -74,6 +74,13 @@ export const SDK_CSS = `
       .warn { color: var(--pink); }
       #toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); max-width: 70%; padding: 8px 14px; background: var(--panel); border: 1px solid var(--cyan); color: var(--cyan); border-radius: 3px; pointer-events: none; }
       #crosshair { position: fixed; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid var(--cyan); border-radius: 50%; pointer-events: none; }
+      #controls-panel { position: fixed; right: 12px; top: 48px; width: min(440px, 94vw); max-height: calc(100vh - 80px); overflow-y: auto; padding: 14px 16px; background: var(--panel); border: 1px solid var(--cyan); border-radius: 4px; z-index: 6; }
+      #controls-panel h3 { margin: 0 0 6px; color: var(--cyan); }
+      #controls-panel h4 { margin: 12px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+      #controls-panel .krow { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 0; }
+      #controls-panel .krow button { min-width: 64px; }
+      #controls-panel .krow button.wait { border-color: var(--amber); color: var(--amber); }
+      #controls-panel .fixed { color: var(--dim); }
       #busy { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); padding: 6px 14px; background: var(--panel); border: 1px solid var(--amber); color: var(--amber); border-radius: 3px; pointer-events: none; }
 
       #right h3 { margin: 0 0 2px; color: var(--amber); font-size: 14px; }
@@ -126,6 +133,7 @@ export const SDK_HTML = `
       <button id="publish" title="Studio: ship this map with the game in place of its district, career included (writes src/content/maps)">Publish</button>
       <button id="marks" hidden title="Where the last test drive was wrecked (red), stuck (amber) or put back on the road (blue). Click to clear them."></button>
       <span id="title"></span>
+      <button id="controls" title="Keyboard and mouse controls (change the keys here)">Controls</button>
     </div>
     <div id="left">
       <div id="tools">
