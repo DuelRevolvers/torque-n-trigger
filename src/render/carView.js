@@ -1140,6 +1140,38 @@ export class CarView {
     return this.group.localToWorld(new THREE.Vector3(...local));
   }
 
+  // The windshield camera's points in the car's frame: { front, rear }. Front is
+  // just outside the windscreen at eye height (ahead of the buggy's cage); rear,
+  // for looking back, is at the same height behind everything on the tail.
+  windshieldEyes() {
+    if (this.eyes) return this.eyes;
+    const { shell: m } = this.mounts;
+    let front;
+    if (m.cabin) {
+      const [z0, y0] = m.cabin[0]; // windscreen base
+      const [z1, y1] = m.cabin[m.cabin.length - 1]; // its top
+      const len = Math.hypot(z1 - z0, y1 - y0);
+      const [t, out] = [0.7, 0.08]; // up the glass, then out from it
+      front = new THREE.Vector3(0, y0 + (y1 - y0) * t + ((z1 - z0) / len) * out, z0 + (z1 - z0) * t - ((y1 - y0) / len) * out);
+    } else {
+      front = new THREE.Vector3(0, m.roof.y - 0.2, m.roof.z - 0.7);
+    }
+    let tail = m.rear;
+    this.group.updateMatrixWorld(true);
+    const toCar = new THREE.Matrix4().copy(this.group.matrixWorld).invert();
+    const box = new THREE.Box3();
+    const mat = new THREE.Matrix4();
+    for (const list of Object.values(this.slotMeshes)) {
+      for (const mesh of list) {
+        if (mesh === this.underglow) continue; // a glow on the road, not part of the car
+        if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+        tail = Math.max(tail, box.copy(mesh.geometry.boundingBox).applyMatrix4(mat.multiplyMatrices(toCar, mesh.matrixWorld)).max.z);
+      }
+    }
+    this.eyes = { front, rear: new THREE.Vector3(0, front.y, tail + 0.05) };
+    return this.eyes;
+  }
+
   forward() {
     return new THREE.Vector3(0, 0, -1).applyQuaternion(this.group.quaternion);
   }

@@ -7,7 +7,12 @@ import { neutralInput } from './input.js';
 import { gridLateral } from './world.js';
 import { quatRotate } from './math.js';
 import { applyDamage } from './combat.js';
-import { pickupSpots } from './trackgen.js';
+import { pickupSpots } from './trackgen.js';
+
+// A car off a burning plate burns on this long (s); one off a sparking plate
+// stays shocked this long.
+const BURN_ON = 2.5;
+export const SHOCKED_FOR = 1.2;
 
 const PICKUP_RESPAWN = 18; // seconds
 const PICKUP_RADIUS = 2.6;
@@ -182,10 +187,17 @@ export function updateEvent(world, dt) {
     }
 
     // Arena floor hazards.
+    // (A live plate placed in the T&T SDK: flames set a car alight, so it
+    // burns on for a while after; sparks shock it: combat.js cuts its engine,
+    // nitro and weapons while it's shocked.)
     const hazard = track.hazardAt?.(car.pos.x, car.pos.z, car.pos.y);
     if (hazard) {
       applyDamage(world, i, hazard.dps * dt, car.pos, -1, true);
-      if (state.tick % 6 === 0) world.events.push({ type: 'spark', pos: { ...car.pos } });
+      if (hazard.kind === 'fire') car.burning = Math.max(car.burning, BURN_ON);
+      else {
+        if (hazard.kind === 'sparks') car.shocked = Math.max(car.shocked || 0, SHOCKED_FOR);
+        if (state.tick % 6 === 0) world.events.push({ type: 'spark', pos: { ...car.pos } });
+      }
     }
   });
 

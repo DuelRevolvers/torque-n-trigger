@@ -249,7 +249,10 @@ The target is an **arcade handling model**: responsive and forgiving, with enoug
 | Primary weapon | Left click | RB | Button |
 | Secondary weapon | Right click | LB | Button |
 | Utility | E | Y | Button |
-| Look back | Q | Right stick click | Swipe down |
+| Look back | Q | Left stick click | Button |
+| Change camera: chase, far, windshield | V | Right stick click | Button |
+
+Keyboard controls have a main and an alt key each, both rebindable. In split-screen, only the first player can use the keyboard and mouse; the others use gamepads.
 
 ---
 

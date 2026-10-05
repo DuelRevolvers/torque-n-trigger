@@ -3,11 +3,13 @@ import { buildTrack } from '../sim/track.js';
 import { buildArena } from '../sim/arena.js';
 import { getVenue } from '../sim/tracks/venues.js';
 import { createWorld, stepWorld } from '../sim/world.js';
-import { createEventState, gridPoses, standings, resolvePit } from '../sim/event.js';
+import { createEventState, gridPoses, standings, resolvePit, initEventCar } from '../sim/event.js';
 import { districtMap } from '../sim/city.js';
 import { InputQueue, neutralInput, sanitizeInput } from '../sim/input.js';
 import { initAi, aiInput } from '../sim/ai.js';
-import { WEAPON_BEHAVIOR } from '../sim/combat.js';
+import { WEAPON_BEHAVIOR, initCombat } from '../sim/combat.js';
+import { createCarState } from '../sim/vehicle.js';
+import { yawFromDirection } from '../sim/math.js';
 import { SIM_DT } from '../config.js';
 import { computeBuild } from '../parts/build.js';
 import { DRIVERS, buildDriver, tierForPr } from '../parts/drivers.js';
@@ -21,6 +23,7 @@ import { buildCityView } from '../render/cityView.js';
 import { buildArenaView } from '../render/arenaView.js';
 import { gadgetView } from '../render/gadgetView.js';
 import { placedView } from '../render/placedView.js';
+import { bridgeView } from '../render/bridgeView.js';
 import { makePickupMesh } from '../render/pickupMesh.js';
 import { recordFeats, unlockedIds, SPECIALS } from '../career/unlocks.js';
 import { buildDistrictView, districtClear, setDistrictStyles } from '../render/districtView.js';
@@ -31,7 +34,8 @@ import { districtLayout } from '../sim/cityLayout.js';
 import { trainAt } from '../sim/train.js';
 import { additiveMaterial } from '../render/retroMaterial.js';
 import { CarView } from '../render/carView.js';
-import { CameraRig } from '../render/cameraRig.js';
+import { CameraRig, CAMERA_MODES, CAMERA_NAMES } from '../render/cameraRig.js';
+import { saveSettings } from '../settings.js';
 import { Rain, RAIN_MAX, RAIN_USUAL } from '../render/rain.js';
 import { Fx } from '../render/fx.js';
 import { SpeedLines } from '../render/speedLines.js';
@@ -137,7 +141,7 @@ export class RaceScreen {
       if (def.city) {
         const map = districtMap(def.city);
         const view = buildTrackView(track, tex, {
-          city: true, sidewalk: def.city.rooftop ? tex.lot : tex.sidewalk, barrierColor: def.city.look.barrier, look: def.city.look,
+          city: true, sidewalk: def.city.rooftop ? tex.lot : tex.sidewalk, barrierColor: def.city.look.barrier, barrierStyle: def.barrierStyle, look: def.city.look,
           clear: def.city.authored ? districtClear(map) : null,
           arches: map.plan ? districtLayout(map).items.filter((it) => it.t === 'arch') : null,
           fronts: map.plan ? buildingFronts(map) : null,
@@ -185,6 +189,9 @@ export class RaceScreen {
     const group = buildDistrictView(map, this.app.tex);
     // What's placed in the T&T SDK (lights flickering with the district's
     // clock, barrels gone once they've blown up).
+    // (And the bridges drawn in the T&T SDK.)
+    const spans = bridgeView(style.edits?.bridges, map.heightAt, this.app.tex);
+    if (spans) group.add(spans);
     const placed = placedView(style.edits?.gadgets, map.heightAt, this.app.tex);
     if (placed) {
       group.add(placed);
@@ -298,6 +305,7 @@ export class RaceScreen {
     while (this.extraCams.length < V - 1) this.extraCams.push(new THREE.PerspectiveCamera(68, 16 / 9, 0.3, 1500));
     this.cameras = [this.camera, ...this.extraCams.slice(0, V - 1)]; // per viewer
     this.rigs = this.cameras.map((cam) => new CameraRig(cam, this.track));
+    this.camModes = humans.map(() => this.app.settings.camera); // split-screen players after the first
     this.panes = splitLayout(V);
     this.shakes = humans.map(() => 0); // per human car
     this.wrongWays = humans.map(() => 0);
@@ -325,6 +333,61 @@ export class RaceScreen {
     const view = new CarView(this.builds[i], this.computed[i], this.app.tex);
     view.addTo(this.scene);
     return view;
+  }
+
+  // A T&T SDK test drive's bots, from its pause menu (free roam only: an
+  // event has its own field). A named driver's car at the player's tier, on
+  // the nearest crossroads at least 35 m off, hunting the nearest car as in an
+  // arena. Returns the driver's name.
+  get bots() {
+    return this.world.state.cars.length - this.humans;
+  }
+
+  addBot() {
+    const { world } = this;
+    const i = world.state.cars.length;
+    const seed = Math.floor(Math.random() * 1e9);
+    const free = DRIVERS.filter((d) => !this.names.includes(d.name));
+    const pool = free.length ? free : DRIVERS;
+    const entry = buildDriver(pool[Math.floor(Math.random() * pool.length)], this.tier, seed);
+    const computed = computeBuild(entry.build);
+    const car = createCarState(i, computed.params, this.botPose());
+    initCombat(car, computed.params);
+    initEventCar(car, world.state.event);
+    initAi(car, entry.personality, seed);
+    world.params.push(computed.params);
+    world.state.cars.push(car);
+    this.builds.push(entry.build);
+    this.computed.push(computed);
+    this.names.push(entry.name);
+    this.prevPoses.push({ pos: { ...car.pos }, quat: { ...car.quat } });
+    this.views.push(this.makeView(i));
+    return entry.name;
+  }
+
+  botPose() {
+    const { track } = this;
+    const cars = this.world.state.cars;
+    const me = cars[0].pos;
+    const spots = (track.def?.roadPoints || [])
+      .map(([x, z]) => ({ x, z, d: Math.hypot(x - me.x, z - me.z) }))
+      .filter((p) => cars.every((c) => Math.hypot(c.pos.x - p.x, c.pos.z - p.z) > 12))
+      .sort((a, b) => a.d - b.d);
+    const at = spots.find((p) => p.d >= 35) || spots[0];
+    if (!at) return track.spawnPose(cars.length % (track.def?.spawns || 8));
+    const y = track.heightAt ? track.heightAt(at.x, at.z) : me.y - 0.9;
+    return { pos: { x: at.x, y: y + 0.9, z: at.z }, yaw: yawFromDirection(me.x - at.x, me.z - at.z) };
+  }
+
+  removeBots() {
+    const H = this.humans;
+    const { world } = this;
+    for (const v of this.views.splice(H)) v.removeFrom(this.scene);
+    for (const list of [world.params, world.state.cars, this.builds, this.computed, this.names, this.prevPoses]) list.length = H;
+    this.poses.length = Math.min(this.poses.length, H);
+    // (Their shots and mines go with them.)
+    world.state.projectiles = world.state.projectiles.filter((pr) => pr.owner < H);
+    world.state.mines = world.state.mines.filter((m) => m.owner < H);
   }
 
   exit() {
@@ -441,7 +504,9 @@ export class RaceScreen {
         inputs.push(this.remoteIn[p] || neutralInput());
         continue;
       }
+      const prev = this.lastFrames[p];
       this.lastFrames[p] = this.app.localInput.sample(this.devices[p]);
+      if (this.lastFrames[p].camera && !prev.camera) this.cycleCamera(p);
       this.queues[p].push(tick, this.lastFrames[p]);
       const frame = this.queues[p].take(tick);
       inputs.push(frame);
@@ -513,6 +578,21 @@ export class RaceScreen {
     });
     for (const m of out) m.lock = m.id === lock;
     return out;
+  }
+
+  // A local player's camera view. The first one's is the saved setting, so the
+  // pause menu can change it too.
+  camMode(p) {
+    return p === this.viewers[0] ? this.app.settings.camera : this.camModes[p];
+  }
+
+  cycleCamera(p) {
+    const next = CAMERA_MODES[(CAMERA_MODES.indexOf(this.camMode(p)) + 1) % CAMERA_MODES.length];
+    if (p === this.viewers[0]) {
+      this.app.settings.camera = next;
+      saveSettings(this.app.settings);
+    } else this.camModes[p] = next;
+    this.popup(CAMERA_NAMES[next], PALETTE.cyan, p);
   }
 
   popup(text, color, p = 0) {
@@ -620,10 +700,12 @@ export class RaceScreen {
     for (let v = 0; v < this.viewers.length; v++) {
       const p = this.viewers[v];
       const cam = this.cameras[v];
-      this.rigs[v].update(this.poses[p], state.cars[p], dt, this.lastFrames[p].lookBack);
+      const mode = this.camMode(p);
+      this.rigs[v].update(this.poses[p], state.cars[p], dt, { lookBack: this.lastFrames[p].lookBack, mode, eyes: mode === 'windshield' ? this.views[p].windshieldEyes() : null });
       if (this.shakes[p] > 0) {
-        cam.position.x += (Math.random() - 0.5) * this.shakes[p];
-        cam.position.y += (Math.random() - 0.5) * this.shakes[p];
+        const k = mode === 'windshield' ? 0.3 : 1; // hits shake less from inside the car
+        cam.position.x += (Math.random() - 0.5) * this.shakes[p] * k;
+        cam.position.y += (Math.random() - 0.5) * this.shakes[p] * k;
         this.shakes[p] = Math.max(0, this.shakes[p] - dt * 1.5);
       }
       if (split) {

@@ -8,6 +8,41 @@ import { buildAuthoredStructures } from './arenaView.js';
 import { gustAt } from '../sim/gusts.js';
 import * as G from '../sim/geom2d.js';
 import { itemDrawer } from './itemCapture.js';
+import { objectLights } from './objectLights.js';
+import * as Parts from './parts.js';
+import { shards } from './shards.js';
+import { adTexture } from './ads.js';
+import { textWidth, GLYPH_H } from '../ui/bitmapFont.js';
+
+// A polyline with each corner turned along an arc of radius r (as far as its
+// legs allow), so a strip that wide doesn't pinch or cross itself there.
+function roundCorners(pts, r) {
+  if (pts.length < 3) return pts;
+  const out = [pts[0]];
+  for (let k = 1; k < pts.length - 1; k++) {
+    const [a, p, b] = [pts[k - 1], pts[k], pts[k + 1]];
+    const la = Math.hypot(p[0] - a[0], p[1] - a[1]) || 1;
+    const lb = Math.hypot(b[0] - p[0], b[1] - p[1]) || 1;
+    const u = [(p[0] - a[0]) / la, (p[1] - a[1]) / la];
+    const v = [(b[0] - p[0]) / lb, (b[1] - p[1]) / lb];
+    const turn = Math.acos(Math.max(-1, Math.min(1, u[0] * v[0] + u[1] * v[1])));
+    if (turn < 0.15) {
+      out.push(p);
+      continue;
+    }
+    const d = Math.min(r * Math.tan(turn / 2), la / 2, lb / 2);
+    const p0 = [p[0] - u[0] * d, p[1] - u[1] * d];
+    const p1 = [p[0] + v[0] * d, p[1] + v[1] * d];
+    const n = Math.max(2, Math.ceil(turn / 0.15));
+    for (let q = 0; q <= n; q++) {
+      const t = q / n;
+      const [w0, w1, w2] = [(1 - t) * (1 - t), 2 * (1 - t) * t, t * t];
+      out.push([w0 * p0[0] + w1 * p[0] + w2 * p1[0], w0 * p0[1] + w1 * p[1] + w2 * p1[1]]);
+    }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
 import { npcCar, NPC_COLORS } from './npcCars.js';
 
 // A rooftop district (Chrome Heights): the city far below (its streets,
@@ -130,7 +165,8 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
     towers();
     roofRoads();
   }
-  const drawItem = itemDrawer(B, texts, blink, flags, socks, jibList, group);
+  const OL = objectLights(tex); // (lights with settings of their own)
+  const drawItem = itemDrawer(B, texts, blink, flags, socks, jibList, group, ...OL.buckets);
   // (Another district's objects placed here are drawn by its own view: districtView.js.)
   for (const it of layout.draw) if (only || !it.guest) drawItem(it, draw);
   const props = breakables();
@@ -145,6 +181,7 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
     add(m);
   }
   for (const { list, t } of texts.values()) add(new THREE.Mesh(mergeGeometries(list), glowMaterial({ map: t, intensity: 1.8, side: DS })));
+  const lightsAnimate = OL.build(add, '#e8f4ff');
   const beacons = blink.length ? new THREE.Mesh(mergeGeometries(blink), mats.red) : null;
   add(beacons);
   const jibs = craneJibs();
@@ -161,7 +198,9 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
   group.userData.animate = (t, real = t) => {
     structures?.userData.animate(t);
     if (beacons) beacons.visible = Math.floor(real * 1.1) % 2 === 0;
-    for (const j of jibs) j.mesh.rotation.y = j.a0 + Math.sin(t * 0.05 + j.k) * 1.3;
+    lightsAnimate?.(real);
+    for (const j of jibs) j.mesh.rotation.y = j.a0 + (j.still ? 0 : Math.sin(t * 0.05 + j.k) * 1.3);
+    props.animate?.(real);
     traffic?.(real);
     gustFx?.(t, real);
   };
@@ -320,26 +359,52 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
         B.cyan.push(obbBox({ ...o, hw: 0.07 }, 0.08, it.y + it.h));
         return B.steel.push(obbBox({ ...o, hw: 0.1 }, 0.12, it.y));
       case 'bridge': {
-        const h = (s) => it.h0 + ((it.h1 - it.h0) * s) / Math.max(1, G.lineLength(it.pts));
-        strip(B.deck, it.pts, -it.half, it.half, h, 0);
-        strip(B.concrete, it.pts, -it.half, it.half, h, -1.4);
-        for (const sg of [-1, 1]) wallStrip(B.concrete, it.pts, sg * it.half, h, -1.4, 0);
-        strip(B.road, it.pts, -it.half + 1, it.half - 1, h, 0.03);
-        for (const sg of [-1, 1]) strip(B.lines, it.pts, sg * (it.half - 1.45), sg * (it.half - 1.25), h, 0.05);
+        // (Its corners turned along arcs as wide as it is: no pinched corner.)
+        const pts = roundCorners(it.pts, it.half + 2);
+        const L = Math.max(1, G.lineLength(pts));
+        const h = (s) => it.h0 + ((it.h1 - it.h0) * s) / L;
+        strip(B.deck, pts, -it.half, it.half, h, 0);
+        strip(B.concrete, pts, -it.half, it.half, h, -1.4);
+        for (const sg of [-1, 1]) wallStrip(B.concrete, pts, sg * it.half, h, -1.4, 0);
+        strip(B.road, pts, -it.half + 1, it.half - 1, h, 0.03);
+        for (const sg of [-1, 1]) strip(B.lines, pts, sg * (it.half - 1.45), sg * (it.half - 1.25), h, 0.05);
+        // (Its underside and sides facing out both ways: not see-through from below or outside.)
+        strip(B.concrete, pts, it.half, -it.half, h, -1.4);
+        bridgeFrame(it, pts, h, L);
         // A skybridge's underside is lit; a ramp bridge's is plain.
         if (it.kind !== 'ramp') strip(B.cyan, it.pts, -0.3, 0.3, h, -1.45);
         return;
       }
       case 'cantilever': {
+        // An overhang deck: the road jutting out past a roof's edge over a gap
+        // to jump. Steel plate, ribs under it, two braces back down to the
+        // wall, hazard stripes along its lip. (A copy, with no wall: a low
+        // support under its inner edge, the deck 1.5 m up, its braces short.)
         const h = () => it.h;
         strip(B.steel, it.pts, -it.half, it.half, h, 0);
+        strip(B.steel, it.pts, it.half, -it.half, h, 0); // (its top, facing up whichever way it runs)
         strip(B.steel, it.pts, -it.half, it.half, h, -0.8);
         for (const sg of [-1, 1]) wallStrip(B.steel, it.pts, sg * it.half, h, -0.8, 0);
+        for (const sg of [-1, 1]) wallStrip(B.steel, [...it.pts].reverse(), -sg * it.half, h, -0.8, 0);
+        const [first, last] = [it.pts[0], it.pts[it.pts.length - 1]];
+        const [root, tip] = map.deckAt?.(...first) || !map.deckAt?.(...last) ? [first, last] : [last, first];
+        const L = Math.hypot(tip[0] - root[0], tip[1] - root[1]) || 1;
+        const [ux, uz] = [(tip[0] - root[0]) / L, (tip[1] - root[1]) / L];
+        const at = (t, lat, y) => [root[0] + ux * t - uz * lat, y, root[1] + uz * t + ux * lat];
+        for (let t = 1; t < L; t += 2) B.steel.push(Parts.rod(at(t, -it.half + 0.2, it.h - 1), at(t, it.half - 0.2, it.h - 1), 0.12, 4));
+        const foot = it.copy ? 1.5 : 4.5;
+        for (const sg of [-1, 1]) B.steel.push(Parts.rod(at(0, sg * (it.half - 0.6), it.h - foot), at(L * 0.7, sg * (it.half - 0.6), it.h - 0.9), 0.18, 6));
+        const yaw = Math.atan2(uz, -ux);
+        for (let q = 0; q < Math.floor(it.half * 2); q++) {
+          const [x, , z] = at(L - 0.35, -it.half + 0.5 + q, 0);
+          paint(box(1, 0.04, 0.6, x, it.h + 0.02, z, yaw), q % 2 ? '#e0b020' : '#1a1a1a');
+        }
+        if (it.copy) B.steel.push(box(it.half * 2, 0.7, 1, root[0] + ux * 0.5, it.h - 1.15, root[1] + uz * 0.5, Math.atan2(-ux, -uz)));
         return;
       }
       case 'kicker': {
         const r = it.ramp;
-        paint(indexedRamp(rampGeometry(r, r.abs)), '#6a7080');
+        paint(indexedRamp(rampGeometry(r, r.abs)), it.set?.color || '#6a7080');
         // Lit edges, and chevrons across the lip so the landing reads from the far side.
         const nx = -r.dirZ;
         const nz = r.dirX;
@@ -395,14 +460,14 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
       }
       case 'flood':
         B.steel.push(obbBox(o, it.h, it.y));
-        B.white.push(box(2.2, 0.8, 0.8, o.x, it.y + it.h, o.z));
-        return B.pool.push(new THREE.PlaneGeometry(22, 22).rotateX(-Math.PI / 2).translate(o.x, it.y + 0.1, o.z));
+        OL.head(it, B.white, box(2.2, 0.8, 0.8, o.x, it.y + it.h, o.z));
+        return OL.pool(it, B.pool, 22, (S) => new THREE.PlaneGeometry(S, S).rotateX(-Math.PI / 2).translate(o.x, it.y + 0.1, o.z));
       case 'lampMast': {
         const [tx] = it.toward;
         B.steel.push(obbBox(o, it.h, it.y), box(3, 0.2, 0.2, o.x + tx * 1.5, it.y + it.h, o.z));
-        B.white.push(box(1.2, 0.2, 0.6, o.x + tx * 3, it.y + it.h - 0.1, o.z));
-        flags.push({ x: o.x, y: it.y + it.h - 3, z: o.z });
-        return B.pool.push(new THREE.PlaneGeometry(14, 14).rotateX(-Math.PI / 2).translate(o.x + tx * 6, it.y + 0.1, o.z));
+        OL.head(it, B.white, box(1.2, 0.2, 0.6, o.x + tx * 3, it.y + it.h - 0.1, o.z));
+        flags.push({ x: o.x, y: it.y + it.h - 3, z: o.z, still: !!it.set?.still });
+        return OL.pool(it, B.pool, 14, (S) => new THREE.PlaneGeometry(S, S).rotateX(-Math.PI / 2).translate(o.x + tx * 6, it.y + 0.1, o.z));
       }
       case 'mast': {
         // The Heights radio mast: a lattice tower, red beacons up it.
@@ -412,12 +477,28 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
           B.steel.push(new THREE.CylinderGeometry(0.25, 0.4, it.h, 4).translate(o.x + Math.cos(a) * 2.5, y + it.h / 2, o.z + Math.sin(a) * 2.5));
         }
         for (let h = 8; h < it.h; h += 8) B.steel.push(box(5.4, 0.25, 5.4, o.x, y + h, o.z));
-        for (const h of [it.h * 0.33, it.h * 0.66, it.h]) blink.push(box(1, 1, 1, o.x, y + h + 0.5, o.z));
+        for (const h of [it.h * 0.33, it.h * 0.66, it.h]) OL.head(it, blink, box(1, 1, 1, o.x, y + h + 0.5, o.z));
         return B.concrete.push(obbBox(o, 1.5, y));
       }
-      case 'dish':
-        B.steel.push(new THREE.CylinderGeometry(0.3, 0.5, 2, 6).translate(o.x, it.y + 1, o.z));
-        return paint(new THREE.SphereGeometry(o.hw, 10, 6, 0, Math.PI * 2, 0, Math.PI / 3).rotateX(-0.9).translate(o.x, it.y + 2.6, o.z), '#e8e8f0');
+      case 'dish': {
+        // A dish on its pole: a base plate, the yoke, the bowl (seen from
+        // either side), three struts out to the horn at its focus.
+        const R = o.hw;
+        B.steel.push(box(1.4, 0.2, 1.4, o.x, it.y + 0.1, o.z));
+        B.steel.push(new THREE.CylinderGeometry(0.2, 0.3, 2, 8).translate(o.x, it.y + 1.1, o.z));
+        for (const s of [-1, 1]) B.steel.push(Parts.placed(Parts.block(0.12, 0.8, 0.3, s * 0.35, 2.3, 0), o.x, it.y, o.z, o.yaw));
+        const tilt = (g) => Parts.placed(g.rotateX(-0.7), o.x, it.y + 2.6, o.z, o.yaw);
+        const depth = R * 0.28;
+        const bowl = new THREE.LatheGeometry([...Array(9).keys()].map((k) => new THREE.Vector2((R * k) / 8, depth * (k / 8) ** 2)), 20);
+        const F = (R * R) / (4 * depth);
+        paint(tilt(bowl.clone()), '#e8e8f0');
+        paint(tilt(Parts.inside(bowl)), '#c8ccd4');
+        for (let q = 0; q < 3; q++) {
+          const a = (q / 3) * Math.PI * 2;
+          B.steel.push(tilt(Parts.rod([Math.cos(a) * R * 0.95, depth * 0.9, Math.sin(a) * R * 0.95], [0, F, 0], 0.03, 4)));
+        }
+        return paint(tilt(Parts.block(0.25, 0.35, 0.25, 0, F, 0)), '#2a2e38');
+      }
       case 'tank':
         B.steel.push(new THREE.CylinderGeometry(o.hw, o.hw, it.h, 14).translate(o.x, it.y + it.h / 2, o.z));
         return paint(new THREE.ConeGeometry(o.hw + 0.3, 1.4, 14).translate(o.x, it.y + it.h + 0.7, o.z), '#8a90a0');
@@ -438,25 +519,53 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
         paint(new THREE.SphereGeometry(G.polyBounds(it.poly).maxX - it.x, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2).translate(it.x, it.y + it.h * 0.45, it.z), '#d8dce4');
         text('HEIGHTS OBSERVATORY', '#e8f4ff', it.x, it.y + 2, it.z + (G.polyBounds(it.poly).maxZ - it.z) + 0.3, 0, 1, 14, '#06121c');
         return;
-      case 'telescope':
-        return paint(obbBox(o, it.h, it.y), '#2a2e38');
+      case 'telescope': {
+        // A coin-op viewer: a base plate, its post, the coin box, the head
+        // tilted up a little, two lens tubes out front, eyepieces under a visor behind.
+        const put = (g, color) => paint(Parts.placed(g, o.x, it.y, o.z, o.yaw), color);
+        const head = (g) => g.rotateX(-0.25).translate(0, 1.3, 0);
+        put(Parts.block(0.6, 0.06, 0.6, 0, 0.03, 0), '#5a5e68');
+        put(Parts.rod([0, 0, 0], [0, 1.15, 0], 0.08, 8), '#2a2e38');
+        put(Parts.block(0.22, 0.3, 0.16, 0, 0.85, 0.12), '#c8a020');
+        put(head(Parts.block(0.62, 0.32, 0.4, 0, 0, 0)), '#2a2e38');
+        for (const s of [-1, 1]) {
+          put(head(new THREE.CylinderGeometry(0.1, 0.11, 0.32, 10).rotateX(Math.PI / 2).translate(s * 0.16, 0.02, 0.34)), '#8a90a0');
+          put(head(new THREE.CircleGeometry(0.085, 10).translate(s * 0.16, 0.02, 0.505)), '#3a6a9a');
+          put(head(new THREE.CylinderGeometry(0.05, 0.05, 0.12, 8).rotateX(Math.PI / 2).translate(s * 0.12, 0.04, -0.26)), '#1c1c24');
+        }
+        return put(head(Parts.block(0.5, 0.05, 0.2, 0, 0.18, -0.28)), '#2a2e38');
+      }
       case 'pad': {
         const top = it.h;
         paint(obbBox(o, top - it.y, it.y), '#4a4e58');
-        B.lines.push(obbBox({ ...o, hw: 0.8, hd: 5 }, 0.03, top), obbBox({ ...o, x: o.x - 3, hw: 0.8, hd: 0.8 }, 0.03, top));
-        B.lines.push(obbBox({ ...o, x: o.x - 3, hw: 0.8, hd: 5 }, 0.03, top), obbBox({ ...o, x: o.x + 3, hw: 0.8, hd: 5 }, 0.03, top), obbBox({ ...o, hw: 3, hd: 0.6 }, 0.03, top));
+        // (A ring painted on it, its lights round the edge.)
+        B.lines.push(new THREE.RingGeometry(Math.min(o.hw, o.hd) * 0.55, Math.min(o.hw, o.hd) * 0.62, 32).rotateX(-Math.PI / 2).translate(o.x, top + 0.03, o.z));
         for (let a = 0; a < Math.PI * 2; a += Math.PI / 6) B.amber.push(box(0.4, 0.2, 0.4, o.x + Math.cos(a) * (o.hw - 1), top + 0.1, o.z + Math.sin(a) * (o.hd - 1)));
         return;
       }
       case 'padRamp':
-        return paint(indexedRamp(rampGeometry(it.ramp, it.ramp.abs)), '#4a4e58');
+        return paint(indexedRamp(rampGeometry(it.ramp, it.ramp.abs)), it.set?.color || '#4a4e58');
       case 'windsock':
         B.steel.push(obbBox(o, it.h, it.y));
-        socks.push({ x: o.x, y: it.y + it.h - 0.5, z: o.z });
+        socks.push({ x: o.x, y: it.y + it.h - 0.5, z: o.z, still: !!it.set?.still });
         return;
-      case 'bowser':
-        paint(obbBox(o, 1.8, it.y + 0.6), '#e0b020');
-        return paint(obbBox({ ...o, hd: 1 }, 1, it.y + 2.4), '#2a2e38');
+      case 'bowser': {
+        // A fuel bowser: its chassis on three axles, the cab in front with its
+        // glass, the tank behind with its bands, a ladder up the back, the hose reel.
+        const { hw, hd } = o;
+        const put = (g, color) => paint(Parts.placed(g, o.x, it.y, o.z, o.yaw), color);
+        put(Parts.block(hw * 2 - 0.3, 0.3, hd * 2 - 0.4, 0, 0.75, 0), '#2a2e38');
+        for (const v of [-hd * 0.6, -hd * 0.3, hd * 0.6]) for (const s of [-1, 1]) put(Parts.wheel(0.45, 0.32, s * (hw - 0.2), 0.45, v), '#1c1c20');
+        put(Parts.block(hw * 2, 1.5, 1.7, 0, 1.65, hd - 0.95), '#e0b020');
+        put(Parts.block(hw * 2 - 0.1, 0.6, 0.06, 0, 1.95, hd - 0.08), '#2a3a4a');
+        for (const s of [-1, 1]) put(Parts.block(0.06, 0.55, 0.9, s * hw, 1.95, hd - 0.95), '#2a3a4a');
+        const tl = hd * 2 - 2.4;
+        put(new THREE.CylinderGeometry(0.95, 0.95, tl, 16).rotateX(Math.PI / 2).translate(0, 1.95, -hd + 0.2 + tl / 2), '#e0b020');
+        for (const f of [0.15, 0.5, 0.85]) put(new THREE.CylinderGeometry(0.98, 0.98, 0.12, 16).rotateX(Math.PI / 2).translate(0, 1.95, -hd + 0.2 + tl * f), '#c8c8c8');
+        for (const s of [-1, 1]) put(Parts.rod([s * 0.25, 0.9, -hd + 0.1], [s * 0.25, 2.9, -hd + 0.1], 0.03), '#8a8e98');
+        for (let k = 1; k < 7; k++) put(Parts.rod([-0.25, 0.9 + k * 0.28, -hd + 0.1], [0.25, 0.9 + k * 0.28, -hd + 0.1], 0.02), '#8a8e98');
+        return put(Parts.wheel(0.35, 0.3, hw - 0.05, 1.3, -hd * 0.1), '#c83a2a');
+      }
       case 'bandstand':
         B.concrete.push(prism(it.poly, it.y, 0.8));
         for (const [x, z] of it.poly) B.painted.push(tint(new THREE.CylinderGeometry(0.2, 0.2, 3.5, 6).translate(x * 0.9 + it.x * 0.1, it.y + 2.5, z * 0.9 + it.z * 0.1), '#f0f0f4'));
@@ -467,6 +576,8 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
         return paint(obbBox(o, it.h, it.y), '#e8e8f0');
       case 'pergola':
         for (let z = it.z - it.hd; z <= it.z + it.hd; z += 1.2) paint(box(it.hw * 2 + 0.6, 0.15, 0.2, it.x, it.y + it.h + 0.1, z), '#e8e8f0');
+        // (A copy, off its posts: posts at its corners.)
+        if (it.copy) for (const sx of [-1, 1]) for (const sz of [-1, 1]) paint(box(0.25, it.h, 0.25, it.x + sx * it.hw, it.y + it.h / 2, it.z + sz * it.hd), '#e8e8f0');
         return;
       case 'patch': {
         const color = it.kind === 'lawn' ? '#3a7a3a' : null;
@@ -490,14 +601,35 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
         return B.steel.push(obbBox(o, it.h, it.y));
       case 'billboard': {
         const ads = ['KESSLER MOTORS', 'MAG-COIL: SILENT POWER', 'KESSLER: BUILT FOR THE HEIGHTS'];
-        B.steel.push(box(it.hw * 2 + 0.6, 7.6, 0.4, it.x, it.y + it.h - 3.5, it.z));
-        text(ads[it.k % ads.length], '#e8f4ff', it.x, it.y + it.h - 6.6, it.z + 0.25, 0, 1, it.hw * 1.9, '#0a2a4a');
+        // (Its own words: as tall as Kessler's name always was, the board as wide as they need.)
+        const words = it.set?.text;
+        const ref = textWidth('KESSLER MOTORS') + 6;
+        const tw = words ? (it.hw * 1.9 * (textWidth(words) + 6)) / ref : 0;
+        const face = words ? tw + 1.4 : it.hw * 2 + 0.6;
+        B.steel.push(box(face, 7.6, 0.4, it.x, it.y + it.h - 3.5, it.z));
+        if (words) {
+          const th = (it.hw * 1.9 * (GLYPH_H + 6)) / ref;
+          text(words, it.set?.color || '#e8f4ff', it.x, it.y + it.h - 3.5 - th / 2, it.z + 0.25, 0, 1, tw, '#0a2a4a');
+        }
+        else {
+          // An ad on its face (its Ad option; Kessler's and Mag-Coil's where none's picked).
+          const kind = it.set?.ad || ['kessler', 'magcoil', 'kessler'][it.k % ads.length];
+          const w = it.hw * 2;
+          const g = new THREE.PlaneGeometry(w, Math.min(7.2, w / 3)).translate(it.x, it.y + it.h - 3.5, it.z + 0.21);
+          const key = `ad:${kind}`;
+          if (!texts.has(key)) texts.set(key, { list: [], t: adTexture(kind) });
+          texts.get(key).list.push(g);
+        }
+        // (A copy, off its legs: legs of its own.)
+        if (it.copy) for (const s of [-1, 1]) B.steel.push(box(0.5, it.h - 7.3, 0.5, it.x + s * face * 0.3, it.y + (it.h - 7.3) / 2, it.z - 0.3));
         return;
       }
       case 'gantryLeg':
         return B.steel.push(obbBox(o, it.h, it.y));
       case 'timingGantry':
         B.steel.push(box(it.hw * 2 + 1, 1.2, 1.2, it.x, it.y + it.h, it.z));
+        // (A copy, off its supports: legs at its ends.)
+        if (it.copy) for (const s of [-1, 1]) B.steel.push(box(0.8, it.h, 0.8, it.x + s * (it.hw + 0.5), it.y + it.h / 2, it.z));
         for (const fz of [-1, 1]) text(`${it.label}  00:00.000`, '#05d9e8', it.x, it.y + it.h - 0.5, it.z + fz * 0.65, 0, fz, 24, '#06121c');
         return;
       case 'court':
@@ -564,11 +696,40 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
         return B.painted.push(npcCar(it.color || 0, { x: o.x, y: it.y, z: o.z, yaw: o.yaw }));
       case 'gate':
         paint(obbBox(o, 1.1, it.y), '#e8e8f0');
-        return B.cyan.push(obbBox({ ...o, hd: o.hd + 0.02 }, 0.12, it.y + 1.1));
+        return OL.colored(it.set?.top, B.cyan, obbBox({ ...o, hd: o.hd + 0.02 }, 0.12, it.y + 1.1));
       case 'gapJump':
         return;
       default:
         if (it.solid && o) paint(obbBox(o, it.h, it.y), '#8a8e98');
+    }
+  }
+
+  // A bridge's frame: railings along both edges, two girders under its deck,
+  // and (a ramp down to the streets) piers under it to the ground.
+  function bridgeFrame(it, pts, h, L) {
+    const back = [...pts].reverse();
+    const hb = (s) => h(L - s);
+    const both = (list, lat, y0, y1) => {
+      wallStrip(list, pts, lat, h, y0, y1);
+      wallStrip(list, back, -lat, hb, y0, y1);
+    };
+    for (const sg of [-1, 1]) wallStrip(B.concrete, back, -sg * it.half, hb, -1.4, 0);
+    for (const sg of [-1, 1]) {
+      both(B.steel, sg * (it.half - 0.12), 0.95, 1.1);
+      for (const off of [-0.2, 0.2]) both(B.steel, sg * it.half * 0.55 + off, -2.6, -1.4);
+      strip(B.steel, pts, sg * it.half * 0.55 - 0.45, sg * it.half * 0.55 + 0.45, h, -2.6);
+    }
+    for (let s = 1; s < L; s += 2.5) {
+      const p = G.pointAlong(pts, s);
+      for (const sg of [-1, 1]) B.steel.push(box(0.1, 1, 0.1, p.x - p.dz * sg * (it.half - 0.12), h(s) + 0.5, p.z + p.dx * sg * (it.half - 0.12)));
+    }
+    if (it.kind === 'bridge') return;
+    for (let s = 12; s < L - 6; s += 24) {
+      const p = G.pointAlong(pts, s);
+      const g = H(p.x, p.z);
+      const top = h(s) - 2.6;
+      if (top - g < 3 || top - g > 40) continue;
+      B.concrete.push(box(1.6, top - g, 1.6, p.x, (top + g) / 2, p.z));
     }
   }
 
@@ -586,6 +747,7 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
     const half = it.outer - it.r;
     strip(B.deck, pts, -half, half, h, 0);
     strip(B.concrete, pts, -half, half, h, -0.8);
+    strip(B.concrete, pts, half, -half, h, -0.8); // (its underside seen from below too)
     strip(B.road, pts, -it.half, it.half, h, 0.03);
     for (let q = 0; q < 12; q++) {
       const a = (q / 12) * Math.PI * 2;
@@ -607,7 +769,7 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
       g.add(lights);
       g.position.set(j.x, j.y + 1, j.z);
       add(g);
-      return { mesh: g, a0: Math.atan2(j.z - 180, 60 - j.x), k }; // at rest, over the Tower Run's finish
+      return { mesh: g, a0: Math.atan2(j.z - 180, 60 - j.x), k, still: !!j.set?.still }; // at rest, over the Tower Run's finish
     });
   }
 
@@ -651,10 +813,16 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
     }
     let shown = new Set();
     const dirs = new Map();
+    // (Down: in pieces.)
+    const bits = shards(add);
+    const COLOR = { glass: '#a8d8ff', lounger: '#e8e8f0', umbrella: '#e8f4ff', table: '#c8ccd4' };
+    const zero = new THREE.Matrix4().makeScale(0, 0, 0);
     return {
+      animate: (real) => bits.update(real),
       setBroken(broken = {}) {
         const ids = Object.keys(broken);
         if (ids.length < shown.size) {
+          bits.clear();
           for (const id of shown) {
             const p = byId.get(+id);
             if (p) {
@@ -670,7 +838,9 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
           shown.add(id);
           const p = byId.get(+id);
           if (!p) continue;
-          p.mesh.setMatrixAt(p.k, matrix(p.it, true, dirs.get(+id)));
+          const o = p.it.obb;
+          bits.burst(o.x, p.it.y, o.z, p.it.y, Math.max(o.hw, o.hd) * 2, p.it.h || 1, COLOR[p.it.kind] || '#c8ccd4', dirs.get(+id) || [0, 1], +id);
+          p.mesh.setMatrixAt(p.k, zero);
           p.mesh.instanceMatrix.needsUpdate = true;
         }
       },
@@ -740,7 +910,7 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
       const at = gustAt(g, t * 60);
       const s = at ? (at.warn ? 0.6 : 0.6 + at.strength) : 0;
       [...flags, ...socks].forEach((f, k) => {
-        const flap = Math.sin(real * (3 + s * 9) + k) * (0.6 - s * 0.35);
+        const flap = f.still ? 0 : Math.sin(real * (3 + s * 9) + k) * (0.6 - s * 0.35);
         q.setFromEuler(new THREE.Euler(0, Math.atan2(g.dirZ, g.dirX) * -1 + flap, 0));
         m.compose(new THREE.Vector3(f.x, f.y, f.z), q, new THREE.Vector3(1, 1 - s * 0.2, 1));
         flagMesh.setMatrixAt(k, m);

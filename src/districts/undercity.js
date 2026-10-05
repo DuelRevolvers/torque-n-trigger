@@ -16,6 +16,19 @@ const nwBend = (a) => [-260 + 220 * Math.cos((a * Math.PI) / 180), -120 + 220 * 
 
 export const UNDERCITY_CITY = {
   id: 'undercity', name: 'The Undercity', authored: true, seed: 5505,
+  // What's placed as gadgets (sim/gadgets.js): Pillar Hall's burning barrels.
+  edits: {
+    gadgets: [
+        { id: 'g1', type: 'light', x: 250, z: -270, yaw: 0, fixture: 'barrel', color: '#ffb000', height: 1.1, reach: 9, brightness: 1, flicker: 'gentle', real: false },
+        { id: 'g2', type: 'light', x: 320, z: -190, yaw: 0, fixture: 'barrel', color: '#ffb000', height: 1.1, reach: 9, brightness: 1, flicker: 'gentle', real: false },
+        { id: 'g3', type: 'light', x: 380, z: -250, yaw: 0, fixture: 'barrel', color: '#ffb000', height: 1.1, reach: 9, brightness: 1, flicker: 'gentle', real: false },
+        { id: 'g4', type: 'light', x: 420, z: -110, yaw: 0, fixture: 'barrel', color: '#ffb000', height: 1.1, reach: 9, brightness: 1, flicker: 'gentle', real: false },
+        { id: 'g5', type: 'light', x: 280, z: -110, yaw: 0, fixture: 'barrel', color: '#ffb000', height: 1.1, reach: 9, brightness: 1, flicker: 'gentle', real: false },
+        { id: 'g6', type: 'light', x: 350, z: -150, yaw: 0, fixture: 'barrel', color: '#ffb000', height: 1.1, reach: 9, brightness: 1, flicker: 'gentle', real: false },
+        { id: 'g7', type: 'light', x: 240, z: -130, yaw: 0, fixture: 'barrel', color: '#ffb000', height: 1.1, reach: 9, brightness: 1, flicker: 'gentle', real: false },
+        { id: 'g8', type: 'light', x: 430, z: -160, yaw: 0, fixture: 'barrel', color: '#ffb000', height: 1.1, reach: 9, brightness: 1, flicker: 'gentle', real: false },
+    ],
+  },
   plan: {
     boundary: [[-625, -525], [-350, -626], [-100, -551], [175, -649], [450, -574], [675, -626], [700, -274], [600, 49], [700, 375],
                [525, 649], [175, 574], [-100, 649], [-425, 600], [-650, 424], [-575, 124], [-700, -150], [-600, -375]],
@@ -97,6 +110,8 @@ export const UNDERCITY_CITY = {
       shores: { river: [[-625, -525], [-350, -626], [-100, -551], [175, -649], [450, -574], [675, -626]], bay: [[700, 375], [525, 649], [175, 574], [-100, 649], [-425, 600], [-650, 424]] },
       // Light wells in the deck: shafts of sky (x, z).
       wells: [[-420, -380], [-150, -250], [120, -420], [380, -300], [-560, -120], [340, -60]],
+      // Pillar Hall's container cabins (x, z, yaw).
+      cabins: [[270, -250, 0], [300, -150, 1.57], [360, -220, 0.3], [400, -140, 0], [330, -110, 1.57], [260, -170, 1.57], [410, -200, 1.2]],
     },
     furniture: { lampPitch: 40 }, // sodium lamps
     fillers: { widths: [26, 18, 30, 22, 20], heights: [14, 20, 12, 22, 16], depth: 26, exitGap: 24, kind: 'shacks' },
@@ -124,12 +139,8 @@ export const UNDERCITY_CITY = {
     // Hammer's court under the deck (world coordinates).
     'Pillar Hall': {
       bounds: [230, 450, -290, -90],
-      // Burning barrels and container cabins (the pillars are the district's own).
-      obstacles: [
-        ...[[250, -270], [320, -190], [380, -250], [420, -110], [280, -110], [350, -150], [240, -130], [430, -160]].map(([x, z]) => ({ kind: 'barrel', x, z, hw: 0.45, hd: 0.45, h: 1.1 })),
-        ...[[270, -250, 0], [300, -150, 1.57], [360, -220, 0.3], [400, -140, 0], [330, -110, 1.57], [260, -170, 1.57], [410, -200, 1.2]]
-          .map(([x, z, yaw]) => ({ kind: 'cabin', x, z, hw: 1.25, hd: 6.1, yaw, h: 2.6 })),
-      ],
+      // (Its burning barrels are fire barrel lights, its container cabins and
+      // pillars the district's own: they can be moved in the T&T SDK.)
       // Wrecks across its ways in.
       limos: [[230, -280, 230, -100], [440, -170, 450, -95]],
       spawns: [{ x: 250, z: -220 }, { x: 420, z: -120 }, { x: 330, z: -270 }, { x: 330, z: -100 }, { x: 390, z: -180 }, { x: 270, z: -120 }],

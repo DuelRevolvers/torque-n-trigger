@@ -27,6 +27,7 @@ export class TouchControls {
       </div>
       <div class="t-top">
         <button class="t-btn t-small" data-action="lookBack">LOOK</button>
+        <button class="t-btn t-small" data-action="camera">CAM</button>
         <button class="t-btn t-small" data-action="utility">UTIL</button>
         <button class="t-btn t-small" data-action="shiftUp">SHIFT</button>
         <button class="t-btn t-small" data-action="reset">RESET</button>
@@ -90,6 +91,7 @@ export class TouchControls {
     frame.handbrake ||= this.held.has('handbrake');
     frame.nitro ||= this.held.has('nitro');
     frame.lookBack ||= this.held.has('lookBack');
+    frame.camera ||= this.held.has('camera');
     frame.reset ||= this.held.has('reset');
     frame.fire1 ||= this.held.has('fire1');
     frame.fire2 ||= this.held.has('fire2');

@@ -52,6 +52,7 @@ export function initCombat(car, params, conditions = {}) {
   car.shield = 0;
   car.repair = 0;
   car.burning = 0;
+  car.shocked = 0; // (seconds: off a sparking plate, its engine, nitro and weapons cut out)
   car.fuelIgnited = false;
   car.wrecked = false;
   car.wreckTimer = 0;
@@ -85,6 +86,7 @@ export function updateMods(world, i) {
   const c = combatOf(world.params[i]);
   let torque = Math.max(0.3, cfOf(car, 'engine')) * (0.6 + 0.4 * cfOf(car, 'transmission'));
   if (car.overheated) torque *= 0.55;
+  if (car.shocked > 0) torque *= 0.25; // (shocked: the engine cuts out)
   if (car.firing.primary || car.firing.secondary) torque *= 1 - c.powerDeficit * 0.6;
   let grip = (car.condition.wheels !== undefined && car.condition.wheels <= 0 ? 0.55 : 0.6 + 0.4 * cfOf(car, 'wheels'));
   grip *= 0.85 + 0.15 * cfOf(car, 'suspension');
@@ -170,6 +172,7 @@ function wreck(world, j, source) {
   car.wreckTimer = WRECK_TIME;
   car.wreckIndex = car.trackIndex;
   car.burning = 0;
+  car.shocked = 0;
   car.shield = 0;
   car.vel = add(car.vel, v3(0, 5, 0));
   car.angVel = add(car.angVel, quatRotate(car.quat, v3(0, 0, 1.5)));
@@ -232,7 +235,7 @@ function fireWeapon(world, i, slot, pressed, dt) {
     if (ws.reload <= 0) ws.ammo = w.ammo;
   }
   const cf = cfOf(car, slot === 'primary' ? 'primaryWeapon' : 'secondaryWeapon');
-  if (!pressed || cf <= 0) return;
+  if (!pressed || cf <= 0 || car.shocked > 0) return;
   // Drag races allow only rear-facing weapons.
   if (world.state.event?.weapons === 'rear' && !(slot === 'secondary' && w.type === 'mines')) return;
   if (world.state.event?.weaponsLocked) return; // "weapons in the second half" modifier
@@ -467,6 +470,7 @@ export function updateCombat(world, inputs, dt, respawn) {
         car.heat = 0;
         car.overheated = false;
         car.burning = 0;
+        car.shocked = 0;
         for (const slot of ['primary', 'secondary']) {
           const w = p.weapons?.[slot];
           if (w) car.weapons[slot] = { cooldown: 0, ammo: w.ammo, reload: 0 };
@@ -493,6 +497,7 @@ export function updateCombat(world, inputs, dt, respawn) {
       car.repair = Math.max(0, car.repair - dt);
       car.hp = Math.min(car.maxHp, car.hp + car.maxHp * 0.125 * dt);
     }
+    if (car.shocked > 0) car.shocked = Math.max(0, car.shocked - dt);
     if (car.burning > 0) {
       car.burning = Math.max(0, car.burning - dt);
       applyDamage(world, i, 6 * dt, car.pos, car.lastHitBy, true);

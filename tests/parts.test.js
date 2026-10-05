@@ -6,7 +6,7 @@ import { makeRng, makePart, randomBuild } from '../src/parts/generate.js';
 import { buildTrack } from '../src/sim/track.js';
 import { TEST_LOOP } from '../src/sim/tracks/testLoop.js';
 import { createWorld } from '../src/sim/world.js';
-import { run, autopilot, upOf } from './helpers.js';
+import { run, autopilot, upOf, makeWorld, STRAIGHT } from './helpers.js';
 
 const part = (slot, type, quality = 'street', extra = {}) => ({ uid: `${slot}-t`, slot, type, quality, traits: [], condition: 100, ...extra });
 
@@ -115,5 +115,19 @@ test('every chassis type at junk and elite quality can lap the test loop', () =>
       assert.ok(c.race.lap >= 2, `${chassis}/${quality} only reached lap ${c.race.lap}`);
       assert.ok(upOf(c).y > 0.8, `${chassis}/${quality} not upright`);
     }
+  }
+});
+
+test('built cars reverse briskly, up to the reverse top speed and no further', () => {
+  for (const seed of [3, 11, 27]) {
+    const params = computeBuild(randomBuild(makeRng(seed))).params;
+    const w = makeWorld(STRAIGHT, params);
+    run(w, 0.5, () => ({}));
+    run(w, 1, () => ({ brake: 1 }));
+    const car = w.state.cars[0];
+    assert.ok(car.reverse);
+    assert.ok(car.vel.z > 25 / 3.6, `seed ${seed}: only ${(car.vel.z * 3.6).toFixed(0)} km/h backwards after 1 s`);
+    run(w, 3, () => ({ brake: 1 }));
+    assert.ok(car.vel.z < params.maxReverseSpeed + 1, `seed ${seed}: ${(car.vel.z * 3.6).toFixed(0)} km/h backwards is past the cap`);
   }
 });

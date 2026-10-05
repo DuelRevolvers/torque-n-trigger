@@ -305,6 +305,10 @@
       .menu-sub { margin: 10px 0 0; font-size: 13px; color: var(--amber); }
       #menu .menu-panel { max-height: 90vh; overflow-y: auto; }
       .menu-wait { color: var(--pink) !important; }
+      .bind-row { display: grid; grid-template-columns: minmax(0, 1fr) 92px 92px; gap: 4px; align-items: center; margin-bottom: 4px; color: var(--ink); font: bold 13px var(--font); text-transform: uppercase; }
+      .bind-head { margin: 6px 0 2px; color: #a89fd0; font-size: 11px; }
+      .bind-head span + span { text-align: center; }
+      .bind-key { display: block; margin: 0; padding: 7px 4px; font-size: 13px; text-align: center; color: var(--cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .menu-row input[type=range] { width: 110px; vertical-align: middle; accent-color: var(--cyan); }
       .menu-row:disabled { opacity: 0.4; }
       .room-code { color: var(--amber); font-size: 20px; letter-spacing: 4px; margin-left: 8px; }

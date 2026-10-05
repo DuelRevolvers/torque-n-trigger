@@ -17,6 +17,7 @@ import { yawFromDirection } from './math.js';
 import { wetAt } from './sprinklers.js';
 import { floodAt, inSurge, sumpWetAt } from './flood.js';
 import { WATER_DROP } from './ground.js';
+import { LIFT_POST } from './gadgets.js';
 
 const WALL_DIST = 1000;
 const WATER = { drop: WATER_DROP, respawn: true }; // painted water (def.waterAt)
@@ -114,6 +115,8 @@ class Arena {
     this.ceilingAt = def.ceilingAt || null; // what's overhead, for the camera
     this.triggers = def.triggers?.length ? def.triggers : null; // gadgets' trigger pads (world coordinates)
     this.triggered = {}; // when each last went off (world state, set each tick)
+    this.switches = {}; // which trigger pads are switched on (world state)
+    this.runs = {}; // the clocks of the gadgets trigger pads switch: { gadget: { acc, since } } (world state)
     if (def.gustExposure) this.gustExposure = (car) => def.gustExposure(car.pos.x, car.pos.z);
     if (def.obstacles.length > 64) {
       this.grid = new Map();
@@ -142,27 +145,35 @@ class Arena {
     this.time = t;
   }
 
+  // The clock a part moves by: the world's; for a gadget linked to a trigger
+  // pad, its own, running only while the pad's switched on (gadgets.js
+  // switchLinked): 0 (at rest) till it's first switched on.
+  clockOf(p) {
+    if (p.still) return 0; // (its animation off in the T&T SDK: at rest)
+    if (!p.link) return this.time;
+    const r = this.runs[p.gadget];
+    return r ? r.acc + (r.since !== null ? this.time - r.since : 0) : 0;
+  }
+
   // (A gate is a lift standing up as a wall: down flush while open.)
   liftTop(l) {
     if (l.gate) return this.gateOpen(l.gate) ? 0 : l.hMax;
-    return l.hMax * (0.5 - 0.5 * Math.cos((2 * Math.PI * this.time) / l.period + l.phase));
+    return l.hMax * (0.5 - 0.5 * Math.cos((2 * Math.PI * this.clockOf(l)) / l.period + l.phase));
   }
 
   gateOpen(g) {
-    if (g.link) {
-      const at = this.triggered[g.link];
-      return at !== undefined && this.time - at < g.openFor;
-    }
+    if (g.still) return false; // (its animation off: stays shut)
+    if (g.link) return !!this.switches[g.link];
     return (this.time / g.period) % 1 < 0.5;
   }
 
   sweeperAngle(s) {
-    return s.phase + s.speed * this.time;
+    return s.phase + s.speed * this.clockOf(s);
   }
 
   // Where a mover (crane hook, shuttle bus) is now, arena-local: [x, z, yaw].
   moverAt(m) {
-    const t = this.time;
+    const t = this.clockOf(m);
     if (m.path) {
       const p = pathPose(m, t);
       return [p.x, p.z, p.yaw];
@@ -414,7 +425,12 @@ class Arena {
       else boxWall(p.x, p.z, p.hw, p.hd);
     };
     for (const p of this.def.platforms) deck(p, p.h);
-    for (const l of this.def.lifts) deck(l, (l.base || 0) + this.liftTop(l));
+    for (const l of this.def.lifts) {
+      deck(l, (l.base || 0) + this.liftTop(l));
+      // (A lift pad's pillars: from the ground to over its top.)
+      if (!l.posts || (ly !== undefined && ly > (l.base || 0) + l.hMax + 0.7)) continue;
+      for (const [px, pz] of l.posts) if (Math.abs(x - px) < 4 && Math.abs(z - pz) < 4) boxWall(px, pz, LIFT_POST, LIFT_POST);
+    }
     // Movers: a heavy block at car height (clear it by jumping).
     for (const m of this.def.movers) {
       if (ly !== undefined && (ly > m.y0 + m.h + 0.3 || ly < m.y0 - 1.5)) continue;

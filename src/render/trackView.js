@@ -6,6 +6,7 @@ import { lockdownAt } from '../sim/lockdown.js';
 import { districtLayout } from '../sim/cityLayout.js';
 import { SIM_DT } from '../config.js';
 import * as G from '../sim/geom2d.js';
+import { onFoot } from '../sim/track.js';
 
 const BARRIER_HEIGHT = 1.1;
 const LAMP_SPACING = 36;
@@ -34,6 +35,11 @@ export function buildTrackView(track, tex, opts = {}) {
     mats.barrier = litMaterial({ map: tex.wallConcrete || tex.wall, color: opts.barrierColor || '#ffffff', ...doubleSided });
     if (opts.look?.ledBarriers) mats.led = opts.look.neon.slice(0, 2).map((color) => glowMaterial({ color, intensity: 2.4, ...doubleSided }));
   }
+
+  // The barriers' look, if the event picks one (the T&T SDK: events.js BARRIER_STYLES).
+  if (opts.barrierStyle === 'concrete') mats.barrier = litMaterial({ map: tex.wallConcrete || tex.wall, ...doubleSided });
+  else if (opts.barrierStyle === 'chevrons') mats.barrier = litMaterial({ map: tex.wall, ...doubleSided });
+  else if (opts.barrierStyle === 'steel') mats.barrier = litMaterial({ color: '#8a909c', ...doubleSided });
 
   // Where a shortcut meets the main road, neither road gets a wall in the way.
   const branches = track.branches || [];
@@ -1090,26 +1096,35 @@ function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roa
   // Nothing is drawn over a gap between rooftops.
   const gaps = track.gaps || [];
   const inGap = gaps.length ? (i) => gaps.some((g) => track.s[i] > g.s0 && track.s[i] < g.s1) : null;
-  add(ribbon(track, (i) => at(i, -hwAt(i), lift), (i) => at(i, hwAt(i), lift), { vLength: 16, skip: inGap }), roadMat || mats.road);
-  add(ribbon(track, (i) => at(i, -curbAt(i), lift), (i) => at(i, -hwAt(i), lift), { vLength: 3, skip: inGap }), mats.curb);
-  add(ribbon(track, (i) => at(i, hwAt(i), lift), (i) => at(i, curbAt(i), lift), { vLength: 3, skip: inGap }), mats.curb);
+  // Off the streets (a race placed in the T&T SDK): no road laid over the
+  // ground there, just the barriers; and no barrier through what stands on
+  // its line (that's the edge there: the barrier stops at it, either side).
+  const free = freeSamples(track);
+  const bare = inGap || free ? (i) => (inGap && inGap(i)) || (free && free[i] === 1) : null;
+  const through = free ? thingsOnWalls(track, free, at, wallAt) : null;
+  add(ribbon(track, (i) => at(i, -hwAt(i), lift), (i) => at(i, hwAt(i), lift), { vLength: 16, skip: bare }), roadMat || mats.road);
+  add(ribbon(track, (i) => at(i, -curbAt(i), lift), (i) => at(i, -hwAt(i), lift), { vLength: 3, skip: bare }), mats.curb);
+  add(ribbon(track, (i) => at(i, hwAt(i), lift), (i) => at(i, curbAt(i), lift), { vLength: 3, skip: bare }), mats.curb);
   const shoulderU = (wall - curbOuter) / 4;
-  add(ribbon(track, (i) => at(i, -wallAt(i), lift), (i) => at(i, -curbAt(i), lift), { vLength: 4, uB: shoulderU, skip: inGap }), mats.shoulder);
-  add(ribbon(track, (i) => at(i, curbAt(i), lift), (i) => at(i, wallAt(i), lift), { vLength: 4, uB: shoulderU, skip: inGap }), mats.shoulder);
+  add(ribbon(track, (i) => at(i, -wallAt(i), lift), (i) => at(i, -curbAt(i), lift), { vLength: 4, uB: shoulderU, skip: bare }), mats.shoulder);
+  add(ribbon(track, (i) => at(i, curbAt(i), lift), (i) => at(i, wallAt(i), lift), { vLength: 4, uB: shoulderU, skip: bare }), mats.shoulder);
 
   for (const side of [-1, 1]) {
+    // (A stretch of barrier both ends inside something: left out.)
+    const inThing = through?.[side > 0 ? 1 : 0];
+    const skipQuad = inThing ? (a, b) => inThing[a] === 1 && inThing[b] === 1 : null;
     const skipWall = wallSkip ? (i) => { const p = at(i, side * wallAt(i)); return wallSkip(p[0], p[2]); } : null;
     // No barriers inside a container tunnel: its walls are the barriers.
     const inTunnel = track.narrows ? (i) => track.narrows.some((n) => track.s[i] > n.s0 && track.s[i] < n.s1) : null;
     const skip = inGap || skipWall || inTunnel ? (i) => (inGap && inGap(i)) || (skipWall && skipWall(i)) || (inTunnel && inTunnel(i)) : null;
-    add(ribbon(track, (i) => at(i, side * wallAt(i), BARRIER_HEIGHT), (i) => at(i, side * wallAt(i)), { vLength: 3.4, swapUV: true, skip }), mats.barrier);
+    add(ribbon(track, (i) => at(i, side * wallAt(i), BARRIER_HEIGHT), (i) => at(i, side * wallAt(i)), { vLength: 3.4, swapUV: true, skip, skipQuad }), mats.barrier);
     // LED strip along the top of the barriers (the Neon Strip).
-    if (mats.led) add(ribbon(track, (i) => at(i, side * wallAt(i), BARRIER_HEIGHT + 0.02), (i) => at(i, side * (wallAt(i) - 0.25), BARRIER_HEIGHT + 0.02), { vLength: 3, skip }), mats.led[side > 0 ? 1 : 0]);
+    if (mats.led) add(ribbon(track, (i) => at(i, side * wallAt(i), BARRIER_HEIGHT + 0.02), (i) => at(i, side * (wallAt(i) - 0.25), BARRIER_HEIGHT + 0.02), { vLength: 3, skip, skipQuad }), mats.led[side > 0 ? 1 : 0]);
     add(
       ribbon(track, (i) => at(i, side * wallAt(i)), (i) => {
         const p = at(i, side * (wallAt(i) + 0.01));
         return [p[0], groundY, p[2]];
-      }, { vLength: 4, skip }),
+      }, { vLength: 4, skip, skipQuad }),
       mats.skirt,
     );
   }
@@ -1126,7 +1141,33 @@ function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roa
 // A strip of quads following the track. pointA/pointB give the two edge points
 // for sample i; u runs A->B and v runs along the track. skip(i) leaves out the
 // quads touching sample i.
-function ribbon(track, pointA, pointB, { uA = 0, uB = 1, vLength = 8, swapUV = false, skip = null } = {}) {
+// The samples off the streets (track.free: the T&T SDK's stretches there), 1s.
+function freeSamples(track) {
+  if (!track.free) return null;
+  const out = new Uint8Array(track.count);
+  for (let i = 0; i < track.count; i++) out[i] = track.free.some((line) => G.nearestOnLine(line, track.x[i], track.z[i]).d < 8) ? 1 : 0;
+  return out;
+}
+
+// Off the streets, where each side's barrier line runs through something
+// solid at barrier height (left side [0], right [1]; 1s, by sample).
+function thingsOnWalls(track, free, at, wallAt) {
+  const reach = track.wallDist + 4;
+  const near = (track.obstacles || []).filter((o) => o.poly || track.free.some((line) => G.nearestOnLine(line, o.x, o.z).d < reach + Math.hypot(o.hw, o.hd)));
+  return [-1, 1].map((side) => {
+    const out = new Uint8Array(track.count);
+    if (!near.length) return out;
+    for (let i = 0; i < track.count; i++) {
+      if (!free[i]) continue;
+      const [x, y, z] = at(i, side * wallAt(i));
+      out[i] = near.some((o) => (o.y ?? y) < y + BARRIER_HEIGHT && (o.y ?? y) + o.h > y + 0.2 && onFoot(o, x, z)) ? 1 : 0;
+    }
+    return out;
+  });
+}
+
+// (skipQuad(a, b): leaves out the quad between samples a and b.)
+function ribbon(track, pointA, pointB, { uA = 0, uB = 1, vLength = 8, swapUV = false, skip = null, skipQuad = null } = {}) {
   const n = track.count;
   const rows = track.closed ? n + 1 : n;
   const positions = [];
@@ -1138,7 +1179,7 @@ function ribbon(track, pointA, pointB, { uA = 0, uB = 1, vLength = 8, swapUV = f
     positions.push(...pointA(i), ...pointB(i));
     if (swapUV) uvs.push(v, 1 - uA, v, 1 - uB);
     else uvs.push(uA, v, uB, v);
-    if (r > 0 && !(skip && (skip(i) || skip((r - 1) % n)))) {
+    if (r > 0 && !(skip && (skip(i) || skip((r - 1) % n))) && !(skipQuad && skipQuad((r - 1) % n, i))) {
       const a = (r - 1) * 2;
       indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
     }

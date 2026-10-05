@@ -118,7 +118,9 @@ test('undercity: the Sump, Pillar Hall and free roam', () => {
   assert.equal(sump.movers.filter((m) => m.event && m.kind === 'magnet').length, 1, 'the magnet');
   assert.ok(sump.flood, 'the floor goes wet with the flood');
   const hall = venue('Hammer');
-  assert.ok(hall.obstacles.some((o) => o.kind === 'cabin') && hall.obstacles.some((o) => o.kind === 'barrel'));
+  // (Its container cabins are the district's objects, its burning barrels fire barrel lights: both solid.)
+  assert.ok(hall.obstacles.filter((o) => Math.abs(o.hd - 6.1) < 1e-6).length >= 7, 'the cabins');
+  assert.ok(hall.obstacles.filter((o) => Math.abs(o.hw - 0.45) < 1e-6 && Math.abs(o.h - 1.1) < 1e-6).length >= 8, 'the barrels');
   const roam = getVenue(roamEvent(under).venue, roamEvent(under)).def;
   assert.equal(roam.tunnels.length, 1, 'the Low Road');
   const r = buildArena(roam);

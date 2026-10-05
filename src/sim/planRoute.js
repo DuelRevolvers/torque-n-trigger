@@ -97,7 +97,7 @@ export function routeLine(map, names, ends = false) {
   const pieces = []; // { pts, st?, way?, open?, free? }
   let at = null; // where the route has got to: [x, z]
   let atOff = false; // (and it's a spot off the streets)
-  for (const name of names) {
+  for (const [k, name] of names.entries()) {
     const spot = isSpot(name) ? [name[0], name[1]] : null;
     const node = !spot && map.byName.get(name);
     const way = !spot && !node && wayNamed(map, name, at);
@@ -108,8 +108,11 @@ export function routeLine(map, names, ends = false) {
     else if (node) seq = [[node.x, node.z]];
     else {
       seq = way.points.map((p) => [...p]);
-      // Enter the way from the end nearer where the route is.
+      // Enter the way from the end nearer where the route is (a route starting
+      // on one: leave it by the end nearer where it goes next).
       if (at && G.len2(at, seq[seq.length - 1]) < G.len2(at, seq[0])) seq.reverse();
+      const next = !at && names[k + 1] !== undefined ? (isSpot(names[k + 1]) ? names[k + 1] : map.byName.get(names[k + 1]) && [map.byName.get(names[k + 1]).x, map.byName.get(names[k + 1]).z]) : null;
+      if (next && G.len2(next, seq[0]) < G.len2(next, seq[seq.length - 1])) seq.reverse();
     }
     if (at && (atOff || off)) {
       // To or from a spot off the streets: straight.
@@ -897,7 +900,8 @@ export function planRoam(map) {
   const items = districtLayout(map).items;
   const local = (poly) => poly.map(([x, z]) => [x - cx, z - cz]);
   for (const it of items) {
-    if (it.deck) platforms.push({ x: it.obb.x - cx, z: it.obb.z - cz, hw: it.obb.hw, hd: it.obb.hd, yaw: it.obb.yaw, h: it.h });
+    // (A bridge's deck: driven under as well, sim/bridges.js.)
+    if (it.deck) platforms.push({ x: it.obb.x - cx, z: it.obb.z - cz, hw: it.obb.hw, hd: it.obb.hd, yaw: it.obb.yaw, h: it.h, ...(it.under ? { under: true, thick: it.thick } : {}) });
     else if (it.ramp) ramps.push({ ...it.ramp, x: it.ramp.x - cx, z: it.ramp.z - cz, ...(it.mound ? { surface: SURFACE.OFFROAD } : {}) });
     else if (it.hole) holes.push({ poly: local(it.poly), drop: it.t === 'pool' ? 2.5 : 4, respawn: true });
     else if (it.solid && (it.r || it.poly)) obstacles.push(layoutObstacle(it, cx, cz));

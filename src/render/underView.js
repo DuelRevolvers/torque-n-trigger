@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
-import { box, obbBox, flatPoly, tint } from './shapes.js';
+import { box, obbBox, flatPoly, tint, tireGeometry } from './shapes.js';
 import { floodAt } from '../sim/flood.js';
 import { SIM_DT } from '../config.js';
 import * as G from '../sim/geom2d.js';
@@ -307,6 +307,16 @@ export function underView({ map, tex, H, group, items, text, clipToConvex, merge
       B.concreteItem.push(obbBox({ ...o, hw: o.hw + 0.8, hd: o.hd + 0.8 }, 1.2, it.y + it.h - 1.2));
       if (it.hall && it.cycle % 2) N[(Math.round(o.x + o.z) >>> 0) % N.length].push(obbBox({ ...o, hw: o.hw + 0.05, hd: 0.3 }, 3, at(o.x, o.z) + 2));
     },
+    cabin(it) {
+      // A container cabin (Pillar Hall): a dark roof, three lit windows a side.
+      const o = it.obb;
+      const y = at(o.x, o.z);
+      B.painted.push(tint(obbBox(o, it.h, y), '#6a7a6a'));
+      B.dark.push(obbBox({ ...o, hw: o.hw + 0.1, hd: o.hd + 0.1 }, 0.2, y + it.h));
+      const dx = Math.sin(o.yaw);
+      const dz = Math.cos(o.yaw);
+      for (const f of [-0.5, 0, 0.5]) B.lamp.push(obbBox({ x: o.x + dx * f * o.hd * 2, z: o.z + dz * f * o.hd * 2, hw: o.hw + 0.02, hd: 0.6, yaw: o.yaw }, 0.8, y + it.h * 0.6 - 0.4));
+    },
     generator(it) {
       const o = it.obb;
       const y = at(o.x, o.z);
@@ -315,11 +325,23 @@ export function underView({ map, tex, H, group, items, text, clipToConvex, merge
       B.lamp.push(box(0.4, 0.4, 0.4, o.x, y + 1.6, o.z));
     },
     cage(it) {
+      // A steel cage: a floor plate, a post at each corner, bars all round,
+      // rails at the middle and the top, a roof; what's kept in it inside.
       const o = it.obb;
       const y = at(o.x, o.z);
       B.dark.push(obbBox({ ...o, hw: o.hw - 0.4, hd: o.hd - 0.4 }, 1.2, y));
-      for (const [cx, cz] of G.obbCorners({ ...o, hw: o.hw - 0.1, hd: o.hd - 0.1 })) B.steel.push(box(0.1, 1.8, 0.1, cx, y + 0.9, cz));
-      B.steel.push(obbBox({ ...o, hw: o.hw - 0.1, hd: o.hd - 0.1 }, 0.08, y + 1.75));
+      B.steel.push(obbBox({ ...o, hw: o.hw - 0.05, hd: o.hd - 0.05 }, 0.06, y));
+      const c = G.obbCorners({ ...o, hw: o.hw - 0.1, hd: o.hd - 0.1 });
+      for (const [cx, cz] of c) B.steel.push(box(0.12, 1.85, 0.12, cx, y + 0.92, cz));
+      c.forEach(([ax, az], k) => {
+        const [bx, bz] = c[(k + 1) % 4];
+        const L = Math.hypot(bx - ax, bz - az);
+        const yaw = Math.atan2(bx - ax, bz - az);
+        for (const h of [0.95, 1.75]) B.steel.push(box(0.06, 0.06, L, (ax + bx) / 2, y + h, (az + bz) / 2, yaw));
+        const n = Math.max(2, Math.round(L / 0.35));
+        for (let q = 1; q < n; q++) B.steel.push(box(0.035, 1.7, 0.035, ax + ((bx - ax) * q) / n, y + 0.9, az + ((bz - az) * q) / n));
+      });
+      B.steel.push(obbBox({ ...o, hw: o.hw - 0.1, hd: o.hd - 0.1 }, 0.05, y + 1.8));
     },
     marketGate(it) {
       // The Black Market's gate: two posts off Lip Road, a sign across.
@@ -412,6 +434,14 @@ export function underView({ map, tex, H, group, items, text, clipToConvex, merge
       g.translate(it.x, it.y, it.z);
       B.concreteItem.push(g);
       B.dark.push(new THREE.CylinderGeometry(2, 2, 0.2, 16).rotateX(Math.PI / 2).rotateY(yaw).translate(it.x - (it.toward[0] / L) * 1, it.y, it.z - (it.toward[1] / L) * 1));
+      // Its collar at the mouth, two flanges along it, and bars across the mouth.
+      const [ux, uz] = [it.toward[0] / L, it.toward[1] / L];
+      const ring = (r0, r1, d, f) => B.concreteItem.push(tireGeometry(r0, r1, d, 16).rotateX(Math.PI / 2).rotateY(yaw).translate(it.x + ux * f, it.y, it.z + uz * f));
+      ring(2.75, 2.15, 0.7, 2.75);
+      ring(2.34, 2.18, 0.2, -1);
+      ring(2.34, 2.18, 0.2, 1.2);
+      for (let t = -1.8; t <= 1.81; t += 0.45) B.steel.push(box(0.1, 2 * Math.sqrt(Math.max(0, 2.2 * 2.2 - t * t)), 0.1, it.x + ux * 2.9 - uz * t, it.y, it.z + uz * 2.9 + ux * t));
+      B.steel.push(box(0.1, 0.1, 4.3, it.x + ux * 2.9, it.y, it.z + uz * 2.9, yaw + Math.PI / 2));
       // The gush when the flood comes: a fall of water from its mouth to the floor.
       const tx = it.x + (it.toward[0] / L) * 3;
       const tz = it.z + (it.toward[1] / L) * 3;
@@ -429,12 +459,20 @@ export function underView({ map, tex, H, group, items, text, clipToConvex, merge
       B.concreteItem.push(obbBox(it.obb, it.h, it.y));
     },
     culvertMouth(it) {
-      // The Culvert's mouth: black, a box tunnel on under the city.
-      const g = new THREE.PlaneGeometry(it.w, it.h);
-      g.rotateY(-Math.PI / 2);
-      g.translate(it.x - 0.1, it.y + it.h / 2, it.z);
-      B.dark.push(g);
-      B.hazard.push(box(0.3, 0.5, it.w + 1, it.x - 0.2, it.y + it.h + 0.25, it.z));
+      // The Culvert's mouth: black, a box tunnel on under the city; a concrete
+      // headwall round it (hazard stripes on its face), wing walls, an apron,
+      // and a rack of bars across its foot.
+      // (Its dark a solid panel: seen from behind as well.)
+      B.dark.push(box(0.2, it.h, it.w, it.x, it.y + it.h / 2, it.z));
+      for (const s of [-1, 1]) {
+        B.concreteItem.push(box(1, it.h + 1.4, 1, it.x - 0.5, it.y + (it.h + 1.4) / 2, it.z + s * (it.w / 2 + 0.5)));
+        B.concreteItem.push(box(0.7, it.h * 0.6, 4, it.x - 2.1, it.y + it.h * 0.3, it.z + s * (it.w / 2 + 1.7), s * 0.5));
+      }
+      B.concreteItem.push(box(1, 1.4, it.w + 2, it.x - 0.5, it.y + it.h + 0.7, it.z));
+      B.hazard.push(box(0.05, 0.4, it.w + 2, it.x - 1.03, it.y + it.h + 0.7, it.z));
+      B.concreteItem.push(box(3, 0.2, it.w + 2, it.x - 1.5, it.y - 0.1, it.z));
+      for (let t = -it.w / 2 + 0.4; t <= it.w / 2 - 0.4; t += 0.7) B.steel.push(box(0.1, it.h * 0.5, 0.1, it.x - 0.35, it.y + it.h * 0.25, it.z + t));
+      B.steel.push(box(0.1, 0.12, it.w, it.x - 0.35, it.y + it.h * 0.5, it.z));
     },
     outfall(it) {
       // The Outfall's gates: a steel frame, bars, and a gap for the road.
@@ -451,10 +489,16 @@ export function underView({ map, tex, H, group, items, text, clipToConvex, merge
       for (let t = -o.hd; t <= o.hd; t += 3) B.steel.push(box(0.12, it.h + 0.2, 0.12, o.x + Math.sin(o.yaw) * t, y + it.h / 2, o.z + Math.cos(o.yaw) * t));
     },
     siren(it) {
-      // A post on the drain's wall, a siren box and a strobe.
-      B.steel.push(box(0.25, 4, 0.25, it.x, it.y + 2, it.z));
+      // A post on the drain's wall: a base plate, a junction box, the siren
+      // box with its louvres, a horn either side, and a strobe under a hood.
+      B.steel.push(box(0.6, 0.08, 0.6, it.x, it.y + 0.04, it.z));
+      B.steel.push(new THREE.CylinderGeometry(0.11, 0.13, 4, 8).translate(it.x, it.y + 2, it.z));
+      B.dark.push(box(0.35, 0.5, 0.25, it.x, it.y + 1.4, it.z + 0.18));
       B.dark.push(box(0.9, 0.7, 0.9, it.x, it.y + 4.2, it.z));
+      for (let k = 0; k < 3; k++) B.steel.push(box(0.93, 0.04, 0.93, it.x, it.y + 3.98 + k * 0.22, it.z));
+      for (const s of [-1, 1]) B.dark.push(new THREE.CylinderGeometry(0.34, 0.1, 0.6, 10).rotateZ(-s * (Math.PI / 2)).translate(it.x + s * 0.75, it.y + 4.2, it.z));
       sirens.push(box(0.5, 0.5, 0.5, it.x, it.y + 4.8, it.z));
+      B.dark.push(box(0.5, 0.06, 0.45, it.x, it.y + 3.7, it.z - it.side * 0.35));
       strobes.push(box(0.3, 0.3, 0.3, it.x, it.y + 3.5, it.z - it.side * 0.3));
     },
     portal(it) {
@@ -514,6 +558,13 @@ export function underView({ map, tex, H, group, items, text, clipToConvex, merge
         const z = it.a[2] + (it.b[2] - it.a[2]) * u;
         const y = it.a[1] + (it.b[1] - it.a[1]) * u - Math.sin(u * Math.PI) * 0.6;
         B.painted.push(tint(box(0.9, 0.8, 0.04, x, y - 0.45, z, yaw + Math.PI / 2), SHACK[Math.floor(q) % SHACK.length]));
+      }
+      // (A copy: a pole at each end of its line.)
+      if (it.copy) {
+        for (const p of [it.a, it.b]) {
+          const g = at(p[0], p[2]);
+          B.dark.push(box(0.12, p[1] + 0.2 - g, 0.12, p[0], (p[1] + 0.2 + g) / 2, p[2]));
+        }
       }
     },
     deck(it) {

@@ -14,12 +14,14 @@ import { Hud } from './ui/hud.js';
 import { SettingsMenu } from './ui/settingsMenu.js';
 import { setCrtWarp } from './ui/crtWarp.js';
 import { PadNav } from './ui/padNav.js';
-import { loadCareer, clearCareer, saveCareer, unlockAll, relockAll, activeCar } from './career/career.js';
+import { loadCareer, clearCareer, saveCareer, unlockAll, relockAll } from './career/career.js';
 import { roamEvent, districtEvents } from './career/districts.js';
 import { districtFromDoc, migrateDoc } from './content/mapDoc.js';
 import { sdkGet, sdkPut } from './content/library.js';
 import { getVenue } from './sim/tracks/venues.js';
 import { generateStarters } from './parts/starters.js';
+import { TEST_CAR, customBuild } from './parts/customCar.js';
+import { repaint } from './career/garage.js';
 import { StarterScreen } from './screens/starterScreen.js';
 import { GarageScreen } from './screens/garageScreen.js';
 import { RaceScreen } from './screens/raceScreen.js';
@@ -102,6 +104,13 @@ function onResize() {
 }
 window.addEventListener('resize', onResize);
 
+// A test drive from the T&T SDK: its own tab, nothing to do with the career
+// (the SDK's own car, or a random starter car), its pause menu Resume, bots
+// (free roam) and Exit (back to the editor).
+const testDriving = new URLSearchParams(window.location.search).has('testdrive');
+const MAX_BOTS = 7;
+const roaming = () => testDriving && app.current instanceof RaceScreen && app.current.def.type === 'free';
+
 // --- Pause menu ---
 const menu = new SettingsMenu(
   document.getElementById('menu'),
@@ -116,7 +125,7 @@ const menu = new SettingsMenu(
   [
     {
       label: 'LEAVE RACE',
-      visible: () => app.current instanceof RaceScreen,
+      visible: () => !testDriving && app.current instanceof RaceScreen,
       onClick: () => {
         menu.setOpen(false);
         app.go(app.current.mp ? 'lobby' : 'garage');
@@ -124,7 +133,7 @@ const menu = new SettingsMenu(
     },
     {
       label: 'NEW CAMPAIGN',
-      visible: () => app.current instanceof GarageScreen,
+      visible: () => !testDriving && app.current instanceof GarageScreen,
       onClick: () => {
         if (!window.confirm('Start a new campaign? Your garage will be lost unless it is in a save slot.')) return;
         clearCareer();
@@ -135,14 +144,40 @@ const menu = new SettingsMenu(
     },
     {
       label: 'MAIN MENU',
-      visible: () => !(app.current instanceof MenuScreen),
+      visible: () => !testDriving && !(app.current instanceof MenuScreen),
       onClick: () => {
         menu.setOpen(false);
         app.go('menu');
       },
     },
+    {
+      // (A test drive's bots: other cars, out on the streets with you.)
+      label: () => `ADD BOT (${app.current.bots}/${MAX_BOTS})`,
+      visible: () => roaming() && app.current.bots < MAX_BOTS,
+      onClick: () => {
+        app.current.addBot();
+        menu.render();
+      },
+    },
+    {
+      label: 'REMOVE BOTS',
+      visible: () => roaming() && app.current.bots > 0,
+      onClick: () => {
+        app.current.removeBots();
+        menu.render();
+      },
+    },
+    {
+      // (A test drive: closing its tab puts you back in the editor.)
+      label: 'EXIT',
+      visible: () => testDriving,
+      onClick: () => {
+        window.opener?.focus();
+        window.close();
+      },
+    },
   ],
-  {
+  testDriving ? null : {
     list: () => listSaves().map((s) => ({ slot: s.slot, label: saveLabel(s.meta), empty: !s.meta })),
     canSave: () => !!app.career,
     save: (n) => saveToSlot(n, app.career),
@@ -208,8 +243,9 @@ app.go = (...args) => {
 syncUnlockAll();
 
 // A test drive from the T&T SDK (sdk.html): free roam in the map it has open,
-// starting where its camera was looking (or one of its events), in the active
-// car (or a starter).
+// starting where its camera was looking (or one of its events), in the car made
+// in its Customize Car, or else a random starter car of a random colour (never
+// the career's: a test drive has nothing to do with it).
 function testDrive() {
   if (!new URLSearchParams(window.location.search).has('testdrive')) return null;
   try {
@@ -224,12 +260,26 @@ function testDrive() {
       event = { ...roamEvent(district), name: `Test drive: ${doc.name}` };
       if (spawn) getVenue(event.venue, event).def.spawnAt = spawn;
     }
-    const build = app.career ? activeCar(app.career).build : generateStarters(1)[0].build;
-    return { build, car: null, event };
+    const custom = sdkGet(TEST_CAR);
+    if (custom?.use && custom.design) return { build: customBuild(custom.design), car: null, event };
+    const starters = generateStarters((Math.random() * 0x7fffffff) | 0);
+    const car = { build: starters[Math.floor(Math.random() * starters.length)].build };
+    repaint(car, { color: randomPaint() });
+    return { build: car.build, car: null, event };
   } catch (err) {
     console.error('T&T SDK test drive:', err);
     return null;
   }
+}
+// A bright paint colour: any hue, well saturated, not too dark or pale.
+function randomPaint() {
+  const [h, sat, l] = [Math.random() * 360, 0.6 + Math.random() * 0.35, 0.38 + Math.random() * 0.2];
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    const c = l - sat * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(c * 255).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
 }
 const drive = testDrive();
 if (drive) {

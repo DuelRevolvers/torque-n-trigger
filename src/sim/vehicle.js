@@ -92,7 +92,7 @@ export const carSpeed = (car) => length(car.vel);
 
 function updateNitro(car, p, input, dt) {
   const n = car.nitro;
-  if (input.nitro && !car.prevNitro && n.charges > 0 && n.active <= 0) {
+  if (input.nitro && !car.prevNitro && n.charges > 0 && n.active <= 0 && !(car.shocked > 0)) {
     n.charges--;
     n.active = p.nitro.duration;
   }
@@ -352,6 +352,8 @@ function arcadeAssist(car, p, ctl, h) {
 
   if (!ctl.reverse && ctl.throttle > 0) {
     force = scale(fwd, ctl.throttle * p.mass * a.thrust * clamp(1 - vLong / a.thrustFade, 0, 1));
+  } else if (ctl.reverse && ctl.throttle > 0 && a.reverseThrust && -vLong < p.maxReverseSpeed) {
+    force = scale(fwd, -ctl.throttle * p.mass * a.reverseThrust);
   }
 
   // Drift (Burnout-style): tap the brake or handbrake while steering hard at

@@ -23,7 +23,8 @@ name breaks npm's Windows command shims (`npx vite` fails here for that reason).
 | Throttle / brake (reverse when stopped) | W / S | RT / LT | GAS / BRAKE |
 | Handbrake | Space | A | DRIFT |
 | Nitro | Shift | B | N2O |
-| Look back | Q | R3 | LOOK |
+| Look back | Q | L3 | LOOK |
+| Change camera (chase, far, windshield) | V | R3 | CAM |
 | Reset car | R | Back | RESET |
 | Primary / secondary weapon | Left / right click | RB / LB | FIRE / ALT |
 | Utility | E | Y | UTIL |

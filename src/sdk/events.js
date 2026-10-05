@@ -16,6 +16,8 @@ import * as G from '../sim/geom2d.js';
 
 export const TYPES = { sprint: 'Sprint', circuit: 'Circuit', drag: 'Drag race', arena: 'Arena' };
 export const MODES = { takedowns: 'Most takedowns', lastStanding: 'Last car standing' };
+// How a race's barriers look (event.barrierStyle; render/trackView.js).
+export const BARRIER_STYLES = { '': "The district's", concrete: 'Plain concrete', chevrons: 'Black and yellow chevrons', steel: 'Steel' };
 export { MODIFIER_LABELS, DRIVERS };
 
 // A new event of a type, with the game's usual settings.
@@ -89,6 +91,7 @@ export function routePreview(district, route) {
     if (track.closed) pts.push(pts[0]);
     return {
       pts, length: track.length, closed: track.closed, shortcuts: (v.def.branches || []).length,
+      cuts: (v.def.branches || []).map((b) => b.points.map((p) => [p[0], p[2]])),
       startS: track.closed ? 0 : track.startS ?? 40, finishS: track.closed ? 0 : track.finishS ?? track.length - 25, startY: track.startY, finishY: track.finishY,
     };
   } catch (err) {

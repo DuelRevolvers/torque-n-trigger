@@ -74,7 +74,7 @@ export const baseChanged = (doc, d) => !!doc.base && hashOf(districtData(d)) !==
 
 // Is there anything edited?
 export const hasEdits = (e) =>
-  !!e && ((e.remove?.length || 0) + Object.keys(e.move || {}).length + (e.add?.length || 0) + Object.keys(e.terrain?.dh || {}).length + Object.keys(e.paint?.s || {}).length + (hasPlanEdits(e.plan) ? 1 : 0) + (hasGridEdits(e.grid) ? 1 : 0) + Object.keys(e.events || {}).length + (e.gadgets?.length || 0) + (e.atmosphere ? 1 : 0) + (e.arenas?.length || 0) > 0);
+  !!e && ((e.remove?.length || 0) + Object.keys(e.move || {}).length + (e.add?.length || 0) + Object.keys(e.terrain?.dh || {}).length + Object.keys(e.paint?.s || {}).length + (hasPlanEdits(e.plan) ? 1 : 0) + (hasGridEdits(e.grid) ? 1 : 0) + Object.keys(e.events || {}).length + (e.gadgets?.length || 0) + (e.bridges?.length || 0) + (e.atmosphere ? 1 : 0) + (e.arenas?.length || 0) > 0);
 
 // A district's events with the SDK's event edits made: { events, boss }.
 // edits.events: { key: spec | null } (a new key adds an event; 'boss' is the boss).

@@ -33,11 +33,16 @@ test('sdk: a district saved as a map document opens again unchanged', () => {
     const doc = parseDoc(serializeDoc(docFromDistrict(d)));
     assert.deepEqual(validateDoc(doc), [], d.id);
     assert.equal(baseChanged(doc, d), false, d.id);
-    assert.equal(hasEdits(doc.edits), false, d.id);
+    // (A district can ship gadgets of its own, as edits: the Undercity's fire barrels.)
+    const shipped = d.city.edits?.gadgets || [];
+    assert.equal(hasEdits(doc.edits), shipped.length > 0, d.id);
+    assert.deepEqual(doc.edits.gadgets || [], shipped, d.id);
     const back = districtFromDoc(doc);
-    assert.equal(JSON.stringify(back.city), JSON.stringify(d.city), d.id);
+    const { edits: _a, ...backCity } = back.city;
+    const { edits: _b, ...city } = d.city;
+    assert.equal(JSON.stringify(backCity), JSON.stringify(city), d.id);
     assert.equal(JSON.stringify(back.events), JSON.stringify(d.events), d.id);
-    assert.equal(back.city.edits, undefined, `${d.id}: no edits, nothing added`);
+    assert.deepEqual(back.city.edits?.gadgets || [], shipped, `${d.id}: nothing added`);
   }
   // A changed district shows up as a different base.
   const doc = docFromDistrict(byId('strip'));
@@ -255,6 +260,23 @@ test('sdk: a new sprint and a replaced circuit are the career events of a publis
   assert.ok(!E.routePreview(d, defs.find((e) => e.key === key).route).error);
 });
 
+test('sdk: an object placed on a race route is solid in the race, in every district, with a top to drive on', async () => {
+  const { buildTrack } = await import('../src/sim/track.js');
+  const { Session } = await import('../src/sdk/session.js');
+  for (const d of DISTRICTS) {
+    const e = d.events.find((q) => q.route.path);
+    const t0 = buildTrack(cityVenue(d.city, e.route).def);
+    const i = t0.indexAtDistance(Math.min(300, t0.length / 2));
+    const s = new Session(docFromDistrict(d));
+    const src = s.layout.items.find((it) => it.solid && Array.isArray(it.r) && it.h > 1.5 && it.h < 6 && it.r[1] - it.r[0] < 6 && it.r[3] - it.r[2] < 6);
+    if (!src) continue;
+    s.add(src.key, t0.x[i], t0.z[i], 0);
+    const t = buildTrack(cityVenue(districtFromDoc(parseDoc(serializeDoc(s.doc))).city, e.route).def);
+    assert.ok(Math.abs(t.query(t0.x[i], t0.z[i], -1, t0.y[i] + 0.5).lateral) > t.wallDist, `${d.id}: hit from the side`);
+    assert.ok(t.standY(t0.x[i], t0.z[i]) > t0.y[i] + 1, `${d.id}: its top is ground`);
+  }
+});
+
 test('sdk: a race starts and finishes anywhere: up on a roof, off the streets, up a ramp onto a dock', async () => {
   const { buildTrack } = await import('../src/sim/track.js');
   const { gridPoses, createEventState } = await import('../src/sim/event.js');
@@ -306,7 +328,7 @@ test('sdk: a race starts and finishes anywhere: up on a roof, off the streets, u
   assert.equal(wayProblem(docks.withEvents(), dockRace), null, 'the ramp leads up');
 });
 
-test('sdk: gadgets: a gate opens while its trigger pad is driven over, and lifts stand on the ground', async () => {
+test('sdk: gadgets: a trigger pad switches its gate open and shut, and lifts stand on the ground', async () => {
   const { newGadget } = await import('../src/sim/gadgets.js');
   const { createWorld, stepWorld } = await import('../src/sim/world.js');
   const { TEST_CAR } = await import('../src/sim/carParams.js');
@@ -317,12 +339,23 @@ test('sdk: gadgets: a gate opens while its trigger pad is driven over, and lifts
   const arena = buildArena(def);
   const gate = def.lifts.find((l) => l.gadget === 'g2');
   assert.equal(arena.liftTop(gate), gate.hMax, 'shut');
-  const world = createWorld({ track: arena, cars: [{ params: TEST_CAR }], poses: [{ pos: { x: 10, y: def.heightAt(10, 60) + 0.9, z: 60 }, yaw: 0 }] });
+  const on = { pos: { x: 10, y: def.heightAt(10, 60) + 0.9, z: 60 }, yaw: 0 };
+  const world = createWorld({ track: arena, cars: [{ params: TEST_CAR }], poses: [on] });
+  const car = world.state.cars[0];
   stepWorld(world, []);
-  assert.notEqual(world.state.triggered.g1, undefined, 'the pad went off');
+  assert.equal(world.state.switches.g1, true, 'driving onto the pad switched it on');
   stepWorld(world, []);
   assert.equal(arena.liftTop(gate), 0, 'open');
-  arena.setTime(arena.time + gate.gate.openFor + 1);
+  for (let k = 0; k < 600; k++) stepWorld(world, []);
+  assert.equal(world.state.switches.g1, true, 'staying on it keeps it on');
+  assert.equal(arena.liftTop(gate), 0, 'still open');
+  car.pos = { x: 200, y: def.heightAt(200, 60) + 0.9, z: 60 };
+  stepWorld(world, []);
+  assert.equal(arena.liftTop(gate), 0, 'off the pad: still open');
+  car.pos = { ...on.pos };
+  stepWorld(world, []);
+  stepWorld(world, []);
+  assert.equal(world.state.switches.g1, false, 'onto it again: off');
   assert.equal(arena.liftTop(gate), gate.hMax, 'shut again');
   const lift = def.lifts.find((l) => l.gadget === 'g3');
   assert.ok(near(lift.base, def.heightAt(-60, 60)));
@@ -636,4 +669,455 @@ test('sdk: a copied breakable gets its own id and breaks on its own', () => {
   const def = cityVenue(d.city, { kind: 'roam' }).def;
   assert.equal(def.breakables.filter((b) => b.id === copy.id).length, 1);
   assert.equal(new Set(def.breakables.map((b) => b.id)).size, def.breakables.length, 'breakable ids stay unique');
+});
+
+test('sdk: fences and walls in a run: post to post, bending only at the posts, each piece made to fit', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { runnable, runPieces, pieceLength } = await import('../src/sdk/runs.js');
+  const { longSide } = await import('../src/sim/layoutEdits.js');
+  const s = new Session(docFromDistrict(byId('maple')));
+  const items = [...s.base.values()].filter(canMove);
+  // What goes in a run: fences, walls, hedges, railings; not cars, houses or trees.
+  for (const t of ['wall', 'hedge', 'railing', 'fence']) assert.ok(items.some((it) => it.t === t && runnable(it)), `a ${t} goes in a run`);
+  assert.ok(items.some((it) => it.t === 'brk' && it.kind === 'fence' && runnable(it)), 'a picket fence goes in a run');
+  for (const t of ['car', 'bldg', 'tree', 'bench']) assert.ok(!items.some((it) => it.t === t && runnable(it)), `a ${t} doesn't`);
+
+  const wall = items.find((it) => it.t === 'wall' && runnable(it));
+  const side = longSide(wall);
+  const unit = pieceLength(wall);
+  // An L: 30 m east, then 12 m south.
+  const [x0, z0] = [-40, 20];
+  const posts = [[x0, z0], [x0 + 30, z0], [x0 + 30, z0 + 12]];
+  const pieces = runPieces(wall, posts);
+  const total = pieces.reduce((a, p) => a + p.len, 0);
+  assert.ok(near(total, 42 + side.width / 2, 1e-9), 'both stretches filled, and half its thickness past the corner');
+  for (const p of pieces) assert.ok(p.len > unit * 0.66 && p.len < unit * 1.5, `pieces about its own length (${p.len.toFixed(2)} m, its own ${unit.toFixed(2)} m)`);
+  const ids = s.addMany(wall.key, pieces.map((p) => [p.x, p.z, p.yaw, p.len]));
+  assert.equal(ids.length, pieces.length);
+
+  // As built: every piece lies along its stretch, as long as it was made, end to end from post to post.
+  const stretches = [
+    { from: posts[0], dir: [1, 0], L: 30 + side.width / 2 },
+    { from: posts[1], dir: [0, 1], L: 12 },
+  ];
+  const on = stretches.map(() => []);
+  for (const key of ids) {
+    const it = s.item(key);
+    const [cx, cz] = itemCentre(it);
+    const k = stretches.findIndex(({ from, dir }) => Math.abs((cx - from[0]) * dir[1] - (cz - from[1]) * dir[0]) < 0.01);
+    assert.ok(k >= 0, `${key} is on a stretch`);
+    const b = longSide(it);
+    const { from, dir } = stretches[k];
+    assert.ok(Math.abs(Math.abs(Math.sin(b.yaw) * dir[0] + Math.cos(b.yaw) * dir[1]) - 1) < 1e-3, `${key} runs along its stretch`);
+    const t = (cx - from[0]) * dir[0] + (cz - from[1]) * dir[1];
+    on[k].push([t - b.len / 2, t + b.len / 2]);
+  }
+  stretches.forEach(({ L }, k) => {
+    const spans = on[k].sort((a, b) => a[0] - b[0]);
+    assert.ok(Math.abs(spans[0][0]) < 0.01, 'from its post');
+    assert.ok(Math.abs(spans[spans.length - 1][1] - L) < 0.01, 'to the next');
+    for (let q = 1; q < spans.length; q++) assert.ok(Math.abs(spans[q][0] - spans[q - 1][1]) < 0.01, 'no gaps, no overlaps');
+  });
+
+  // The whole run is one step to undo; a copy's length can be changed, and a copy of it keeps it.
+  s.setLength(ids[0], 5);
+  assert.ok(near(longSide(s.item(ids[0])).len, 5, 1e-6));
+  const dup = s.duplicate(ids[0]);
+  assert.ok(near(longSide(s.item(dup)).len, 5, 1e-6), 'a duplicate keeps the length');
+  s.undo();
+  s.undo();
+  s.undo();
+  assert.equal(s.doc.edits.add.length, 0, 'the run went in one step');
+
+  // Closed round: every corner turned, each stretch half its thickness past its corner.
+  const square = [[0, 0], [20, 0], [20, 20], [0, 20]];
+  assert.ok(near(runPieces(wall, square, true).reduce((a, p) => a + p.len, 0), 80 + 2 * side.width, 1e-9));
+
+  // Free roam collides with the run as placed.
+  const doc = docFromDistrict(byId('maple'));
+  doc.edits.add = pieces.map((p, k) => ({ id: `w${k}`, from: wall.key, x: p.x, z: p.z, yaw: p.yaw, len: p.len }));
+  const d = districtFromDoc(doc);
+  const laid = districtLayout(districtMap(d.city)).items.filter((it) => it.key.startsWith('+w'));
+  assert.equal(laid.length, pieces.length);
+  const inWall = (x, z) => laid.some((it) => {
+    const o = it.obb;
+    const u = (x - o.x) * Math.cos(o.yaw) - (z - o.z) * Math.sin(o.yaw);
+    const v = (x - o.x) * Math.sin(o.yaw) + (z - o.z) * Math.cos(o.yaw);
+    return Math.abs(u) <= o.hw + 1e-6 && Math.abs(v) <= o.hd + 1e-6;
+  });
+  for (let t = 0.5; t < 30; t += 1) assert.ok(inWall(x0 + t, z0), `solid all along the first stretch (${t} m)`);
+  for (let t = 0.5; t < 12; t += 1) assert.ok(inWall(x0 + 30, z0 + t), `and the second (${t} m)`);
+  assert.ok(!inWall(x0 + 15, z0 + 6), 'and not inside the L');
+});
+
+test('sdk: a live plate burns (and sets a car alight) or sparks (and shocks it: its engine, nitro and weapons cut out)', async () => {
+  const { newGadget } = await import('../src/sim/gadgets.js');
+  const { createEventState, SHOCKED_FOR } = await import('../src/sim/event.js');
+  const { createWorld, stepWorld } = await import('../src/sim/world.js');
+  const { TEST_CAR } = await import('../src/sim/carParams.js');
+  const { updateMods } = await import('../src/sim/combat.js');
+  const run = (kind) => {
+    const doc = docFromDistrict(byId('strip'));
+    doc.edits.gadgets = [kind ? { ...newGadget('hazard', 'g1', 10, 60), kind } : newGadget('hazard', 'g1', 10, 60)];
+    const d = districtFromDoc(parseDoc(serializeDoc(doc)));
+    const def = cityVenue(d.city, { kind: 'roam' }).def;
+    const arena = buildArena(def);
+    const world = createWorld({ track: arena, cars: [{ params: TEST_CAR }], poses: [{ pos: { x: 10, y: def.heightAt(10, 60) + 0.9, z: 60 }, yaw: 0 }], event: createEventState({ type: 'free' }, arena) });
+    const car = world.state.cars[0];
+    updateMods(world, 0);
+    const torque = car.mods.torque;
+    stepWorld(world, []);
+    updateMods(world, 0);
+    return { world, car, torque, plate: def.hazards.find((h) => h.gadget === 'g1') };
+  };
+  // Flames (as a plate is made): burnt, and alight after; not shocked.
+  const fire = run();
+  assert.equal(fire.plate.kind, 'fire');
+  assert.ok(fire.car.hp < fire.car.maxHp, 'burnt');
+  assert.ok(fire.car.burning > 2, 'alight');
+  assert.ok(!(fire.car.shocked > 0) && near(fire.car.mods.torque, fire.torque), 'its engine as it was');
+  // Sparks: hurt, shocked (engine down to a quarter, no nitro), not alight; it wears off.
+  const zap = run('sparks');
+  assert.equal(zap.plate.kind, 'sparks');
+  assert.ok(zap.car.hp < zap.car.maxHp, 'hurt');
+  assert.equal(zap.car.burning, 0, 'not alight');
+  assert.ok(zap.car.shocked > SHOCKED_FOR * 0.9, 'shocked');
+  assert.ok(near(zap.car.mods.torque, zap.torque * 0.25, 1e-9), 'its engine cut');
+  const charges = zap.car.nitro.charges;
+  stepWorld(zap.world, [{ nitro: true }]);
+  assert.equal(zap.car.nitro.charges, charges, 'no nitro while shocked');
+  assert.equal(zap.car.nitro.active, 0);
+  zap.car.pos.x += 40; // (off the plate)
+  for (let k = 0; k < 120 * 2; k++) stepWorld(zap.world, []);
+  assert.equal(zap.car.shocked, 0, 'it wears off');
+});
+
+test('sdk: every kind of light: placed with its own settings, solid where it has something to hit', async () => {
+  const { newGadget, gadgetItems, LIGHT_FIXTURES, lightPreset, lightResize, SPAN_LIGHTS } = await import('../src/sim/gadgets.js');
+  const { Session } = await import('../src/sdk/session.js');
+  const s = new Session(docFromDistrict(byId('strip')));
+  const at = { post: 1, flood: 1, bollard: 1, search: 1, barrel: 1, beacon: 1, string: 2, wall: 0, bar: 0, ground: 0, bare: 0 };
+  assert.deepEqual(Object.keys(at).sort(), Object.keys(LIGHT_FIXTURES).sort(), 'every fixture checked');
+  for (const f of Object.keys(LIGHT_FIXTURES)) {
+    const id = s.addGadget('light', 20, 60, 0, lightPreset(f));
+    const g = s.gadgets().find((q) => q.id === id);
+    assert.equal(g.fixture, f);
+    assert.ok(!('fixed' in g), `${f}: only settings kept`);
+    assert.equal(typeof g.span === 'number', SPAN_LIGHTS.has(f), `${f}: a length only if it's long`);
+    const solid = gadgetItems([g], () => 0);
+    assert.equal(solid.length, at[f], `${f}: ${solid.length} solid parts`);
+    assert.equal(new Set(solid.map((it) => it.key)).size, solid.length, 'each its own key');
+    s.undo();
+  }
+  // String lights: a pole at each end, along the way it faces.
+  const str = { ...newGadget('light', 'g9', 0, 0, Math.PI / 2), ...lightPreset('string') };
+  const poles = gadgetItems([str], () => 0).map((it) => (it.r[0] + it.r[1]) / 2).sort((a, b) => a - b);
+  assert.ok(near(poles[0], -str.span / 2, 1e-9) && near(poles[1], str.span / 2, 1e-9));
+  // A light changed to another fixture takes that one's size.
+  assert.deepEqual(lightResize('flood'), { fixture: 'flood', height: 14, reach: 26 });
+  assert.equal(lightResize('bar').span, 4);
+});
+
+test('sdk: gadgets linked to a trigger pad stand still till it is switched on, run while it is on, and stop where they are when it is off', async () => {
+  const { newGadget } = await import('../src/sim/gadgets.js');
+  const { createWorld, stepWorld } = await import('../src/sim/world.js');
+  const { TEST_CAR } = await import('../src/sim/carParams.js');
+  const { SIM_DT } = await import('../src/config.js');
+  const doc = docFromDistrict(byId('strip'));
+  doc.edits.gadgets = [
+    newGadget('trigger', 'g1', 10, 60),
+    { ...newGadget('lift', 'g2', -60, 60), link: 'g1' },
+    { ...newGadget('sweeper', 'g3', -60, 100, 0.5), link: 'g1' },
+    { ...newGadget('mover', 'g4', -60, 140), link: 'g1' },
+    newGadget('lift', 'g5', -60, 180), // (on its own)
+  ];
+  const d = districtFromDoc(parseDoc(serializeDoc(doc)));
+  const def = cityVenue(d.city, { kind: 'roam' }).def;
+  const arena = buildArena(def);
+  const lift = def.lifts.find((l) => l.gadget === 'g2');
+  const own = def.lifts.find((l) => l.gadget === 'g5');
+  const bar = def.sweepers.find((q) => q.gadget === 'g3');
+  const block = def.movers.find((q) => q.gadget === 'g4');
+  const away = { x: 200, y: def.heightAt(200, 60) + 0.9, z: 60 };
+  const pad = { x: 10, y: def.heightAt(10, 60) + 0.9, z: 60 };
+  const world = createWorld({ track: arena, cars: [{ params: TEST_CAR }], poses: [{ pos: { ...away }, yaw: 0 }] });
+  const car = world.state.cars[0];
+  const run = (seconds) => { for (let k = 0; k < Math.round(seconds / SIM_DT); k++) stepWorld(world, []); };
+  // (Onto the pad and off it again: a flip.)
+  const flip = () => {
+    car.pos = { ...pad };
+    stepWorld(world, []);
+    car.pos = { ...away };
+    stepWorld(world, []);
+  };
+  // Switched off (as it starts): the linked ones at rest (the bar the way it's turned); the other moving.
+  run(2);
+  assert.equal(arena.liftTop(lift), 0, 'the linked lift stays down');
+  assert.ok(near(arena.sweeperAngle(bar), Math.PI / 2 - 0.5), 'the linked bar stays still, the way it faces');
+  assert.deepEqual(arena.moverAt(block).slice(0, 2), [block.x, block.z], 'the linked block stays put');
+  assert.ok(arena.liftTop(own) > 0.5, 'an unlinked lift moves on its own');
+  // On: they run, and go on running.
+  flip();
+  assert.equal(world.state.switches.g1, true);
+  run(lift.period / 2);
+  assert.ok(arena.liftTop(lift) > lift.hMax * 0.9, 'up, half way through a cycle');
+  run(lift.period * 2);
+  assert.ok(arena.liftTop(lift) > lift.hMax * 0.9, 'and round again: still running');
+  // Off: stopped where they are, and staying there.
+  run(lift.period / 4);
+  flip();
+  assert.equal(world.state.switches.g1, false);
+  const [top, angle, at] = [arena.liftTop(lift), arena.sweeperAngle(bar), arena.moverAt(block)];
+  assert.ok(top > 0.5 && top < lift.hMax - 0.5, 'stopped part way up');
+  run(5);
+  assert.ok(near(arena.liftTop(lift), top) && near(arena.sweeperAngle(bar), angle) && near(arena.moverAt(block)[0], at[0]), 'and stays there');
+  // On again: going on from where they stopped.
+  flip();
+  const t0 = arena.liftTop(lift);
+  assert.ok(Math.abs(t0 - top) < 0.05, 'no jump');
+  run(0.5);
+  assert.ok(!near(arena.liftTop(lift), top, 0.05), 'moving again');
+});
+
+test('sdk: a lift pad up in the air can be driven under: only its slab and its pillars are solid', async () => {
+  const { newGadget } = await import('../src/sim/gadgets.js');
+  const doc = docFromDistrict(byId('strip'));
+  doc.edits.gadgets = [newGadget('lift', 'g1', 0, 100)];
+  const d = districtFromDoc(parseDoc(serializeDoc(doc)));
+  const def = cityVenue(d.city, { kind: 'roam' }).def;
+  const arena = buildArena(def);
+  const lift = def.lifts.find((l) => l.gadget === 'g1');
+  const [wx, wz] = [lift.x + arena.cx, lift.z + arena.cz];
+  const floor = arena.y0 + lift.base;
+  const clear = (x, z, y) => arena.query(x, z, undefined, y).lateral - arena.wallDist < 0;
+  // Up (half a cycle in): a car at the ground drives under it, on the ground.
+  arena.setTime(lift.period / 2);
+  assert.ok(near(arena.liftTop(lift), lift.hMax));
+  const under = arena.query(wx, wz, undefined, floor + 0.6);
+  assert.ok(under.lateral - arena.wallDist < 0, 'nothing to hit under it');
+  assert.ok(near(under.height, floor, 0.3), 'on the ground, not up on it');
+  // Its pillars are solid, the whole way up; between them, nothing.
+  assert.equal(lift.posts.length, 4);
+  for (const [px, pz] of lift.posts) assert.ok(!clear(px + arena.cx, pz + arena.cz, floor + 0.6), 'a pillar');
+  const [p0, p1] = lift.posts;
+  assert.ok(clear((p0[0] + p1[0]) / 2 + arena.cx, (p0[1] + p1[1]) / 2 + arena.cz, floor + 0.6), 'between two pillars');
+  // At the slab's own height it's a wall; on top, it's ground.
+  assert.ok(!clear(wx, wz, floor + lift.hMax - 0.3 - 1.5), 'the slab');
+  assert.ok(near(arena.query(wx, wz, undefined, floor + lift.hMax + 0.3).height, floor + lift.hMax, 1e-6), 'on top');
+  // Down: a deck to drive onto.
+  arena.setTime(0);
+  assert.ok(near(arena.query(wx, wz, undefined, floor + 0.6).height, floor, 1e-6));
+});
+
+test('sdk: the same model is one entry in the Objects list, each district\'s (or name\'s) a style; a ramp and a jump kicker are one Ramp in two shapes', async () => {
+  const { catalogue, models } = await import('../src/sdk/catalogue.js');
+  const { GADGETS, newGadget, shapeOf, shapeSettings } = await import('../src/sim/gadgets.js');
+  const all = DISTRICTS.filter((d) => d.city).flatMap((d) => catalogue(baseLayout(districtMap(d.city)).items).map((e) => ({ ...e, district: d.id })));
+  const list = models(all);
+  const model = (key) => list.find((m) => m.key === key);
+  const styles = (key) => model(key).styles.map((e) => `${e.district}:${e.id}`).sort();
+  // (The same thing in two districts is listed once: Rustline's and Maple Hollow's fences are Neon Strip's.)
+  assert.deepEqual(styles('fence'), ['strip:fence', 'undercity:fence'], 'one fence of each look');
+  assert.deepEqual(styles('tree'), ['maple:tree.maple', 'spire:parkTree', 'spire:streetTree', 'strip:palm']);
+  assert.deepEqual(styles('barrier'), ['chrome:gate', 'rustline:gate', 'undercity:gate'], 'Barriers');
+  assert.equal(model('barrier').name, 'Barriers');
+  assert.deepEqual(styles('houseGate'), ['maple:gate'], 'House gate');
+  assert.deepEqual(styles('posts'), ['chrome:billboardLeg', 'rustline:post', 'undercity:rackLeg']);
+  assert.deepEqual(styles('gazebo'), ['chrome:bandstand', 'maple:gazebo', 'spire:bandstand']);
+  assert.ok(model('deadSign').styles.length > 3 && model('deadSign').name === 'Dead neon sign', 'every dead neon sign');
+  assert.deepEqual(styles('brk.fence'), ['maple:brk.fence~picket', 'maple:brk.fence~wood'], 'picket and wood');
+  assert.ok(!list.some((m) => ['car', 'lobby', 'mound'].includes(m.key)), 'parked cars, the lobby, mounds: off the list');
+  assert.equal(model('bldg').name, 'Building (warehouse)');
+  assert.ok(['wall', 'lowWall', 'shellWall', 'lobbyWall', 'tunnelWall', 'parapet'].every((t) => model('wall').styles.some((e) => e.t === t)), 'every kind of wall');
+  assert.deepEqual(styles('ramp'), ['chrome:kicker', 'chrome:padRamp'], 'the kicker and the plain one');
+  assert.equal(model('ramp').name, 'District ramp', '(the placed Ramp is its own)');
+  assert.ok(list.length < all.length - 60, `${all.length} entries down to ${list.length}`);
+  assert.equal(new Set(list.map((m) => m.key)).size, list.length);
+  assert.deepEqual(list.filter((m) => m.category === 'Other').map((m) => m.name), [], 'every object in a section of its own');
+  // Placed ramps: one entry, shaped a ramp or a kicker; a kicker from an older map is a ramp of that shape.
+  assert.ok(GADGETS.kicker.hidden && !GADGETS.ramp.hidden);
+  assert.equal(shapeOf(newGadget('ramp', 'g1', 0, 0)), 'ramp');
+  assert.equal(shapeOf({ ...newGadget('ramp', 'g1', 0, 0), ...shapeSettings('ramp', 'kicker') }), 'kicker');
+  assert.equal(shapeOf(newGadget('kicker', 'g2', 0, 0)), 'kicker');
+  assert.ok(!('hidden' in newGadget('kicker', 'g2', 0, 0)));
+  assert.equal(shapeOf({ ...newGadget('ramp', 'g1', 0, 0), len: 7 }), null, 'its own shape');
+});
+
+test('sdk: several things selected move, turn, delete and copy together, each as one step', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const s = new Session(docFromDistrict(byId('strip')));
+  const cars = [...s.base.values()].filter((it) => it.t === 'car' && canMove(it)).slice(0, 2).map((it) => it.key);
+  const pad = s.addGadget('lift', 20, 60);
+  const things = [...cars.map((key) => ({ key })), { gadget: pad }];
+  const before = things.map((t) => (t.key ? s.pose(t.key) : { ...s.gadgets().find((g) => g.id === t.gadget) }));
+  const steps = s.past.length;
+  // Moved 10 m along x and turned a quarter: one step.
+  const moves = things.map((t, k) => ({ ...t, x: before[k].x + 10, z: before[k].z, yaw: (before[k].yaw || 0) + Math.PI / 2 }));
+  assert.ok(s.moveMany(moves));
+  assert.equal(s.past.length, steps + 1, 'one step');
+  for (const [k, t] of things.entries()) {
+    const now = t.key ? s.pose(t.key) : s.gadgets().find((g) => g.id === t.gadget);
+    assert.ok(near(now.x, before[k].x + 10, 1e-3) && near(now.z, before[k].z, 1e-3), 'moved');
+    assert.ok(near(now.yaw, (before[k].yaw || 0) + Math.PI / 2, 1e-3), 'turned');
+  }
+  s.undo();
+  assert.ok(near(s.pose(cars[0]).x, before[0].x, 1e-3), 'one undo puts them all back');
+  // Copied: copies of each, the selection's; then all deleted: one step each.
+  const copies = s.duplicateMany(things, 8);
+  assert.equal(copies.length, 3);
+  assert.ok(near(s.pose(copies[0].key).x, before[0].x + 8, 1e-3));
+  assert.ok(s.gadgets().some((g) => g.id === copies[2].gadget));
+  assert.ok(s.removeMany(copies));
+  assert.ok(!s.item(copies[0].key) && !s.gadgets().some((g) => g.id === copies[2].gadget), 'gone');
+  s.undo();
+  assert.ok(s.item(copies[1].key), 'back in one undo');
+  assert.ok(s.removeMany(things.slice(0, 1)));
+  assert.ok(s.doc.edits.remove.includes(cars[0]), "a district's own: taken out");
+});
+
+test("sdk: a test drive start: one per map, never copied, and the game's free roam never uses it", async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const s = new Session(docFromDistrict(byId('strip')));
+  s.addGadget('testStart', 10, 60, 1);
+  const id = s.addGadget('testStart', 0, 100, 0.5);
+  assert.deepEqual(s.gadgets().filter((g) => g.type === 'testStart').map((g) => [g.id, g.x, g.z]), [[id, 0, 100]], 'placing another moves it');
+  assert.deepEqual(s.duplicateMany([{ gadget: id }]), [], 'not copied');
+  const plain = cityVenue(districtFromDoc(docFromDistrict(byId('strip'))).city, { kind: 'roam' }).def.spawnAt;
+  const roam = cityVenue(districtFromDoc(s.doc).city, { kind: 'roam' }).def.spawnAt;
+  assert.deepEqual(roam, plain, "free roam starts where it did");
+});
+
+test('sdk: a drawn shortcut leaves the route and joins it further on, off the streets', async () => {
+  const { buildTrack } = await import('../src/sim/track.js');
+  const { routePreview } = await import('../src/sdk/events.js');
+  const district = districtFromDoc(docFromDistrict(byId('strip')));
+  const ev = district.events.find((e) => e.route.kind === 'sprint');
+  const main = buildTrack(cityVenue(district.city, ev.route).def);
+  const pt = (s, lat = 0) => {
+    const i = main.indexAtDistance(s);
+    return [main.x[i] + main.rx[i] * lat, main.z[i] + main.rz[i] * lat];
+  };
+  // Drawn the wrong way round, a little off the line at its ends: put right.
+  const path = [pt(260, 3), pt(180, 40), pt(120, -2)];
+  const route = { ...ev.route, shortcuts: [{ path }] };
+  const def = cityVenue(district.city, route).def;
+  const cut = def.branches.find((b) => b.kind === 'drawn');
+  assert.ok(cut, 'built');
+  assert.ok(near(cut.s0, 120, 3) && near(cut.s1, 260, 3), 'ends along the route, in order');
+  const track = buildTrack(def);
+  const b = track.branches.find((q) => q.kind === 'drawn').track;
+  assert.ok(b.free, 'off the streets: no road laid');
+  const [x0, z0] = [b.x[0], b.z[0]];
+  assert.ok(Math.abs(main.queryMain(x0, z0).lateral) < 1, 'its end on the route');
+  assert.equal(routePreview(district, route).cuts.length, (def.branches || []).length, 'drawn in the SDK');
+  // Too short: none.
+  assert.ok(!cityVenue(district.city, { ...ev.route, shortcuts: [{ path: [pt(120), pt(130)] }] }).def.branches.some((q) => q.kind === 'drawn'));
+});
+
+test("sdk: a district's own ramps (the warehouse docks' and the rest) are picked, moved and turned", async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { rampBox } = await import('../src/sim/layoutEdits.js');
+  let seen = 0;
+  for (const d of DISTRICTS) {
+    const s = new Session(docFromDistrict(d));
+    const ramps = [...s.base.values()].filter((it) => it.ramp && !it.hidden && !Array.isArray(it.r) && canMove(it));
+    if (!ramps.length) continue;
+    seen++;
+    const it = ramps[0];
+    const o = rampBox(it.ramp);
+    assert.equal(s.pick(o.x, o.z), it.key, `${d.id}: ${it.key} picked at its middle`);
+    const p = s.pose(it.key);
+    assert.ok(near(p.x, o.x, 1e-3) && near(p.z, o.z, 1e-3), 'its middle is the ramp');
+    assert.ok(s.place(it.key, p.x + 10, p.z, p.yaw + Math.PI / 2));
+    const moved = s.layout.items.find((q) => q.key === it.key || q.t === it.t && q.ramp && near(rampBox(q.ramp).x, o.x + 10, 0.01));
+    const m = rampBox(moved.ramp);
+    assert.ok(near(m.x, o.x + 10, 0.01) && near(m.z, o.z, 0.01), 'moved, and turned round its middle');
+    assert.ok(Math.abs(Math.sin(m.yaw - o.yaw - Math.PI / 2)) < 1e-3 || Math.abs(Math.sin(m.yaw - o.yaw + Math.PI / 2)) < 1e-3, 'turned a quarter');
+  }
+  assert.ok(seen > 0, 'some district has ramps of its own');
+});
+
+test('sdk: gadgets stand up on top of things (up), and a roof is found under a point', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { rampsOf, dropsOf, barrelsOf, gadgetItems } = await import('../src/sim/gadgets.js');
+  const s = new Session(docFromDistrict(byId('rustline')));
+  const H = s.map.heightAt;
+  const rid = s.addGadget('ramp', 10, 60, 0, { up: 12 });
+  const ramp = s.gadgets().find((g) => g.id === rid);
+  assert.ok(near(rampsOf([ramp], H)[0].abs, H(10, 60) + 12, 1e-6), 'a ramp up on a roof');
+  const drop = { ...ramp, type: 'health', height: 0 };
+  assert.ok(near(dropsOf([drop], H)[0].y, H(10, 60) + 12.8, 1e-6), 'a drop');
+  assert.ok(near(barrelsOf([{ ...ramp, type: 'barrel' }], H)[0].y, H(10, 60) + 12, 1e-6), 'a barrel');
+  const light = { id: 'g9', type: 'light', x: 10, z: 60, fixture: 'post', height: 7, up: 12 };
+  assert.ok(gadgetItems([light], H).every((it) => near(it.y, H(10, 60) + 12, 1e-6)), "a light's post");
+  // A building's roof: what's under its middle.
+  const b = s.layout.items.find((it) => it.t === 'bldg' && Array.isArray(it.r) && (it.r[1] - it.r[0]) > 10);
+  const [cx, cz] = [(b.r[0] + b.r[1]) / 2, (b.r[2] + b.r[3]) / 2];
+  assert.ok(near(s.topAt(cx, cz), s.baseY(b) + b.h - H(cx, cz), 0.01), 'on the roof');
+  assert.equal(s.topAt(b.r[0] - 30, cz) >= 0, true);
+});
+
+test("sdk: Pillar Hall's barrels are fire barrel lights and its cabins objects, all movable", async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const s = new Session(docFromDistrict(byId('undercity')));
+  const fires = s.gadgets().filter((g) => g.type === 'light' && g.fixture === 'barrel');
+  assert.equal(fires.length, 8, 'eight fire barrels');
+  const cabins = s.layout.items.filter((it) => it.t === 'cabin');
+  assert.equal(cabins.length, 7, 'seven cabins');
+  assert.ok(cabins.every((it) => canMove(it) && s.pick(it.obb.x, it.obb.z) === it.key), 'picked');
+  const hall = cityVenue(districtFromDoc(s.doc).city, { kind: 'arena', site: 1 });
+  assert.ok(hall.def.obstacles.filter((o) => Math.abs(o.hd - 6.1) < 1e-6).length >= 7, 'the cabins are solid in Pillar Hall');
+});
+
+test("sdk: an object's options (its settings) are kept with it, moved, copied and undone", async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const s = new Session(docFromDistrict(byId('strip')));
+  const lamp = [...s.base.values()].find((it) => it.t === 'lamp' && canMove(it)).key;
+  assert.ok(s.setSettings(lamp, { color: '#ffb000', reach: 8 }));
+  assert.deepEqual(s.item(lamp).set, { color: '#ffb000', reach: 8 }, 'the district\'s own lamp');
+  const p = s.pose(lamp);
+  assert.ok(s.place(lamp, p.x + 5, p.z, p.yaw));
+  assert.equal(s.item(lamp).set.color, '#ffb000', 'kept when moved');
+  const copy = s.duplicate(lamp);
+  assert.deepEqual(s.item(copy).set, { color: '#ffb000', reach: 8 }, 'copied');
+  assert.ok(s.setSettings(copy, { reach: null }));
+  assert.deepEqual(s.item(copy).set, { color: '#ffb000' }, 'one back to its own');
+  s.undo();
+  assert.equal(s.item(copy).set.reach, 8, 'undone');
+  // Reset: no settings, no edit left for an unmoved object.
+  const other = [...s.base.values()].filter((it) => it.t === 'lamp' && canMove(it))[1].key;
+  s.setSettings(other, { flicker: 'buzz' });
+  s.setSettings(other, { flicker: null });
+  assert.equal(s.doc.edits.move[other], undefined);
+  // A width (len): along its long side, drawn and solid at that size.
+  const { longSide } = await import('../src/sim/layoutEdits.js');
+  const gate = [...s.base.values()].find((it) => it.t === 'lowWall' && canMove(it) && longSide(it));
+  s.setSettings(gate.key, { len: 3 });
+  assert.ok(near(longSide(s.item(gate.key)).len, 3, 1e-6), 'resized');
+});
+
+test('sdk: a bridge drawn along a path: a deck to drive on and under, piers, ramps from its ends; level across a gap', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { bridgeItems } = await import('../src/sim/bridges.js');
+  const s = new Session(docFromDistrict(byId('strip')));
+  const H = s.map.heightAt;
+  const id = s.addBridge([[0, 100], [40, 100], [80, 120]], { width: 10, height: 6, style: 'concrete', ramps: true });
+  assert.ok(hasEdits(s.doc.edits), 'kept in the map');
+  const items = bridgeItems(s.bridges(), H);
+  const decks = items.filter((it) => it.t === 'bridgeDeck');
+  assert.ok(decks.length > 2 && decks.every((it) => it.deck && it.under && near(it.h, H(0, 100) + 6, 2)), 'a deck about 6 m up');
+  assert.equal(items.filter((it) => it.t === 'bridgeRamp').length, 2, 'a ramp at each end');
+  assert.ok(items.some((it) => it.t === 'bridgePier' && it.solid), 'piers');
+  // In free roam: its deck a platform cars drive under.
+  const roam = cityVenue(districtFromDoc(s.doc).city, { kind: 'roam' }).def;
+  assert.ok(roam.platforms.some((p) => p.under && near(p.h, H(0, 100) + 6, 2)), 'driven under');
+  // Height 0: level from end to end at its ends' ground (across a gap), no ramps.
+  const flat = bridgeItems([{ id: 'b9', pts: [[0, 100], [60, 100]], width: 8, height: 0, style: 'concrete' }], H);
+  assert.equal(flat.filter((it) => it.t === 'bridgeRamp').length, 0);
+  s.removeBridge(id);
+  assert.equal(s.bridges().length, 0);
+  // No bridges left in the Objects list.
+  const { catalogue, models } = await import('../src/sdk/catalogue.js');
+  const all = DISTRICTS.flatMap((d) => catalogue(baseLayout(districtMap(d.city)).items).map((e) => ({ ...e, district: d.id })));
+  assert.ok(!models(all).some((m) => m.styles.some((e) => e.t === 'bridge')), 'bridges: the Bridge tool now');
 });

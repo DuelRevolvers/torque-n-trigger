@@ -6,11 +6,13 @@ import { setUvRect, streetRoadMaterial } from './trackView.js';
 import { SETBACK, STREET, edgeSpans, TUNNEL_HALF, districtMap } from '../sim/city.js';
 import { districtLayout, archEdge, samplePath } from '../sim/cityLayout.js';
 import { CRANE_LEGS } from '../sim/authoredLayout.js';
-import { rampGeometry } from './shapes.js';
+import { rampGeometry, tireGeometry } from './shapes.js';
 import { buildAuthoredStructures } from './arenaView.js';
 import { buildPlanDistrictView } from './planView.js';
 import { distantSpire } from './spireLandmark.js';
 import { itemDrawer } from './itemCapture.js';
+import { objectLights } from './objectLights.js';
+import { textWidth } from '../ui/bitmapFont.js';
 import { npcCar } from './npcCars.js';
 import { paintView } from './groundPaint.js';
 import { extraStreetsView } from './extraStreets.js';
@@ -145,7 +147,7 @@ function guestViews(map, tex) {
 }
 
 // only: just these objects (draw entries), none of the district itself (see buildPlanDistrictView).
-function districtViewOf(map, tex, { only = null } = {}) {
+export function districtViewOf(map, tex, { only = null } = {}) {
   if (map.plan) return buildPlanDistrictView(map, tex, { only });
   const { style, heightAt, nodes } = map;
   const look = style.look;
@@ -201,6 +203,7 @@ function districtViewOf(map, tex, { only = null } = {}) {
   const containerGeos = [];
   const plantGeos = [];
   const glowGeos = [];
+  const itemPoolGeos = []; // (light on the ground under what's placed: masts)
   const waterGeos = [];
   const windowGeos = [];
   const shackGeos = [];
@@ -469,7 +472,10 @@ function districtViewOf(map, tex, { only = null } = {}) {
   };
 
   // --- Everything in the layout ---
-  const drawItem = itemDrawer(bGeos, darkGeos, signGeos, steelGeos, yellowGeos, coneGeos, barrierGeos, paintedGeos, containerGeos, plantGeos, glowGeos, waterGeos, windowGeos, shackGeos, beaconGeos, shutterGeos, crossingGeos, quayCranes, group);
+  const OL = objectLights(tex); // (lights with settings of their own)
+  const signalA = []; // signal lamps, flashing in turn
+  const signalB = [];
+  const drawItem = itemDrawer(signalA, signalB, bGeos, darkGeos, signGeos, steelGeos, yellowGeos, coneGeos, barrierGeos, paintedGeos, containerGeos, plantGeos, glowGeos, waterGeos, windowGeos, shackGeos, beaconGeos, shutterGeos, crossingGeos, itemPoolGeos, quayCranes, group, ...OL.buckets);
   // (Another district's objects placed here are drawn by its own view: buildDistrictView.)
   for (const it of only || layout.draw) if (!it.hidden && (only || !it.guest)) drawItem(it, drawLayoutItem);
   function drawLayoutItem(it) {
@@ -547,7 +553,7 @@ function districtViewOf(map, tex, { only = null } = {}) {
         const cx = (x0 + x1) / 2;
         const cz = (z0 + z1) / 2;
         const y = g0(cx, cz);
-        if (it.tank) {
+        if (it.set?.shape ? it.set.shape === 'round' : it.tank) {
           const g = new THREE.CylinderGeometry(1.5, 1.5, Math.max(x1 - x0, z1 - z0) - 0.6, 10);
           g.rotateX(Math.PI / 2);
           if (x1 - x0 > z1 - z0) g.rotateY(Math.PI / 2);
@@ -671,7 +677,8 @@ function districtViewOf(map, tex, { only = null } = {}) {
       case 'mast': {
         const y = g0(x, z);
         steelGeos.push(box(0.7, 22, 0.7, x, y + 11, z));
-        glowGeos.push(box(3.2, 1.2, 1.2, x, y + 22.5, z));
+        OL.head(it, glowGeos, box(3.2, 1.2, 1.2, x, y + 22.5, z));
+        OL.pool(it, itemPoolGeos, 30, (S) => new THREE.PlaneGeometry(S, S).rotateX(-Math.PI / 2).translate(x, y + 0.08, z));
         break;
       }
       case 'ctunnel': {
@@ -698,11 +705,15 @@ function districtViewOf(map, tex, { only = null } = {}) {
         const y = g0(x, z);
         steelGeos.push(box(0.3, 4, 0.3, x, y + 2, z), box(1.6, 0.5, 0.2, x, y + 3.6, z));
         const lamps = (s) => [-0.5, 0.5].map((dx) => box(0.4 * s, 0.4 * s, 0.3 * s, x + dx, y + 3.6, z));
-        if (map.authored) {
-          // Dark lamps, and lit ones over them that the race screen flashes.
-          darkGeos.push(...lamps(1));
-          crossingGeos.push(...lamps(1.1));
-        } else beaconGeos.push(...lamps(1));
+        darkGeos.push(...lamps(1));
+        // Its two lamps flashing in turn, as a crossing's do (Animation off: dark).
+        if (!it.set?.still) {
+          const [a, b] = lamps(1.05);
+          signalA.push(a);
+          signalB.push(b);
+        }
+        // (And lit ones over them that the race screen flashes when a train comes.)
+        if (map.authored) crossingGeos.push(...lamps(1.1));
         break;
       }
       case 'gantry': {
@@ -836,19 +847,24 @@ function districtViewOf(map, tex, { only = null } = {}) {
         break;
       case 'tyres':
         for (let k = 0; k < 4; k++) {
-          const g = new THREE.CylinderGeometry(1.2, 1.2, 0.42, 10);
+          const g = tireGeometry(1.2, 0.55, 0.42); // (a hole down the middle)
           g.translate(x, 0.22 + k * 0.44, z);
           darkGeos.push(g);
         }
         break;
       case 'trailer': {
         // A box trailer on its wheels; every third has its cab on, all inside the bay.
-        const len = it.cab ? 12 : 15.6;
-        const tz = it.cab ? z + 1.9 : z;
+        // (Set in the T&T SDK: the whole truck, the trailer only, or the cab only.)
+        const part = it.set?.part || (it.cab ? 'whole' : 'trailer');
+        const cab = part !== 'trailer';
+        const len = cab ? 12 : 15.6;
+        const tz = cab ? z + 1.9 : z;
         const color = CONTAINER_COLORS[(((Math.round(x) + Math.round(z)) % 7) + 7) % 7];
-        paintedGeos.push(colorBox(2.5, 2.8, len, x, 2.6, tz, color));
-        for (const dz of [-len / 2 + 1.5, len / 2 - 2.5, len / 2 - 1.2]) darkGeos.push(box(2.4, 1, 1, x, 0.5, tz + dz));
-        if (it.cab) {
+        if (part !== 'cab') {
+          paintedGeos.push(colorBox(2.5, 2.8, len, x, 2.6, tz, color));
+          for (const dz of [-len / 2 + 1.5, len / 2 - 2.5, len / 2 - 1.2]) darkGeos.push(box(2.4, 1, 1, x, 0.5, tz + dz));
+        }
+        if (cab) {
           paintedGeos.push(colorBox(2.5, 3, 3.4, x, 1.8, z - 6.2, '#c83a2a'));
           darkGeos.push(box(2.3, 0.9, 0.1, x, 2.6, z - 7.95), box(2.4, 1, 1, x, 0.5, z - 6.2));
         }
@@ -913,16 +929,38 @@ function districtViewOf(map, tex, { only = null } = {}) {
         const [, , z0, z1] = it.r;
         for (let bz = z0 + 1; bz < z1; bz += 2.1) barrierGeos.push(box(0.5, 0.9, 2, x, 0.45, bz));
         paintedGeos.push(colorBox(0.3, 1.4, 0.3, x, 0.7, z0 + 0.5, '#c83a2a'));
-        paintedGeos.push(colorBox(0.2, 0.2, z1 - z0, x, 1.3, (z0 + z1) / 2, '#e8e0d0'));
+        paintedGeos.push(colorBox(0.2, 0.2, z1 - z0, x, 1.3, (z0 + z1) / 2, it.set?.top || '#e8e0d0'));
         break;
       }
-      case 'quayCrane':
-        quayCranes.push([x, z]);
+      case 'quayCrane': {
+        // On its rails (z: the quay edge): legs on the apron, the boom out over
+        // the bay. Drawn here, so a copy moves and turns with its item.
+        const edge = z;
+        const [la, lb] = CRANE_LEGS;
+        for (const lz of CRANE_LEGS) {
+          for (const dx of [-9, 9]) paintedGeos.push(colorBox(1.6, 32, 1.6, x + dx, 16, edge + lz, '#c83a2a'));
+          paintedGeos.push(colorBox(22, 3, 3, x, 32, edge + lz, '#e0e0e8'));
+          darkGeos.push(box(3, 1.4, 4, x - 9, 0.7, edge + lz), box(3, 1.4, 4, x + 9, 0.7, edge + lz));
+        }
+        for (const dx of [-9, 9]) paintedGeos.push(colorBox(1.2, 1.2, lb - la, x + dx, 14, edge + (la + lb) / 2, '#c83a2a'));
+        paintedGeos.push(colorBox(3, 2.5, 84, x, 34.8, edge + 8, '#c83a2a'));
+        paintedGeos.push(colorBox(9, 5, 9, x, 38.5, edge + la - 6, '#e0e0e8'));
+        darkGeos.push(box(4, 2, 5, x, 32.6, edge + 22), box(12.2, 0.6, 2.6, x, 16, edge + 22));
+        steelGeos.push(box(0.15, 15.6, 0.15, x - 1.2, 23.8, edge + 22), box(0.15, 15.6, 0.15, x + 1.2, 23.8, edge + 22));
+        glowGeos.push(box(0.8, 0.8, 0.8, x, 36.6, edge + 49));
         break;
-      case 'yardGantry':
-        steelGeos.push(box(0.8, 0.8, it.z1 - it.z0 + 0.6, x, 8, (it.z0 + it.z1) / 2));
-        for (let lz = it.z0 + 4; lz < it.z1; lz += 6) glowGeos.push(box(0.5, 0.5, 0.5, x, 7.3, lz));
+      }
+      case 'yardGantry': {
+        // (From end to end, a and b: they move and turn with it.)
+        const [ax, az] = it.a;
+        const [bx, bz] = it.b;
+        const len = Math.hypot(bx - ax, bz - az);
+        const yaw = Math.atan2(bx - ax, bz - az);
+        const y = g0((ax + bx) / 2, (az + bz) / 2);
+        steelGeos.push(box(0.8, 0.8, len + 0.6, (ax + bx) / 2, y + 8, (az + bz) / 2, yaw));
+        for (let t = 4; t < len; t += 6) glowGeos.push(box(0.5, 0.5, 0.5, ax + ((bx - ax) * t) / len, y + 7.3, az + ((bz - az) * t) / len, yaw));
         break;
+      }
       case 'pipes': {
         for (const py of [3.4, 4.1]) {
           const g = new THREE.CylinderGeometry(0.3, 0.3, it.x1 - it.x0, 6);
@@ -934,12 +972,18 @@ function districtViewOf(map, tex, { only = null } = {}) {
         break;
       }
       case 'shopSign': {
-        const t = textTexture('WRENCH & RUST', '#ff7a1a');
-        const w = it.w;
-        const h = (w * t.image.height) / t.image.width;
+        const t = textTexture(it.set?.text || 'WRENCH & RUST', it.set?.color || '#ff7a1a');
+        // (Its letters as tall as WRENCH & RUST's always were: other words make it wider or narrower.)
+        const per = it.w / (textWidth('WRENCH & RUST') + 6);
+        const w = t.image.width * per;
+        const h = t.image.height * per;
         const g = new THREE.PlaneGeometry(w, h);
         g.translate(x, 7.6 - h / 2 + 1.2, z + 0.25);
         add(new THREE.Mesh(g, glowMaterial({ map: t, intensity: 2 })));
+        // (A board behind its letters: not see-through from the back.)
+        darkGeos.push(box(w + 0.2, h + 0.2, 0.12, x, 7.6 - h / 2 + 1.2, z + 0.17));
+        // (A copy, off its wall: two posts.)
+        if (it.copy) for (const s of [-1, 1]) steelGeos.push(box(0.3, 8.8 - h, 0.3, x + s * w * 0.4, (8.8 - h) / 2, z + 0.1));
         break;
       }
       default:
@@ -1155,21 +1199,7 @@ function districtViewOf(map, tex, { only = null } = {}) {
         yellowGeos.push(box(x1 - x0, 0.06, 0.4, (x0 + x1) / 2, -0.03, edge - 0.6));
       }
       // Quay cranes on their rails: legs on the apron, the boom out over the bay.
-      const [la, lb] = CRANE_LEGS;
       for (const lz of CRANE_LEGS) for (const [x0, x1] of between(ax0, ax1)) steelGeos.push(box(x1 - x0, 0.1, 0.3, (x0 + x1) / 2, -0.01, edge + lz));
-      for (const [x] of quayCranes) {
-        for (const lz of CRANE_LEGS) {
-          for (const dx of [-9, 9]) paintedGeos.push(colorBox(1.6, 32, 1.6, x + dx, 16, edge + lz, '#c83a2a'));
-          paintedGeos.push(colorBox(22, 3, 3, x, 32, edge + lz, '#e0e0e8'));
-          darkGeos.push(box(3, 1.4, 4, x - 9, 0.7, edge + lz), box(3, 1.4, 4, x + 9, 0.7, edge + lz));
-        }
-        for (const dx of [-9, 9]) paintedGeos.push(colorBox(1.2, 1.2, lb - la, x + dx, 14, edge + (la + lb) / 2, '#c83a2a'));
-        paintedGeos.push(colorBox(3, 2.5, 84, x, 34.8, edge + 8, '#c83a2a'));
-        paintedGeos.push(colorBox(9, 5, 9, x, 38.5, edge + la - 6, '#e0e0e8'));
-        darkGeos.push(box(4, 2, 5, x, 32.6, edge + 22), box(12.2, 0.6, 2.6, x, 16, edge + 22));
-        steelGeos.push(box(0.15, 15.6, 0.15, x - 1.2, 23.8, edge + 22), box(0.15, 15.6, 0.15, x + 1.2, 23.8, edge + 22));
-        glowGeos.push(box(0.8, 0.8, 0.8, x, 36.6, edge + 49));
-      }
     } else {
       // Concrete quay apron between the last street and the water.
       const apron = new Surface();
@@ -1319,7 +1349,7 @@ function districtViewOf(map, tex, { only = null } = {}) {
   add(mergedMesh(signGeos, glowMaterial({ map: tex.signs.texture, intensity: 2.4, side: DS })));
   add(mergedMesh(lampGeos, mats.steel));
   add(mergedMesh(headGeos, mats.lampHead));
-  const pools = mergedMesh(poolGeos, mats.pool);
+  const pools = mergedMesh([...poolGeos, ...itemPoolGeos], mats.pool);
   if (pools) {
     pools.renderOrder = 1;
     add(pools);
@@ -1340,6 +1370,21 @@ function districtViewOf(map, tex, { only = null } = {}) {
     const structures = buildAuthoredStructures(style, tex);
     add(structures);
     group.userData.animate = structures.userData.animate;
+  }
+  const lightsAnimate = OL.build(add, look.lamp || '#ffd9a0');
+  const flashA = signalA.length ? new THREE.Mesh(mergeGeometries(signalA), glowMaterial({ color: '#ff2a2a', intensity: 2.6 })) : null;
+  const flashB = signalB.length ? new THREE.Mesh(mergeGeometries(signalB), glowMaterial({ color: '#ff2a2a', intensity: 2.6 })) : null;
+  add(flashA);
+  add(flashB);
+  if (lightsAnimate || flashA || flashB) {
+    const inner = group.userData.animate;
+    group.userData.animate = (t, real = t) => {
+      inner?.(t, real);
+      lightsAnimate?.(real);
+      const on = Math.floor(real / 0.6) % 2 === 0;
+      if (flashA) flashA.visible = on;
+      if (flashB) flashB.visible = !on;
+    };
   }
   return group;
 }

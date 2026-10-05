@@ -7,6 +7,7 @@ import { glowMaterial } from './retroMaterial.js';
 
 const PARTICLES = {
   spark: { add: true, color: '#ffd070', s0: 0.3, s1: 0.05, life: 0.35, speed: 9, gravity: -12 },
+  zap: { add: true, color: '#90e8ff', s0: 0.45, s1: 0.05, life: 0.22, speed: 6, gravity: -6 },
   fire: { add: true, color: '#ff6a1a', s0: 0.55, s1: 1.1, life: 0.5, speed: 1.0, rise: 2.5 },
   flame: { add: true, color: '#ff8a2a', s0: 0.4, s1: 2.2, life: 0.45, speed: 0 },
   flash: { add: true, color: '#fff2c0', s0: 1.1, s1: 0.4, life: 0.07, speed: 0 },
@@ -167,6 +168,7 @@ export class Fx {
           if (rate(8) && Math.hypot(car.vel.x, car.vel.z) > 5) this.emit('spark', view.worldPoint('underRear'));
         }
         if (car.burning > 0 && rate(20)) this.emit('fire', view.worldPoint('rear'), null, 1, 1);
+        if (car.shocked > 0 && rate(30)) this.emit('zap', view.worldPoint(Math.random() < 0.5 ? 'roof' : 'hood'), null, 2, 1);
         if (car.condition.fuelTank !== undefined && car.condition.fuelTank < 50 && rate(8)) this.emit('drip', view.worldPoint('underRear'));
         if (car.condition.primaryWeapon !== undefined && car.condition.primaryWeapon <= 0 && rate(4)) this.emit('spark', view.worldPoint('roof'));
         const w = params[i].weapons?.primary;

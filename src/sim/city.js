@@ -22,7 +22,7 @@ import { arenasOf, middleOf, reachIn } from './arenaEdits.js';
 import { buildArena } from './arena.js';
 import * as G from './geom2d.js';
 import { planTrack, planRoam } from './planRoute.js';
-import { isSpot, spotEnds, RUN_UP, RUN_OFF } from './routePoints.js';
+import { isSpot, spotEnds, placedSolids, RUN_UP, RUN_OFF } from './routePoints.js';
 
 export const STREET = { halfWidth: 8, curbWidth: 1.2, shoulderWidth: 4 };
 export const SETBACK = STREET.halfWidth + STREET.curbWidth + STREET.shoulderWidth; // centreline to lot edge
@@ -1169,7 +1169,8 @@ function authoredRoam(map) {
   const ramps = [];
   for (const it of districtLayout(map).items) {
     if (it.deck) {
-      if (it.obb) platforms.push({ x: it.obb.x - cx, z: it.obb.z - cz, hw: it.obb.hw, hd: it.obb.hd, yaw: it.obb.yaw, h: it.h });
+      // (A bridge's deck: driven under as well, sim/bridges.js.)
+      if (it.obb) platforms.push({ x: it.obb.x - cx, z: it.obb.z - cz, hw: it.obb.hw, hd: it.obb.hd, yaw: it.obb.yaw, h: it.h, ...(it.under ? { under: true, thick: it.thick } : {}) });
       else platforms.push({ x: (it.r[0] + it.r[1]) / 2 - cx, z: (it.r[2] + it.r[3]) / 2 - cz, hw: (it.r[1] - it.r[0]) / 2, hd: (it.r[3] - it.r[2]) / 2, h: it.h });
     } else if (it.ramp) {
       ramps.push({ ...it.ramp, x: it.ramp.x - cx, z: it.ramp.z - cz });
@@ -1258,6 +1259,12 @@ function pathNodes(map, names) {
 export function authoredShortcuts(map, track, ids, ground = () => 0) {
   const out = [];
   for (const id of ids) {
+    // (One drawn in the T&T SDK: its points, from the route and back onto it.)
+    if (typeof id === 'object') {
+      const b = drawnShortcut(track, id.path || [], ground);
+      if (b) out.push(b);
+      continue;
+    }
     const c = map.corridors.find((q) => q.id === id);
     if (!c) throw new Error(`${map.style.id}: no way through called ${id}`);
     let pts = c.points.map(([x, z], k) => [x, c.heights ? c.heights[k] : 0, z]);
@@ -1289,6 +1296,33 @@ export function authoredShortcuts(map, track, ids, ground = () => 0) {
     });
   }
   return out;
+}
+
+// A shortcut drawn in the T&T SDK ({ path: [[x, z], ...] }): from the route,
+// round, and back onto it further on. Its ends go on the route's middle; it's
+// off the streets all the way (no road laid: track.free; what stands along
+// it is solid, as along a route's own stretches there). Null if its ends
+// are under 20 m apart along the route.
+function drawnShortcut(track, path, ground) {
+  if (path.length < 2) return null;
+  let pts = path.map((p) => [p[0], p[1]]);
+  let s0 = track.queryMain(pts[0][0], pts[0][1]).s;
+  let s1 = track.queryMain(pts[pts.length - 1][0], pts[pts.length - 1][1]).s;
+  if (Math.abs(s1 - s0) < 20) return null;
+  const mid = (s) => {
+    const i = track.indexAtDistance(s);
+    return [track.x[i], track.z[i]];
+  };
+  pts[0] = mid(s0);
+  pts[pts.length - 1] = mid(s1);
+  if (s1 < s0) {
+    pts = pts.reverse();
+    [s0, s1] = [s1, s0];
+  }
+  return {
+    s0, s1, kind: 'drawn', halfWidth: 6, curbWidth: 0.8, shoulderWidth: 2,
+    points: roundedPoints(pts.map(([x, z]) => ({ x, z })), false, BRANCH_R, ground), free: [pts],
+  };
 }
 
 // A bump where the route crosses the freight line's rails.
@@ -1546,7 +1580,9 @@ function cityVenueOf(style, route) {
   if (route.kind === 'drag') {
     const line = [];
     for (let i = 0; i < style.cols; i++) line.push(map.nodes[map.nid(i, map.avenue)]);
-    return { kind: 'track', def: { name, closed: false, ...STREET, points: roundedPoints(line, false, CORNER_R, map.heightAt), jumps: [] } };
+    const def = { name, closed: false, ...STREET, points: roundedPoints(line, false, CORNER_R, map.heightAt), jumps: [] };
+    placedSolids(def, map); // (what's placed in the T&T SDK is solid)
+    return { kind: 'track', def };
   }
   if (route.path) return { kind: 'track', def: authoredRoute(map, style, route) };
   // Try several routes and keep the one with the most interesting shortcuts.

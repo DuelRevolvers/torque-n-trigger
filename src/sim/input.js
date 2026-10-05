@@ -12,6 +12,7 @@ export function neutralInput() {
     fire2: false,
     utility: false,
     lookBack: false,
+    camera: false, // next camera view (render only, like lookBack)
     reset: false,
     shiftUp: false, // manual gearbox (drag races)
   };
@@ -31,6 +32,7 @@ export function sanitizeInput(frame) {
     fire2: !!frame.fire2,
     utility: !!frame.utility,
     lookBack: !!frame.lookBack,
+    camera: !!frame.camera,
     reset: !!frame.reset,
     shiftUp: !!frame.shiftUp,
   };

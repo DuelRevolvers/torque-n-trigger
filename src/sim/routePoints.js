@@ -61,7 +61,7 @@ export function openGround(def, map, items, zones) {
   const have = new Map(obstacles.map((o) => [key(o), o]));
   const ramps = [];
   for (const it of items) {
-    if (it.hidden) continue;
+    if (it.hidden && !it.bridge) continue; // (a bridge's pieces are hidden: they count)
     if (it.ramp) {
       const r = it.ramp;
       if (!near(r.x, r.z, r.len + r.width)) continue;
@@ -69,24 +69,67 @@ export function openGround(def, map, items, zones) {
       ramps.push({ ...r, abs, ...(it.mound ? { surface: SURFACE.OFFROAD } : {}) });
       continue;
     }
-    if (!(it.solid || it.deck) || !Array.isArray(it.r)) continue;
-    const o = layoutObstacle(it, 0, 0);
-    if (!near(o.x, o.z, Math.hypot(o.hw, o.hd))) continue;
-    // (A deck's h is its top.)
-    if (it.deck) {
-      const base = typeof it.y === 'number' ? it.y : H(o.x, o.z);
-      Object.assign(o, { y: base - 0.05, h: it.h - base + 0.05 });
-    }
+    const o = solidOf(it, H);
+    if (!o || !near(o.x, o.z, Math.hypot(o.hw, o.hd))) continue;
     const was = have.get(key(o));
     if (was) Object.assign(was, { top: true, key: it.key });
     else {
-      Object.assign(o, { top: true, key: it.key });
       obstacles.push(o);
       have.set(key(o), o);
     }
   }
   def.obstacles = obstacles;
-  if (ramps.length) def.ramps = ramps;
+  if (ramps.length) def.ramps = [...(def.ramps || []), ...ramps];
+}
+
+// A layout item as a race's obstacle with a top to drive on (top: true; a
+// deck's h is its top), or null if it isn't solid.
+function solidOf(it, H) {
+  if (it.hidden || !(it.solid || it.deck) || !Array.isArray(it.r)) return null;
+  const o = layoutObstacle(it, 0, 0);
+  if (it.deck) {
+    const base = typeof it.y === 'number' ? it.y : H(o.x, o.z);
+    Object.assign(o, { y: base - 0.05, h: it.h - base + 0.05 });
+  }
+  return Object.assign(o, { top: true, key: it.key });
+}
+
+// What's been placed or moved in the T&T SDK and stands inside a race's walls
+// (or on a shortcut's) is solid, whichever district, with a top to drive on;
+// so are its ramps. (A district's own things are as its race rules have them.)
+export function placedSolids(def, map) {
+  const items = districtLayout(map).items.filter((it) => it.xf && !it.xf.drop);
+  if (!items.length) return;
+  const track = buildTrack(def);
+  const tracks = [track, ...(track.branches || []).map((b) => b.track)];
+  const inside = (x, z) => tracks.some((t) => {
+    const q = t.queryMain(x, z);
+    return q.overrun < 0.5 && Math.abs(q.trueLateral ?? q.lateral) < (t.sections || t.narrows ? t.localWall(q.s) : t.wallDist) - 0.1;
+  });
+  const key = (o) => `${o.x.toFixed(2)},${o.z.toFixed(2)},${o.hw.toFixed(2)},${o.hd.toFixed(2)}`;
+  const obstacles = [...(def.obstacles || [])];
+  const have = new Map(obstacles.map((o) => [key(o), o]));
+  const ramps = [];
+  for (const it of items) {
+    if (it.ramp) {
+      const r = it.ramp;
+      if (!inside(r.x, r.z)) continue;
+      ramps.push({ ...r, abs: r.abs ?? (typeof it.y === 'number' ? it.y : map.heightAt(r.x, r.z)) + (r.base || 0), ...(it.mound ? { surface: SURFACE.OFFROAD } : {}) });
+      continue;
+    }
+    const o = solidOf(it, map.heightAt);
+    if (!o) continue;
+    const pts = it.obb ? G.obbCorners(it.obb) : it.poly || [[it.r[0], it.r[2]], [it.r[1], it.r[2]], [it.r[1], it.r[3]], [it.r[0], it.r[3]]];
+    if (![...pts, [o.x, o.z]].some(([x, z]) => inside(x, z))) continue;
+    const was = have.get(key(o));
+    if (was) Object.assign(was, { top: true, key: it.key });
+    else {
+      obstacles.push(o);
+      have.set(key(o), o);
+    }
+  }
+  def.obstacles = obstacles;
+  if (ramps.length) def.ramps = [...(def.ramps || []), ...ramps];
 }
 
 // The top a spot stands on: the one nearest its y (within 1.5 m) among the
@@ -107,9 +150,15 @@ function spotTop(obstacles, p) {
 // and startY, finishY when they're up on something). Routes without spots
 // (every official one) are left as they are.
 export function spotEnds(def, map, route, zones) {
+  placedSolids(def, map);
   const path = route.path || [];
-  if (!path.some(isSpot)) return def;
-  const all = [...zones, ...path.filter((p) => isSpot(p) && p.length > 2).map((p) => [[p[0], p[1]]])];
+  // (Shortcuts drawn in the T&T SDK run off the streets too.)
+  const cuts = (route.shortcuts || []).filter((c) => typeof c === 'object' && c.path?.length > 1).map((c) => c.path.map((p) => [p[0], p[1]]));
+  if (!path.some(isSpot) && !cuts.length) return def;
+  // (The stretches off the streets, for the view: no road laid there.)
+  const free = zones.filter((line) => line.length > 1);
+  if (free.length) def.free = free;
+  const all = [...zones, ...cuts,...path.filter((p) => isSpot(p) && p.length > 2).map((p) => [[p[0], p[1]]])];
   if (all.length) openGround(def, map, districtLayout(map).items, all);
   const first = path[0];
   const last = path[path.length - 1];

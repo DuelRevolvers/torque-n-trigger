@@ -93,6 +93,7 @@ export function buildTrack(def) {
   // The T&T SDK's races off the streets: ramps ({ x, z, dirX, dirZ, len, width, height, abs }),
   // and where the start and finish are (along the track, and how high when up on something).
   track.ramps = def.ramps?.length ? def.ramps : null;
+  track.free = def.free?.length ? def.free : null; // the stretches off the streets (lines)
   track.tops = !!track.ramps || !!def.obstacles?.some((o) => o.top);
   track.startS = def.startS ?? null;
   if (def.finishS !== undefined) track.finishS = def.finishS;

@@ -43,7 +43,12 @@ export function createWorld({ track, cars, respawnOnWreck = true, poses = null, 
 export function stepWorld(world, inputs) {
   const { track, params, state } = world;
   track.setTime?.(state.tick * SIM_DT); // moving arena parts follow the tick
-  if (track.triggers) track.triggered = state.triggered ||= {}; // gates follow their trigger pads
+  if (track.triggers) {
+    // (Gates, and the gadgets the pads set running, follow their trigger pads.)
+    track.triggered = state.triggered ||= {};
+    track.switches = state.switches ||= {};
+    track.runs = state.runs ||= {};
+  }
   const effective = state.cars.map((c, i) => {
     if (c.wrecked) return NEUTRAL;
     const raw = inputs[i] || NEUTRAL;

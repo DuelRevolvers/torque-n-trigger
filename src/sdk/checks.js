@@ -59,23 +59,25 @@ export function wayProblem(district, event) {
   let h = track.startY ?? track.queryMain(...at(track, s0, 0)).height;
   for (let s = s0; s <= s1; s += 1) {
     const [x, z] = at(track, s, 0);
-    const half = Math.max(2, track.localHalf ? track.localHalf(s) : track.halfWidth) - 1.5;
-    // (Blocked at the height it's got to, all the way across the road.)
+    const wall = track.localWall ? track.localWall(s) : track.wallDist;
+    // (Blocked at the height it's got to: no gap a car gets through, from
+    // barrier to barrier. Things in part of the way are fine.)
     let block = null;
-    let clear = null;
-    for (let l = 0; l <= half && clear === null; l += 1.5) {
-      for (const sg of l ? [1, -1] : [1]) {
-        const [px, pz] = at(track, s, sg * l);
-        const o = (track.obstacleGrid?.get(Math.floor(px / 16) * 100003 + Math.floor(pz / 16)) || []).find((q) => q.top && q.y < h + 1.5 && q.y + q.h > h + 0.3 && onFoot(q, px, pz));
-        if (!o) {
-          clear = [px, pz];
-          break;
-        }
+    let mid = null;
+    let run = 0;
+    for (let l = -wall; l <= wall + 1e-6; l += 0.5) {
+      const [px, pz] = at(track, s, l);
+      const o = (track.obstacleGrid?.get(Math.floor(px / 16) * 100003 + Math.floor(pz / 16)) || []).find((q) => q.top && q.y < h + 1.5 && q.y + q.h > h + 0.3 && onFoot(q, px, pz));
+      if (o) {
         block ||= o;
+        run = 0;
+        continue;
       }
+      // (A gap 2.5 m across: its middle, the one nearest the road's.)
+      if (++run >= 6 && (mid === null || Math.abs(l - 1.25) < Math.abs(mid))) mid = l - 1.25;
     }
-    if (clear === null) return { x, z, key: block.key || null, text: 'The race runs into something it can\'t get round or up onto (the red ring): add a point to go round it, or put a ramp up it.' };
-    h = track.standY(clear[0], clear[1], h);
+    if (mid === null) return { x, z, key: block?.key || null, text: 'Something blocks the whole width of the race (the red ring), with no gap a car gets through: add a point to go round it, move what\'s in the way, or put a ramp up it.' };
+    h = track.standY(...at(track, s, mid), h);
   }
   // (Up on something at the finish, or back up to a circuit's start.)
   const top = track.closed ? track.startY : track.finishY;

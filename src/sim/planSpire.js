@@ -104,6 +104,55 @@ export function spireLayout(ctx) {
     }
     const charter = map.streets.find((st) => st.name === 'Charter Street');
     if (charter) gate(charter, charter.len - 14); // the West Gate
+    parkWall(site);
+  }
+
+  // The park's wall: round its edge, half a metre in, in stretches of up to
+  // 6 m with a stone pillar at each end; open wherever a street or a path
+  // runs into the park (its gates stand there).
+  function parkWall(site) {
+    const poly = site.poly;
+    // (Streets running into it: anywhere along them inside it, sampled every 2 m.)
+    const inside = (st) => {
+      const L = G.lineLength(st.pts);
+      for (let t = 0; t <= L; t += 2) {
+        const p = G.pointAlong(st.pts, t);
+        if (G.pointInPoly(p.x, p.z, poly)) return true;
+      }
+      return false;
+    };
+    const into = map.streets.filter(inside);
+    const paths = items.filter((it) => it.t === 'footpath' && it.pts?.length > 1);
+    const open = (x, z) => into.some((st) => G.nearestOnLine(st.pts, x, z).d < st.edge + 2.6) || map.streets.some((st) => G.nearestOnLine(st.pts, x, z).d < st.half + 1) || paths.some((p) => G.nearestOnLine(p.pts, x, z).d < (p.half || 1.5) + 1);
+    poly.forEach((a, k) => {
+      const b = poly[(k + 1) % poly.length];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L < 1) return;
+      const [dx, dz] = [(b[0] - a[0]) / L, (b[1] - a[1]) / L];
+      // (In: the side the park is on.)
+      const [mx, mz] = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      const sg = G.pointInPoly(mx - dz * 2, mz + dx * 2, poly) ? 1 : -1;
+      const at = (t) => [a[0] + dx * t - dz * sg * 0.5, a[1] + dz * t + dx * sg * 0.5];
+      const stretch = (t0, t1) => {
+        const n = Math.ceil((t1 - t0) / 6);
+        const len = (t1 - t0) / n;
+        if (len < 1.5) return;
+        for (let q = 0; q < n; q++) {
+          const [x, z] = at(t0 + len * (q + 0.5));
+          const o = { x, z, hw: 0.3, hd: len / 2, yaw: Math.atan2(dx, dz) };
+          // (Its neighbours touch its ends: only what's beside it counts.)
+          if (clear(G.obbCorners({ ...o, hd: Math.max(0.2, o.hd - 0.5) }), 0, { ignore: 'site' })) obbItem('parkWall', o, 1.4, { cycle: 0 });
+        }
+      };
+      let from = null;
+      for (let t = 0; t <= L; t += 1) {
+        if (open(...at(t))) {
+          if (from !== null) stretch(from, t - 1);
+          from = null;
+        } else if (from === null) from = t;
+      }
+      if (from !== null) stretch(from, L);
+    });
   }
 
   // The triumphal arches over the diagonal avenues, `back` metres in from each

@@ -117,7 +117,8 @@ export function rampGeometry({ x, z, dirX, dirZ, len, width, height, base = 0 },
   const g = new THREE.BufferGeometry();
   const w = width / 2;
   const P = [[-w, 0, 0], [w, 0, 0], [w, height, len], [-w, height, len], [-w, 0, len], [w, 0, len]];
-  const faces = [[0, 1, 2], [0, 2, 3], [1, 5, 2], [0, 3, 4], [3, 2, 5], [3, 5, 4]];
+  // Wound outward (slope, sides, back), so one-sided materials show it.
+  const faces = [[0, 2, 1], [0, 3, 2], [1, 2, 5], [0, 4, 3], [3, 5, 2], [3, 4, 5]];
   const pos = [];
   const uvs = [];
   for (const f of faces) {
@@ -148,6 +149,12 @@ export function tint(g, color) {
 export function indexed(g) {
   if (!g.index) g.setIndex([...Array(g.attributes.position.count).keys()]);
   return g;
+}
+
+// A tire: a ring rOut across with a hole rIn across, h deep, centred on 0.
+export function tireGeometry(rOut, rIn, h, n = 12) {
+  const P = [[rIn, -h / 2], [rOut, -h / 2], [rOut, h / 2], [rIn, h / 2], [rIn, -h / 2]].map(([r, y]) => new THREE.Vector2(r, y));
+  return new THREE.LatheGeometry(P, n);
 }
 
 export function scaleUv(g, su, sv) {

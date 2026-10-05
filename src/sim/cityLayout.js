@@ -18,6 +18,7 @@ import { authoredLayout } from './authoredLayout.js';
 import { planLayout } from './planLayout.js';
 import { assignKeys, applyEdits, itemCentre } from './layoutEdits.js';
 import { gadgetItems } from './gadgets.js';
+import { bridgeItems } from './bridges.js';
 import { nearestOnLine, lineLength, pointAlong } from './geom2d.js';
 
 const bases = new WeakMap();
@@ -131,7 +132,8 @@ export function districtLayout(map) {
     else {
       const done = applyEdits(base.items, edits, map.heightAt);
       // (Lights' posts, solid: sim/gadgets.js.)
-      const posts = gadgetItems(edits.gadgets, map.heightAt);
+      // (And the SDK's bridges: their decks, piers and ramps, sim/bridges.js.)
+      const posts = [...gadgetItems(edits.gadgets, map.heightAt), ...bridgeItems(edits.bridges, map.heightAt)];
       cache.set(map, { ...base, ...done, items: posts.length ? [...done.items, ...posts] : done.items });
     }
   }
@@ -484,7 +486,7 @@ function buildLayout(map) {
         const u = (alongX ? lx0 : lz0) + U * f;
         const ends = alongX ? [[u, lz0 + 3], [u, lz1 - 3]] : [[lx0 + 3, u], [lx1 - 3, u]];
         for (const [x, z] of ends) hide(around(x, z, 0.8), 24);
-        deco('gantry', { a: ends[0], b: ends[1] });
+        deco('gantry', { a: ends[0], b: ends[1], r: alongX ? [u - 2.5, u + 2.5, lz0 + 2, lz1 - 2] : [lx0 + 2, lx1 - 2, u - 2.5, u + 2.5], h: 25 });
       }
     } else if (c.kind === 'arena') {
       // Event ground fence, with a gate in the middle of each side.

@@ -1,8 +1,7 @@
-import { KEY_LAYOUTS, keyBinds } from './bindings.js';
+import { keyBinds } from './bindings.js';
 
 // Keyboard and mouse. Tracks held keys and buttons; `apply` writes them into an
-// InputFrame using a layout's bindings ('all' for solo, 'left'/'right' for two
-// split-screen players sharing a keyboard).
+// InputFrame using the player's bindings (main and alt keys both count).
 
 export class Keyboard {
   constructor(mouseTarget, settings) {
@@ -24,19 +23,19 @@ export class Keyboard {
   }
 
   isGameKey(code) {
-    return Object.keys(KEY_LAYOUTS).some((l) => Object.values(keyBinds(this.settings, l)).some((codes) => codes.includes(code)));
+    return Object.values(keyBinds(this.settings)).some((codes) => codes.includes(code));
   }
 
   held(codes) {
     return codes.some((c) => (c.startsWith('Mouse') ? this.mouse.has(Number(c.slice(5))) : this.down.has(c)));
   }
 
-  apply(frame, layout = 'all') {
-    const k = keyBinds(this.settings, layout);
+  apply(frame) {
+    const k = keyBinds(this.settings);
     const steer = (this.held(k.right) ? 1 : 0) - (this.held(k.left) ? 1 : 0);
     if (Math.abs(steer) > Math.abs(frame.steer)) frame.steer = steer;
     if (this.held(k.throttle)) frame.throttle = 1;
     if (this.held(k.brake)) frame.brake = 1;
-    for (const a of ['handbrake', 'nitro', 'utility', 'lookBack', 'reset', 'fire1', 'fire2', 'shiftUp']) frame[a] ||= this.held(k[a]);
+    for (const a of ['handbrake', 'nitro', 'utility', 'lookBack', 'camera', 'reset', 'fire1', 'fire2', 'shiftUp']) frame[a] ||= this.held(k[a]);
   }
 }

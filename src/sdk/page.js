@@ -44,7 +44,29 @@ export const SDK_CSS = `
       #pane-objects > #cat { flex: 1; min-height: 0; overflow-y: auto; }
       #left .pane, #cat { scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
       #cat { scrollbar-gutter: stable; }
-      #right { grid-area: right; border-left: 1px solid var(--line); }
+      /* The right bar: what is selected on top; below, everything on the map (the split between them dragged). */
+      #right { grid-area: right; border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+      #right-top { flex: 1; min-height: 60px; overflow-y: auto; padding: 8px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+      #list-split { flex: none; height: 5px; cursor: row-resize; border-top: 1px solid var(--line); }
+      #list-split:hover, #list-split.on { background: var(--cyan); opacity: 0.6; }
+      #scene-list { flex: none; height: 40%; min-height: 90px; display: flex; flex-direction: column; padding: 4px 8px 8px; box-sizing: border-box; }
+      #scene-list .list-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; white-space: nowrap; color: var(--amber); font-size: 13px; font-weight: bold; }
+      #list-count { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dim); font-size: 11px; font-weight: normal; }
+      #list-search-box { position: relative; margin-bottom: 4px; }
+      #list-search { width: 100%; box-sizing: border-box; padding-right: 24px; }
+      #list-search-clear { position: absolute; right: 3px; top: 3px; padding: 0 6px; border: 0; background: none; color: var(--dim); font-size: 15px; line-height: 18px; cursor: pointer; }
+      #list-search-clear:hover { color: var(--cyan); }
+      #list-search-clear[hidden] { display: none; }
+      #obj-list { flex: 1; min-height: 0; overflow-y: auto; position: relative; border: 1px solid var(--line); border-radius: 3px; outline: none; user-select: none; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+      #obj-list:focus { border-color: var(--cyan); }
+      #obj-list-rows { position: relative; }
+      #obj-list .lrow { position: absolute; left: 0; right: 0; height: 20px; line-height: 20px; padding: 0 6px; display: flex; gap: 6px; white-space: nowrap; cursor: default; }
+      #obj-list .lrow span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      #obj-list .lrow small { color: var(--dim); font-size: 11px; }
+      #obj-list .lrow:hover { background: #2a1a48; }
+      #obj-list .lrow.sel { background: rgba(5, 217, 232, 0.18); color: var(--cyan); }
+      #obj-list .lrow.anchor { box-shadow: inset 0 0 0 1px rgba(5, 217, 232, 0.5); }
+      #obj-list .empty { padding: 6px; color: var(--dim); }
       #tools { margin-bottom: 8px; }
       #tools button { width: 100%; padding: 4px; }
       #tabs { display: flex; gap: 2px; margin-bottom: 8px; border-bottom: 1px solid var(--line); }
@@ -82,6 +104,11 @@ export const SDK_CSS = `
       .opts input, .opts select { width: 100%; }
       .opts .tip { margin: 0; color: var(--dim); font-size: 12px; line-height: 1.4; }
       #search, #from { width: 100%; margin-bottom: 6px; }
+      #search-box { position: relative; }
+      #search-box #search { padding-right: 24px; }
+      #search-clear { position: absolute; right: 3px; top: 3px; padding: 0 6px; border: 0; background: none; color: var(--dim); font-size: 15px; line-height: 18px; cursor: pointer; }
+      #search-clear:hover { color: var(--cyan); }
+      #search-clear[hidden] { display: none; }
       #cat .loading { color: var(--dim); font-size: 12px; margin: 8px 0; }
       #cat h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
       .entry { display: flex; justify-content: space-between; gap: 6px; padding: 3px 6px; border-radius: 3px; cursor: grab; }
@@ -91,7 +118,7 @@ export const SDK_CSS = `
       .entry i { color: var(--dim); font-style: normal; }
       .none { color: var(--dim); }
 
-      #view { touch-action: none; grid-area: view; width: 100%; height: 100%; display: block; min-width: 0; min-height: 0; }
+      #view { grid-area: view; width: 100%; height: 100%; display: block; min-width: 0; min-height: 0; }
       #start { grid-area: view; align-self: center; justify-self: center; width: min(420px, 90%); padding: 20px 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; z-index: 1; }
       #start h2 { margin: 0 0 4px; color: var(--pink); letter-spacing: 2px; }
       #start p { margin: 0 0 14px; color: var(--dim); }
@@ -108,7 +135,13 @@ export const SDK_CSS = `
       #start .note { margin: -2px 0 8px; font-size: 12px; line-height: 1.4; }
       .warn { color: var(--pink); }
       #toast { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); max-width: 70%; padding: 8px 14px; background: var(--panel); border: 1px solid var(--cyan); color: var(--cyan); border-radius: 3px; pointer-events: none; }
-      #crosshair { position: fixed; width: 18px; height: 18px; margin: -9px 0 0 -9px; border: 2px solid var(--cyan); border-radius: 50%; pointer-events: none; }
+      #ctx-menu { position: fixed; z-index: 7; min-width: 190px; padding: 4px; background: var(--panel); border: 1px solid var(--cyan); border-radius: 4px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5); }
+      #ctx-menu[hidden] { display: none; }
+      #ctx-menu button { display: flex; justify-content: space-between; gap: 18px; width: 100%; padding: 5px 8px; border: 0; border-radius: 3px; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+      #ctx-menu button:hover:not(:disabled) { background: #2a1a48; color: var(--cyan); }
+      #ctx-menu button:disabled { color: var(--dim); opacity: 0.5; cursor: default; }
+      #ctx-menu kbd { color: var(--dim); font: inherit; }
+      #ctx-menu hr { margin: 4px 2px; border: 0; border-top: 1px solid var(--line); }
       #controls-panel { position: fixed; right: 12px; top: 48px; width: min(560px, 94vw); max-height: calc(100vh - 80px); overflow-y: auto; padding: 14px 16px; background: var(--panel); border: 1px solid var(--cyan); border-radius: 4px; z-index: 6; }
       #controls-panel h3 { margin: 0 0 6px; color: var(--cyan); }
       #controls-panel h4 { margin: 12px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
@@ -123,15 +156,51 @@ export const SDK_CSS = `
       #controls-panel .krow kbd { width: 106px; box-sizing: border-box; padding: 3px 2px; text-align: center; font: inherit; color: var(--dim); border: 1px dashed var(--dim); border-radius: 3px; opacity: 0.8; white-space: nowrap; }
       #controls-panel .krow kbd.none { border-color: transparent; }
       #controls-panel .krow kbd.wide { width: 216px; }
+      #car-editor { position: fixed; inset: 0; z-index: 9; display: flex; align-items: center; justify-content: center; background: rgba(4, 2, 10, 0.72); }
+      #car-editor[hidden] { display: none; }
+      #car-editor .ce-box { width: min(1180px, 96vw); max-height: 94vh; display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; background: var(--panel); border: 1px solid var(--pink); border-radius: 4px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); }
+      #car-editor .ce-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      #car-editor h3 { margin: 0; color: var(--pink); letter-spacing: 2px; text-transform: uppercase; }
+      #car-editor h4 { margin: 10px 0 4px; color: var(--cyan); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; }
+      #car-editor .ce-use { display: flex; align-items: center; gap: 4px; color: var(--dim); }
+      #car-editor .ce-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 14px; min-height: 0; }
+      #car-editor .ce-main { min-width: 0; }
+      #car-editor .ce-view { position: relative; border: 2px solid var(--pink); background: #000; }
+      #car-editor canvas { display: block; width: 100%; aspect-ratio: 16 / 10; max-height: calc(94vh - 170px); image-rendering: pixelated; cursor: grab; touch-action: none; }
+      #car-editor canvas:active { cursor: grabbing; }
+      #car-editor .ce-badge { position: absolute; top: 8px; left: 8px; padding: 2px 8px; font-weight: bold; background: rgba(0, 0, 0, 0.8); border: 2px solid var(--amber); color: var(--amber); pointer-events: none; }
+      #car-editor .ce-hint { position: absolute; bottom: 6px; right: 8px; color: rgba(255, 255, 255, 0.55); font-size: 11px; pointer-events: none; }
+      #car-editor .ce-tools { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+      #car-editor .ce-msg { min-height: 1.2em; margin-top: 6px; font-size: 12px; line-height: 1.4; }
+      #car-editor .ce-msg .amber { color: var(--amber); }
+      #car-editor .ce-side { min-height: 0; max-height: calc(94vh - 80px); overflow-y: auto; padding-right: 4px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+      #car-editor .ce-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 0; }
+      #car-editor .ce-row label { color: var(--dim); font-size: 11px; text-transform: uppercase; }
+      #car-editor .ce-row select { width: 160px; }
+      #car-editor .ce-row select.bad { border-color: var(--pink); color: var(--pink); }
+      #car-editor .ce-swatches { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+      #car-editor .swatch { width: 22px; height: 22px; padding: 0; border: 2px solid #000; border-radius: 2px; }
+      #car-editor .swatch.on { outline: 2px solid var(--amber); }
+      #car-editor input[type='color'] { width: 32px; height: 24px; padding: 0 2px; cursor: pointer; }
       #busy { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); padding: 6px 14px; background: var(--panel); border: 1px solid var(--amber); color: var(--amber); border-radius: 3px; pointer-events: none; }
 
       #right h3 { margin: 0 0 2px; color: var(--amber); font-size: 14px; }
       #right .key { color: var(--dim); font-size: 11px; word-break: break-all; margin-bottom: 8px; }
       #right .grid { display: grid; grid-template-columns: 52px 1fr; gap: 4px 6px; align-items: center; margin-bottom: 8px; }
+      .slider { display: flex; gap: 6px; align-items: center; min-width: 0; }
+      .slider input[type=range] { flex: 1; min-width: 0; }
+      /* Every slider with its number box: the slider takes the room, the box just fits its number. */
+      .slider input.num, #right .slider input.num, #left .slider input.num { flex: none; width: 56px; }
+      #right .slider input[type=range], #left .slider input[type=range] { flex: 1 1 auto; width: auto; min-width: 0; }
+      label:has(> input[type=range] + input.num) { display: grid; grid-template-columns: 70px 1fr 56px; gap: 6px; align-items: center; }
+      label:has(> input[type=range] + input.num) > input[type=range] { width: 100%; min-width: 0; }
       #right .grid input { width: 100%; }
       #right .row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       #right .note { color: var(--dim); margin: 6px 0; line-height: 1.4; }
       #right .warn { color: var(--pink); }
+      #right .links { margin: 6px 0; line-height: 1.9; color: var(--dim); }
+      #right .links .link { display: inline-flex; align-items: center; margin: 0 6px 0 0; padding: 0 0 0 5px; border: 1px solid var(--line); border-radius: 3px; color: var(--ink); }
+      #right .links .unlink { padding: 0 5px; border: none; background: none; color: var(--pink); cursor: pointer; }
       .evrow { display: flex; justify-content: space-between; gap: 6px; padding: 3px 6px; border-radius: 3px; cursor: pointer; }
       .evrow:hover { background: #2a1a48; }
       .evrow.on { background: #3a1a40; outline: 1px solid var(--pink); }
@@ -184,11 +253,13 @@ export const SDK_HTML = `
       <label title="The district's haze"><input type="checkbox" id="fog" /> Fog</label>
       <button id="top-view" title="Look straight down (Tab)">Top view</button>
       <button id="cam-reset" title="Back to where the camera started">Reset camera</button>
-      <label title="Looking round (right button, touch) turns the camera round the selection; with nothing selected, round the spot under the cursor. Off: it turns on the spot"><input type="checkbox" id="orbit" /> Orbit</label>
-      <button id="play" title="Play these edits in the game's free roam (this browser only; the career keeps the official district)">Play in game</button>
-      <button id="publish" title="Studio: ship this map with the game in place of its district, career included (writes src/content/maps)">Publish</button>
+      <label title="Looking round (right button) turns the camera round the selection; with nothing selected, round the spot under the cursor. Off: it turns on the spot"><input type="checkbox" id="orbit" checked /> Orbit</label>
       <button id="marks" hidden title="Where the last test drive was wrecked (red), stuck (amber) or put back on the road (blue). Click to clear them."></button>
-      <button id="drive" style="margin-left: auto" class="go" title="Drive this map in the game, from where you're looking (P)">▶ Test drive</button>
+      <span style="margin-left: auto"></span>
+      <button id="publish" title="Studio: ship this map with the game in place of its district, career included (writes src/content/maps)">Publish</button>
+      <button id="play" title="Play these edits in the game's free roam (this browser only; the career keeps the official district)">Save to Free Roam</button>
+      <button id="customize-car" title="The car Test drive uses: build one part by part, or go back to a random car each drive">Customize Car</button>
+      <button id="drive" class="go" title="Drive this map in the game, from its Test drive start (Objects: Starts), or else from where you're looking (P)">▶ Test drive</button>
       <button id="controls" title="Keyboard and mouse controls (change the keys here)">Controls</button>
       <span id="title"></span>
     </div>
@@ -222,8 +293,10 @@ export const SDK_HTML = `
       <div id="pane-roads" class="pane" hidden>
         <div class="toolgrid">
           <button data-tool="road" title="Draw a new street (8)">Road</button>
+          <button data-tool="bridge" title="Draw a bridge: click along its path">Bridge</button>
           <button data-tool="lot" title="Set what a block is (9)">Lot</button>
         </div>
+      <div id="bridge-opts" class="opts" hidden></div>
       <div id="road-opts" class="opts" hidden>
         <label>Name <input id="road-name" value="New Street" /></label>
         <label>Width <select id="road-width"><option value="lane">Lane (7 m)</option><option value="street" selected>Street (12 m)</option><option value="avenue">Avenue (20 m)</option></select></label>
@@ -241,12 +314,8 @@ export const SDK_HTML = `
         <div id="events-list"></div>
       </div>
       <div id="pane-objects" class="pane">
-      <div id="place-opts" class="opts" hidden>
-        <label>Place <select id="place-mode"><option value="one">One at a time</option><option value="line">Along a line</option><option value="scatter">Scatter (hold and brush)</option></select></label>
-        <label>Spacing <input type="number" id="spacing" min="1" max="100" step="1" value="8" /></label>
-      </div>
       <select id="from" title="Objects from this map's district, or from any district"><option value="all">From every district</option></select>
-      <input id="search" placeholder="Search objects" />
+      <div id="search-box"><input id="search" placeholder="Search objects" /><button id="search-clear" type="button" title="Clear the search" hidden>×</button></div>
       <div id="cat"></div>
       </div>
     </div>
@@ -283,6 +352,14 @@ export const SDK_HTML = `
       </div>
     </div>
     <div id="right">
+      <div id="right-top">
+      <div id="place-opts" class="opts" hidden>
+        <h3 id="place-title">Placing</h3>
+        <label id="style-row" title="The same object as each district has it (or by another name): its look and size">Style <select id="place-style"></select></label>
+        <label id="shape-row">Shape <select id="place-shape"></select></label>
+        <label id="mode-row">Place <select id="place-mode"><option value="one">One at a time</option><option value="run" id="run-mode" title="Click post after post, as a road is drawn: it bends at each post">In a run</option><option value="line">Along a line</option><option value="scatter">Scatter (hold and brush)</option></select></label>
+        <label id="spacing-row" title="How far apart the copies go (along a line), or stay (scattered)">Spacing <input type="range" id="spacing" min="1" max="100" step="1" value="8" /><input class="num" id="spacing-v" data-for="spacing" data-unit=" m" inputmode="decimal" /></label>
+      </div>
       <div id="brush-opts" hidden>
         <h3 id="brush-title">Terrain</h3>
         <label class="check" id="wheel-row" title="On: the mouse wheel raises and lowers the ground a grid step at a time (Snap moves' size; hold Alt (see Controls) or snapping off: 25 cm). Off: hold the left button to raise or lower"><input type="checkbox" id="wheel-lift" checked /> Mouse wheel raises and lowers</label>
@@ -298,9 +375,15 @@ export const SDK_HTML = `
       <div id="arena-panel" hidden></div>
       <div id="inspector"></div>
       <div id="edits"></div>
+      </div>
+      <div id="list-split" title="Drag to make the list taller or shorter"></div>
+      <div id="scene-list">
+        <div class="list-head"><span>On this map</span><span id="list-count"></span></div>
+        <div id="list-search-box"><input id="list-search" placeholder="Find on this map" /><button id="list-search-clear" type="button" title="Clear the search" hidden>×</button></div>
+        <div id="obj-list" tabindex="0" title="Click: select it and look at it · Ctrl+click: add or take out · Shift+click: everything from the last one clicked · right-click: menu"><div id="obj-list-rows"></div></div>
+      </div>
     </div>
     <div id="status"><span id="coords"></span><span id="hint"></span></div>
     <div id="busy" hidden></div>
-    <div id="crosshair" hidden></div>
     <div id="toast" hidden></div>
 `;

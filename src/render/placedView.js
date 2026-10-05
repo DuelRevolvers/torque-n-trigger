@@ -3,14 +3,15 @@ import { litMaterial, glowMaterial, additiveMaterial, standardMaterial } from '.
 import { rampGeometry, drapePoly } from './shapes.js';
 import { textTexture } from './textures.js';
 import { lightView } from './lightView.js';
-import { rampsOf, signSize } from '../sim/gadgets.js';
+import { rampsOf, signSize, upOf } from '../sim/gadgets.js';
 
 // What's placed with the T&T SDK that stands in the district (sim/gadgets.js),
 // drawn with it in every event and in the SDK: lights (lightView.js), ramps
 // and kickers, neon signs, oil slicks and explosive barrels (hidden once
 // they've gone off: setBroken). The arena gadgets are gadgetView.js's; drops
 // are the race screen's pickups. World coordinates; heightAt: the ground.
-export function placedView(gadgets, heightAt, tex) {
+export function placedView(gadgets, groundAt, tex) {
+  const heightAt = groundAt;
   const list = gadgets || [];
   const group = new THREE.Group();
   group.name = 'placed';
@@ -32,6 +33,7 @@ export function placedView(gadgets, heightAt, tex) {
   // letters; on posts or not; a little of their glow on the ground.
   const steel = litMaterial({ color: '#2a2834' });
   for (const g of list.filter((q) => q.type === 'sign' && q.text)) {
+    const heightAt = upOf(groundAt, g); // (up on top of something, where it is)
     const { w, h } = signSize(g);
     const ground = heightAt(g.x, g.z);
     const yaw = g.yaw || 0;
@@ -72,6 +74,7 @@ export function placedView(gadgets, heightAt, tex) {
   // Oil slicks: a black, glossy puddle with a ragged edge (the same every time).
   const oilMat = standardMaterial({ color: '#050408', roughness: 0.08, metalness: 0.85, envMap: tex.env, envMapIntensity: 1.6, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -8 });
   list.filter((q) => q.type === 'oil').forEach((g, k) => {
+    const heightAt = upOf(groundAt, g);
     const seed = [...String(g.id)].reduce((s, c) => s + c.charCodeAt(0), k * 7);
     const edge = [...Array(20).keys()].map((q) => {
       const a = (q / 20) * Math.PI * 2;
@@ -89,7 +92,7 @@ export function placedView(gadgets, heightAt, tex) {
     const b = new THREE.Group();
     b.add(new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 1.1, 12).translate(0, 0.55, 0), red));
     for (const y of [0.25, 0.85]) b.add(new THREE.Mesh(new THREE.CylinderGeometry(0.47, 0.47, 0.08, 12).translate(0, y, 0), band));
-    b.position.set(g.x, heightAt(g.x, g.z), g.z);
+    b.position.set(g.x, upOf(groundAt, g)(g.x, g.z), g.z);
     group.add(b);
     barrels.set(`barrel:${g.id}`, b);
   }
@@ -102,24 +105,26 @@ export function placedView(gadgets, heightAt, tex) {
   return group;
 }
 
-// The SDK's markers (not in the game): the free roam start (green) and the
-// arena spawn points (cyan, numbered), arrows on the ground the way a car faces.
-export function startMarkers(gadgets, heightAt) {
-  const marks = (gadgets || []).filter((g) => g.type === 'start' || g.type === 'spawn');
+// The SDK's markers (not in the game): the free roam start (green), the test
+// drive start (amber) and the arena spawn points (cyan, numbered), arrows on
+// the ground the way a car faces.
+export function startMarkers(gadgets, groundAt) {
+  const marks = (gadgets || []).filter((g) => g.type === 'start' || g.type === 'testStart' || g.type === 'spawn');
   if (!marks.length) return null;
   const group = new THREE.Group();
   const arrow = new THREE.Shape([[-0.5, -2], [0.5, -2], [0.5, 0.4], [1.4, 0.4], [0, 2.2], [-1.4, 0.4], [-0.5, 0.4]].map(([x, y]) => new THREE.Vector2(x, y)));
   let n = 0;
   for (const g of marks) {
-    const start = g.type === 'start';
-    const color = start ? '#39ff14' : '#05d9e8';
+    const start = g.type === 'start' || g.type === 'testStart';
+    const color = g.type === 'start' ? '#39ff14' : g.type === 'testStart' ? '#ffb000' : '#05d9e8';
     const m = new THREE.Mesh(new THREE.ShapeGeometry(arrow).rotateX(-Math.PI / 2).scale(1, 1, -1), glowMaterial({ color, intensity: 2, side: THREE.DoubleSide, depthTest: false }));
+    const heightAt = upOf(groundAt, g);
     m.position.set(g.x, heightAt(g.x, g.z) + 0.3, g.z);
     m.rotation.y = g.yaw || 0;
     m.renderOrder = 12;
     group.add(m);
     // (START, or the spawn's number: which car takes it.)
-    const word = start ? 'START' : String(++n);
+    const word = g.type === 'start' ? 'START' : g.type === 'testStart' ? 'TEST' : String(++n);
     const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: textTexture(word, color, 'rgba(0,0,0,0.6)'), depthTest: false, fog: false }));
     const h = start ? 1.3 : 1.6;
     label.scale.set((h * (word.length * 6 + 5)) / 13, h, 1);

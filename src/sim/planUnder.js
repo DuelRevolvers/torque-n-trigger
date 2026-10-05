@@ -31,6 +31,7 @@ export function underLayout(ctx) {
   deck();
   pillars();
   hallPillars();
+  hallCabins();
   terraces();
   market();
   scrapyard();
@@ -45,6 +46,11 @@ export function underLayout(ctx) {
   // The deck overhead: its slab (drawn), light wells.
   function deck() {
     deco('deck', { edge: P.deck.edge, height: P.deck.height, wells: U.wells || [], boundary: P.boundary });
+  }
+
+  // Pillar Hall's container cabins, lit windows down their sides.
+  function hallCabins() {
+    for (const [x, z, yaw] of U.cabins || []) obbItem('cabin', { x, z, hw: 1.25, hd: 6.1, yaw }, 2.6, { cycle: 0 });
   }
 
   // A pillar: 1.5 m square, from the ground to the deck.

@@ -27,31 +27,51 @@ export function itemDrawer(...buckets) {
   };
   return (it, draw) => {
     const xf = it.xf;
-    if (!xf) return draw(it);
-    if (xf.src.hidden) return undefined;
+    if (xf?.src.hidden) return undefined;
     const before = new Map(lists().map((l) => [l, l.length]));
-    const out = draw(xf.src);
-    const M = xf.drop ? null : matrixOf(xf.m);
+    const out = draw(xf ? xf.src : it);
+    const M = !xf || xf.drop ? null : matrixOf(xf.m);
+    const box = new THREE.Box3();
     for (const l of lists()) {
       const from = before.get(l) ?? 0;
       if (l.length <= from) continue;
-      if (xf.drop) {
+      if (xf?.drop) {
         for (const e of l.splice(from)) if (e?.isObject3D) e.parent = null;
         continue;
       }
-      for (let k = from; k < l.length; k++) l[k] = moveEntry(l[k], M, xf.m, xf.src, it);
+      for (let k = from; k < l.length; k++) {
+        if (M) l[k] = moveEntry(l[k], M, xf.m, xf.src, it);
+        grow(box, l[k]);
+      }
     }
+    // What it drew, as a box (world): the T&T SDK picks and outlines by it
+    // where the item has no footprint of its own.
+    if (!xf?.drop) it.drawn = box.isEmpty() ? null : { x0: box.min.x, x1: box.max.x, y0: box.min.y, y1: box.max.y, z0: box.min.z, z1: box.max.z };
     // Emptied Map entries (a removed item's text) are dropped.
-    if (xf.drop) for (const b of buckets) if (b instanceof Map) for (const [k, v] of b) if (!(Array.isArray(v) ? v : v.list).length) b.delete(k);
+    if (xf?.drop) for (const b of buckets) if (b instanceof Map) for (const [k, v] of b) if (!(Array.isArray(v) ? v : v.list).length) b.delete(k);
     return out;
   };
 }
 
+// Grows box by what a bucket entry draws (geometry and meshes; not records).
+function grow(box, e) {
+  const geos = e?.isBufferGeometry ? [e] : e?.geo?.isBufferGeometry ? [e.geo] : Array.isArray(e?.geos) ? e.geos : Array.isArray(e) ? e.filter((q) => q?.isBufferGeometry) : [];
+  for (const g of geos) {
+    if (!g?.isBufferGeometry || !g.attributes.position) continue;
+    if (!g.boundingBox) g.computeBoundingBox();
+    box.union(g.boundingBox);
+  }
+  if (e?.isObject3D) box.union(new THREE.Box3().setFromObject(e));
+}
+
 // The move as a matrix: turn about (px, pz), shift, lift.
 function matrixOf(m) {
-  const M = new THREE.Matrix4().makeTranslation(-m.px, 0, -m.pz);
+  // (Bigger or smaller: about where it stands, py.)
+  const py = m.scale ? m.py : 0;
+  const M = new THREE.Matrix4().makeTranslation(-m.px, -py, -m.pz);
+  if (m.scale) M.premultiply(new THREE.Matrix4().makeScale(m.scale, m.scale, m.scale));
   M.premultiply(new THREE.Matrix4().makeRotationY(m.yaw));
-  M.premultiply(new THREE.Matrix4().makeTranslation(m.px + m.dx, m.dy, m.pz + m.dz));
+  M.premultiply(new THREE.Matrix4().makeTranslation(m.px + m.dx, py + m.dy, m.pz + m.dz));
   return M;
 }
 

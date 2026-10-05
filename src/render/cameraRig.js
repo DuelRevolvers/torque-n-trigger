@@ -1,7 +1,14 @@
 import * as THREE from 'three';
 
-// Third-person chase camera. It is render-only: it reads interpolated car poses
-// and never feeds back into the simulation.
+// Race camera: a third-person chase camera, a farther one, or one at the
+// windscreen. It is render-only: it reads interpolated car poses and never feeds
+// back into the simulation.
+
+// The player cycles through these with the camera button.
+export const CAMERA_MODES = ['chase', 'far', 'windshield'];
+export const CAMERA_NAMES = { chase: 'CHASE CAM', far: 'FAR CAM', windshield: 'WINDSHIELD CAM' };
+// Chase distances: how far behind and how high over the car.
+const CHASE = { chase: { dist: 6.2, height: 2.3 }, far: { dist: 9.6, height: 3.5 } };
 
 const _fwd = new THREE.Vector3();
 const _vel = new THREE.Vector3();
@@ -17,7 +24,8 @@ export class CameraRig {
     this.hint = -1;
   }
 
-  update(pose, car, frameDt, lookBack) {
+  // mode: one of CAMERA_MODES. eyes: the car view's windshieldEyes(), for that mode.
+  update(pose, car, frameDt, { lookBack = false, mode = 'chase', eyes = null } = {}) {
     // Follow a blend of where the car points and where it's going, so drifts
     // show the car's angle instead of the camera swinging with it.
     _fwd.set(0, 0, -1).applyQuaternion(pose.quat);
@@ -28,27 +36,40 @@ export class CameraRig {
     if (speed > 3) _fwd.lerp(_vel.normalize(), 0.35).normalize();
     this.heading.lerp(_fwd, 1 - Math.exp(-7 * frameDt)).normalize();
 
-    const dir = lookBack ? this.heading.clone().negate() : this.heading;
     // Speed feel (Burnout-style): intensity ramps in from ~90 km/h.
     const s = Math.min(1, Math.max(0, (speed - 25) / 45));
     const boosting = car.nitro.active > 0;
     this.boost = (this.boost || 0) + ((boosting ? 1 : 0) - (this.boost || 0)) * (1 - Math.exp(-6 * frameDt));
     this.intensity = Math.min(1, s * s * 0.85 + this.boost * 0.45);
-    const dist = 6.2 + s * 0.6 + this.boost * 1.4;
-    const targetY = pose.pos.y + 2.3 - s * 0.45;
-    this.height = this.height === null ? targetY : this.height + (targetY - this.height) * (1 - Math.exp(-10 * frameDt));
 
     const cam = this.camera.position;
-    cam.set(pose.pos.x - dir.x * dist, this.height, pose.pos.z - dir.z * dist);
-    const g = this.track.query(cam.x, cam.z, this.hint);
-    this.hint = g.index;
-    cam.y = Math.max(cam.y, g.height + 0.8);
-    // Under a ceiling (the Undercity's deck, a tunnel's roof): stay beneath it.
-    const ceil = this.track.ceilingAt?.(cam.x, cam.z, pose.pos.y);
-    if (ceil != null) cam.y = Math.min(cam.y, ceil - 0.9);
+    // A wreck is watched from outside.
+    if (mode === 'windshield' && eyes && !car.wrecked) {
+      // Fixed to the car: pitches, rolls and bumps with it.
+      cam.copy(lookBack ? eyes.rear : eyes.front).applyQuaternion(pose.quat).add(pose.pos);
+      this.camera.quaternion.copy(pose.quat);
+      if (lookBack) this.camera.rotateY(Math.PI);
+      this.camera.rotateX(-0.05); // tipped down a touch, so the bonnet shows
+      this.height = null; // the chase camera starts afresh after
+    } else {
+      const dir = lookBack ? this.heading.clone().negate() : this.heading;
+      const chase = CHASE[mode] || CHASE.chase;
+      const k = chase.dist / CHASE.chase.dist; // the far camera scales the speed pull-back too
+      const dist = chase.dist + (s * 0.6 + this.boost * 1.4) * k;
+      const targetY = pose.pos.y + chase.height - s * 0.45;
+      this.height = this.height === null ? targetY : this.height + (targetY - this.height) * (1 - Math.exp(-10 * frameDt));
 
-    _look.set(pose.pos.x + dir.x * 4, pose.pos.y + 0.7, pose.pos.z + dir.z * 4);
-    this.camera.lookAt(_look);
+      cam.set(pose.pos.x - dir.x * dist, this.height, pose.pos.z - dir.z * dist);
+      const g = this.track.query(cam.x, cam.z, this.hint);
+      this.hint = g.index;
+      cam.y = Math.max(cam.y, g.height + 0.8);
+      // Under a ceiling (the Undercity's deck, a tunnel's roof): stay beneath it.
+      const ceil = this.track.ceilingAt?.(cam.x, cam.z, pose.pos.y);
+      if (ceil != null) cam.y = Math.min(cam.y, ceil - 0.9);
+
+      _look.set(pose.pos.x + dir.x * 4, pose.pos.y + 0.7, pose.pos.z + dir.z * 4);
+      this.camera.lookAt(_look);
+    }
 
     // Shake grows with speed; boost adds a rumble.
     const shake = s * s * 0.05 + this.boost * 0.06;

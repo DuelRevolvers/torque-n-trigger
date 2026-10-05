@@ -157,7 +157,7 @@ export function authoredLayout(map) {
       // Signal gantries across the tracks at both ends.
       for (const x of [lx0 + 12, -120]) {
         for (const z of [lz0 + 2, lz1 - 2]) add('post', around(x, z, 0.3), 8, { x, z, hgt: 8 });
-        deco('yardGantry', { x, z0: lz0 + 2, z1: lz1 - 2 });
+        deco('yardGantry', { a: [x, lz0 + 2], b: [x, lz1 - 2], r: [x - 1, x + 1, lz0 + 1, lz1 - 1], h: 8.4 });
       }
       // The goods shed and its loading platform across the north-east corner.
       const gs = map.goodsShed;
@@ -220,7 +220,7 @@ export function authoredLayout(map) {
         const x = lx0 + U * f;
         const ends = [[x, lz0 + 3], [x, lz1 - 3]];
         for (const [px, pz] of ends) hide(around(px, pz, 0.8), 24);
-        deco('gantry', { a: ends[0], b: ends[1] });
+        deco('gantry', { a: ends[0], b: ends[1], r: [x - 2.5, x + 2.5, lz0 + 2, lz1 - 2], h: 25 });
       }
       // Fence: gates where the haul road comes in and goes out; a fence between terminal and truck park.
       const [inX, outX] = haul ? [haul.points[0][0], haul.points[haul.points.length - 1][0]] : [0, 0];

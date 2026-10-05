@@ -297,3 +297,70 @@ test('sdk render: an object from each district, placed in another, is drawn and 
     assert.equal(far.length, 0, `${src.id}: ${far.length} points far from it (e.g. ${far[0]?.map(Math.round)})`);
   }
 });
+
+// A run of fence or wall from each district: its pieces drawn at the length
+// they were made (their own drawers, posts and all), from post to post round
+// the bend, and nowhere else.
+test('sdk render: a run of fence or wall is drawn post to post, round its bend', async () => {
+  const { runnable, runPieces } = await import('../src/sdk/runs.js');
+  const G = await import('../src/sim/geom2d.js');
+  const { longSide } = await import('../src/sim/layoutEdits.js');
+  for (const d of DISTRICTS) {
+    const map = districtMap(structuredClone(d.city));
+    const items = baseLayout(map).items;
+    const found = new Set();
+    const kinds = items.filter((it) => canMove(it) && runnable(it) && !found.has(it.t + it.kind) && found.add(it.t + it.kind));
+    assert.ok(kinds.length, `${d.id}: something to put in a run`);
+    const cut = census(buildDistrictView(map, tex), Infinity).maxX + 100;
+    // Each kind's run in its own row, far out: 40 m east, then 16 m north.
+    const add = [];
+    const runs = kinds.map((it, row) => {
+      const posts = [[cut + 50, row * 60], [cut + 90, row * 60], [cut + 90, row * 60 - 16]];
+      runPieces(it, posts).forEach((p, k) => add.push({ id: `r${row}-${k}`, from: it.key, x: p.x, z: p.z, yaw: p.yaw, len: p.len }));
+      return { it, posts, pts: [] };
+    });
+    setEdits(map, { add });
+    const pts = points(buildDistrictView(map, tex)).filter(([x]) => x > cut);
+    setEdits(map, null);
+    for (const [x, z] of pts) {
+      const r = runs.find((q) => Math.abs(z - q.posts[0][1]) < 30);
+      assert.ok(r, `${d.id}: drawn only where its runs are (${x.toFixed(1)}, ${z.toFixed(1)})`);
+      r.pts.push([x, z]);
+    }
+    for (const { it, posts, pts: drawn } of runs) {
+      const name = `${d.id} ${it.t}${it.kind ? '.' + it.kind : ''}`;
+      const w = longSide(it).width / 2 + 1.2;
+      const line = G.nearestOnLine;
+      assert.ok(drawn.length, `${name}: drawn`);
+      for (const [x, z] of drawn) assert.ok(line(posts, x, z).d < w, `${name}: along the run (${x.toFixed(1)}, ${z.toFixed(1)})`);
+      // Reaching from the first post to the last, and round the bend.
+      const reach = (p) => Math.min(...drawn.map(([x, z]) => Math.hypot(x - p[0], z - p[1])));
+      for (const p of posts) assert.ok(reach(p) < 4.5, `${name}: drawn up to (${p.map(Math.round)}) (${reach(p).toFixed(1)} m off)`);
+      const mid = [[(posts[0][0] + posts[1][0]) / 2, posts[0][1]], [posts[1][0], (posts[1][1] + posts[2][1]) / 2]];
+      for (const p of mid) assert.ok(reach(p) < 4.5, `${name}: and all along (${p.map(Math.round)})`);
+    }
+  }
+});
+
+// Every kind of light draws (a light source on no fixture: only its light),
+// all of it round where it stands, and its moving parts move with the clock.
+test('sdk render: every kind of light is drawn where it stands', async () => {
+  const { lightView, lightMarkers } = await import('../src/render/lightView.js');
+  const { newGadget, LIGHT_FIXTURES, lightPreset } = await import('../src/sim/gadgets.js');
+  for (const f of Object.keys(LIGHT_FIXTURES)) {
+    const g = { ...newGadget('light', 'g1', 40, -30, 0.4), ...lightPreset(f), real: true };
+    const view = lightView([g], () => 2, tex);
+    view.userData.animate(1.7);
+    const meshes = [];
+    view.traverse((o) => (o.isMesh || o.isSprite) && meshes.push(o));
+    const lights = [];
+    view.traverse((o) => o.isLight && lights.push(o));
+    assert.equal(lights.length, 1, `${f}: its real light`);
+    // (The ground glow is one mesh; the rest is the fixture.)
+    if (f === 'bare') assert.equal(meshes.length, 1, 'just the light: only its glow on the ground');
+    else assert.ok(meshes.length > 1, `${f}: drawn`);
+    const reach = f === 'search' ? 100 : Math.max(g.reach, (g.span || 0) / 2 + g.reach) * 2 + 2; // (its glow's square, set ahead of a floodlight)
+    for (const [x, z] of points(view)) assert.ok(Number.isFinite(x) && Math.hypot(x - 40, z + 30) < reach, `${f}: drawn round it (${x.toFixed(1)}, ${z.toFixed(1)})`);
+    assert.equal(lightMarkers([g], () => 2) !== null, f === 'bare', `${f}: an SDK marker only for a bare light`);
+  }
+});

@@ -4,21 +4,27 @@ import { createTextures, createEnvMap } from '../render/textures.js';
 import { createCityTextures } from '../render/cityTextures.js';
 import { createStreetTextures } from '../render/streetTextures.js';
 import { retroUniforms } from '../render/retroMaterial.js';
-import { buildDistrictView, setDistrictStyles } from '../render/districtView.js';
+import { buildDistrictView, districtViewOf, setDistrictStyles } from '../render/districtView.js';
 import { docFromDistrict, districtFromDoc, serializeDoc, parseDoc, baseChanged, hashOf } from '../content/mapDoc.js';
-import { canMove, LINKED, itemCentre } from '../sim/layoutEdits.js';
+import { canMove, LINKED, itemCentre, longSide, withSet } from '../sim/layoutEdits.js';
+import { runnable, runPieces } from './runs.js';
 import { baseLayout } from '../sim/cityLayout.js';
 import { brokenEvents, gridProblem, wayProblem } from './checks.js';
 import { isSpot } from '../sim/routePoints.js';
 import { layoutObstacle, districtMap } from '../sim/city.js';
 import { onFoot } from '../sim/track.js';
-import { TYPES, MODES, MODIFIER_LABELS, DRIVERS, newEvent, nextKey, routePoint, shortcutOptions, arenaSites, routePreview, aiTestRun } from './events.js';
+import { TYPES, MODES, BARRIER_STYLES, MODIFIER_LABELS, DRIVERS, newEvent, nextKey, routePoint, arenaSites, routePreview, aiTestRun } from './events.js';
 import { arenasOf, outlineOf, outlineProblem, middleOf } from '../sim/arenaEdits.js';
 import { Session, footBox } from './session.js';
-import { catalogue, CATEGORIES, HOME_ONLY } from './catalogue.js';
+import { OBJECT_OPTIONS, optionDefault } from './objectOptions.js';
+import { catalogue, SECTIONS, GADGET_SECTION, HOME_ONLY, GROUND, models, modelOf } from './catalogue.js';
 import { brush, lift } from './brush.js';
-import { GADGETS, addGadgets, SETTINGS, DROPS, GROUPS, NO_TURN, SIGN_STYLES, signSize, LIGHT_FIXTURES, LIGHT_FLICKER, LIGHT_COLORS, MAX_REAL_LIGHTS } from '../sim/gadgets.js';
+import { GADGETS, GADGET_SHAPES, shapeOf, shapeSettings, LINKABLE, liftPosts, addGadgets, newGadget, rampsOf, SETTINGS, DROPS, NO_TURN, SIGN_STYLES, HAZARD_KINDS, signSize, LIGHT_FIXTURES, LIGHT_PRESETS, SPAN_LIGHTS, lightPreset, lightResize, LIGHT_FLICKER, LIGHT_COLORS, MAX_REAL_LIGHTS } from '../sim/gadgets.js';
+import { lightMarkers } from '../render/lightView.js';
+import { bridgeView } from '../render/bridgeView.js';
+import { BRIDGE_STYLES, BRIDGE_DEFAULTS } from '../sim/bridges.js';
 import { placedView, startMarkers } from '../render/placedView.js';
+import { rampGeometry } from '../render/shapes.js';
 import { Rain, RAIN_MAX, RAIN_USUAL } from '../render/rain.js';
 import { makePickupMesh } from '../render/pickupMesh.js';
 import { SPECIALS, progress, triggerText, specialOfType, specialOfGadget } from '../career/unlocks.js';
@@ -32,6 +38,7 @@ import { listMaps, saveMap, deleteMap, sdkGet, sdkPut } from '../content/library
 import { loadCareer } from '../career/career.js';
 import { districtUnlocked } from '../career/districts.js';
 import { blankDistrict, BLANK_STYLES } from './templates.js';
+import { openCarEditor, carEditorOpen } from './carEditor.js';
 
 // The T&T SDK (Studio): opens a district as a map document; select, move,
 // turn, delete and copy its objects, place new ones from the catalogue; undo,
@@ -66,6 +73,8 @@ scene.add(sun);
 const camera = new THREE.PerspectiveCamera(60, 1, 0.5, 9000);
 const overlay = new THREE.Group(); // selection, hover and ghost boxes
 scene.add(overlay);
+const ghostLayer = new THREE.Group(); // the object being placed, drawn see-through
+scene.add(ghostLayer);
 const preview = new THREE.Group(); // the ground as a brush stroke has it so far
 scene.add(preview);
 const ring = new THREE.LineLoop(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0x05d9e8, depthTest: false, transparent: true, fog: false }));
@@ -88,6 +97,7 @@ let othersLoading = null; // the district being loaded, or null
 // (Objects placed from another district are drawn by that district's own view.)
 setDistrictStyles((id) => DISTRICTS.find((d) => d.id === id)?.city || null);
 let selected = null;
+let group = []; // several things selected (box or Ctrl+click): [{ key } | { gadget }]
 let hovered = null;
 let placing = null; // the catalogue entry being placed
 let placeYaw = 0;
@@ -102,9 +112,146 @@ let roadPts = []; // the road tool's points so far
 let roadBends = []; // per stretch: the handle its curve passes through halfway, or null
 let roadStage = 'drawing'; // 'drawing' (placing points), then 'shaping' (curves; Build street)
 let lineFrom = null; // placing along a line: where it starts
+let runPts = []; // placing in a run (a fence, a wall): its posts so far
+let runHover = null; // where the next post goes: { p, close }
+let runWanted = false; // In a run was picked last (it's picked again for the next fence or wall)
 let scatter = null; // placing by scatter: [[x, z, yaw]] so far
 let feature = null; // a street, junction, site or gadget selected (sdk/roads.js featureAt)
 let placingGadget = null; // a gadget type being placed
+let placingPreset = null; // and its own settings (a light's fixture, a ramp's shape: LIGHT_PRESETS, GADGET_SHAPES)
+let placingModel = null; // the model being placed (placing: one of its styles; catalogue.js models)
+let pasting = null; // several things copied, being placed together (Paste): the clipboard (clip)
+let modelList = new Map(); // (the Objects list's models, by key)
+const stylePicked = new Map(); // a model's style picked last (its uid)
+const shapePicked = new Map(); // a gadget's shape picked last
+let linking = null; // a trigger pad's id while a gadget's being linked to it (its Link a gadget button)
+let linkAt = null; // (the cursor's ground, while linking)
+// Each kind of light, as the Lights list has it.
+const LIGHT_ABOUT = {
+  post: 'A street lamp: a pole, an arm out over the road, the lamp at its end.',
+  flood: 'A floodlight tower: two big lamps up high, lighting a wide stretch the way it faces.',
+  wall: 'A lamp on a wall, at its height, shining down and out the way it faces (nothing to hit).',
+  bollard: 'A short post with a glowing top, for paths and car parks.',
+  string: 'A string of bulbs sagging between two thin poles, along the way it faces (its Length).',
+  bar: 'A neon tube at its height, along the way it faces (its Length; nothing to hit).',
+  search: 'A searchlight on a stand, its beam sweeping slowly round the sky.',
+  barrel: 'An oil drum with a fire burning in it.',
+  beacon: 'A warning beacon on a short post, its beams going round.',
+  ground: 'A light set flush in the ground (nothing to hit).',
+  bare: 'Just the light, on no fixture: nothing to see or hit, only its light (the SDK marks where it is).',
+};
+// --- Bridges (the Roads tab's Bridge tool; sim/bridges.js) ---
+let bridgePts = []; // the bridge being drawn: its points
+let bridgeSel = null; // the bridge selected (its id)
+const bridgeDraft = { ...BRIDGE_DEFAULTS }; // what the next one's like
+let bridgeGroup = null; // the bridges, as the game draws them
+const bridgeLayer = new THREE.Group(); // the one being drawn, the one selected
+scene.add(bridgeLayer);
+
+function rebuildBridges() {
+  if (bridgeGroup) {
+    scene.remove(bridgeGroup);
+    dispose(bridgeGroup);
+    bridgeGroup = null;
+  }
+  const g = session ? bridgeView(session.bridges(), H, tex) : null;
+  if (g) {
+    bridgeGroup = g;
+    scene.add(g);
+  }
+}
+
+// The bridge whose deck is over a ground point, or null.
+function bridgeAt(g) {
+  for (const b of session.bridges()) if (G.nearestOnLine(b.pts, g.x, g.z).d < b.width / 2 + 1) return b.id;
+  return null;
+}
+
+// The path being drawn (on to the cursor), at the height it'll be; the bridge selected, outlined.
+function drawBridges(cursor = null) {
+  for (const o of [...bridgeLayer.children]) {
+    bridgeLayer.remove(o);
+    dispose(o);
+  }
+  if (tool !== 'bridge' || !session) return;
+  const line = (pts, up, color) => {
+    if (pts.length < 2) return;
+    const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map(([x, z]) => new THREE.Vector3(x, H(x, z) + up + 0.3, z))), new THREE.LineBasicMaterial({ color, depthTest: false, fog: false }));
+    l.renderOrder = 12;
+    bridgeLayer.add(l);
+  };
+  line(cursor ? [...bridgePts, [cursor.x, cursor.z]] : bridgePts, bridgeDraft.height, 0x05d9e8);
+  for (const [x, z] of bridgePts) {
+    const m = new THREE.Mesh(new THREE.OctahedronGeometry(0.8), new THREE.MeshBasicMaterial({ color: 0x05d9e8, depthTest: false, fog: false }));
+    m.position.set(x, H(x, z) + bridgeDraft.height + 1, z);
+    m.renderOrder = 13;
+    bridgeLayer.add(m);
+  }
+  const sel = bridgeSel && session.bridges().find((b) => b.id === bridgeSel);
+  if (sel) {
+    for (const sg of [-1, 1]) {
+      line(sel.pts.map((p, k) => {
+        const a = sel.pts[Math.max(0, k - 1)];
+        const b = sel.pts[Math.min(sel.pts.length - 1, k + 1)];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        return [p[0] - ((b[1] - a[1]) / L) * sg * (sel.width / 2), p[1] + ((b[0] - a[0]) / L) * sg * (sel.width / 2)];
+      }), sel.height + 1.2, 0xffb000);
+    }
+  }
+}
+
+function endBridge() {
+  if (bridgePts.length < 2) {
+    bridgePts = [];
+    drawBridges();
+    return toast('A bridge needs two points or more: click along its path.');
+  }
+  bridgeSel = session.addBridge(bridgePts, bridgeDraft);
+  bridgePts = [];
+  changed(false);
+  showBridgeOpts();
+  drawBridges();
+  hint();
+}
+
+// The Bridge tool's settings (on the left, under the tools): the next one's,
+// or the selected bridge's (changed as they're set).
+function showBridgeOpts() {
+  const box = $('bridge-opts');
+  if (!box) return;
+  box.hidden = tool !== 'bridge';
+  if (box.hidden || !session) return;
+  const sel = bridgeSel && session.bridges().find((b) => b.id === bridgeSel);
+  const v = sel || bridgeDraft;
+  box.innerHTML = `<h3>${sel ? `Bridge ${esc(sel.id)}` : bridgePts.length ? 'Drawing a bridge' : 'Bridge'}</h3>
+    <div class="grid">
+      <label for="br-style">style</label><select id="br-style">${Object.entries(BRIDGE_STYLES).map(([k, n]) => `<option value="${k}"${v.style === k ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      ${sliderPair('br-width', 'width', 4, 30, 0.5, ' m', v.width)}
+      ${sliderPair('br-height', 'height', 0, 20, 0.25, ' m', v.height)}
+    </div>
+    <label class="check"><input type="checkbox" id="br-ramps"${v.ramps !== false ? ' checked' : ''} /> Ramps down from its ends</label>
+    <p class="note">Height: over the ground at its ends; it runs level from one to the other. 0 lays it from rooftop to rooftop, straight across a gap.${sel ? '' : ' Click along its path; double-click, Space or Enter builds it.'}</p>
+    ${sel ? '<div class="row"><button id="br-del" class="danger" title="Delete">Delete bridge</button></div>' : ''}`;
+  box.querySelectorAll('input.num[data-for]').forEach(numberBox);
+  const read = () => ({ style: $('br-style').value, width: Number($('br-width').value), height: Number($('br-height').value), ramps: $('br-ramps').checked });
+  for (const id of ['br-style', 'br-width', 'br-height', 'br-ramps']) {
+    $(id).addEventListener('change', () => {
+      const p = read();
+      if (sel) {
+        if (session.setBridge(sel.id, p)) changed(false);
+      } else Object.assign(bridgeDraft, p);
+      drawBridges();
+    });
+  }
+  $('br-del')?.addEventListener('click', () => {
+    if (!session.removeBridge(sel.id)) return;
+    bridgeSel = null;
+    changed(false);
+    showBridgeOpts();
+    drawBridges();
+  });
+}
+
 let gadgetGroup = null; // the gadgets as the game draws them, running
 let evKey = null; // the event being edited (Events tool), and its working copy
 let evDraft = null;
@@ -136,9 +283,12 @@ function open(doc) {
   setBusy(`Opening ${doc.name}…`);
   setTimeout(() => {
     session = new Session(doc);
-    selected = hovered = placing = drag = ghostAt = stroke = null;
+    selected = hovered = placing = pasting = drag = ghostAt = stroke = runHover = null;
+    runPts = [];
     clearGroup(preview);
-    cat = catalogue([...session.base.values()]).map((e) => ({ ...e, uid: e.id }));
+    // (Named by the district they're from, as every other district's are.)
+    const home = DISTRICTS.find((d) => d.id === doc.base)?.name || doc.name;
+    cat = catalogue([...session.base.values()]).map((e) => ({ ...e, uid: e.id, districtName: home, home: doc.base }));
     loadOthers();
     $('district').value = doc.base || '';
     const b = session.map.bounds || { minX: -500, maxX: 500, minZ: -500, maxZ: 500 };
@@ -204,6 +354,7 @@ function scheduleBuild() {
 
 function changed(rebuild = true) {
   if (selected && !session.item(selected)) selected = null;
+  if (group.length) group = group.filter((t) => (t.key ? session.item(t.key) : session.gadgets().some((g) => g.id === t.gadget)));
   autosave();
   rebuildGadgets();
   refresh();
@@ -340,10 +491,13 @@ function renderStart() {
 }
 
 async function testDrive(eventKey = null) {
-  // From where the middle of the view meets the ground, heading the way the camera looks.
+  // From the map's test drive start, facing its arrow (a car's yaw faces -z
+  // at 0; a gadget's arrow +z); else where the middle of the view meets the
+  // ground, heading the way the camera looks.
+  const at = session.gadgets().find((q) => q.type === 'testStart');
   ray.setFromCamera(new THREE.Vector2(0, 0), camera);
-  const g = groundHit();
-  const spawn = { x: g ? g.x : cam.x, z: g ? g.z : cam.z, yaw: cam.yaw + Math.PI };
+  const g = at ? null : groundHit();
+  const spawn = at ? { x: at.x, z: at.z, yaw: Math.atan2(-Math.sin(at.yaw || 0), -Math.cos(at.yaw || 0)) } : { x: g ? g.x : cam.x, z: g ? g.z : cam.z, yaw: cam.yaw + Math.PI };
   // (The tab opens first: a browser only allows it straight after the click.)
   const tab = window.open('', 'tt-testdrive');
   try {
@@ -392,6 +546,29 @@ function groundHit() {
   return null;
 }
 
+// The top of whatever's drawn under the ray (a roof, a deck, the ground), as
+// { x, y, z }; the ground if what's hit first is a side (a wall).
+function surfaceHit() {
+  if (view) {
+    for (const h of ray.intersectObject(view, true)) {
+      const m = h.object.material;
+      if (!h.object.visible || !m || m.transparent || m.blending === THREE.AdditiveBlending) continue;
+      const n = h.face ? h.face.normal.clone().transformDirection(h.object.matrixWorld) : null;
+      if (n && Math.abs(n.y) > 0.6) return h.point;
+      break;
+    }
+  }
+  const g = groundHit();
+  return g ? new THREE.Vector3(g.x, H(g.x, g.z), g.z) : null;
+}
+
+// How far up off the ground a ghost at at is (on top of something), to the cm; 0 on the ground.
+function upHere(at) {
+  if (at?.y === null || at?.y === undefined) return 0;
+  const up = at.y - H(at.x, at.z);
+  return up > 0.05 ? Math.round(up * 100) / 100 : 0;
+}
+
 // The first solid surface drawn under the ray.
 function meshHit() {
   if (!view) return null;
@@ -422,33 +599,178 @@ function box(fb, base, h, color, opacity) {
   overlay.add(g);
 }
 
+// A ghost in any shape (world coordinates): see-through, its edges drawn over everything.
+function ghostShape(geo, color, opacity = 0.25) {
+  const fill = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false, fog: false, side: THREE.DoubleSide }));
+  const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 20), new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true, fog: false }));
+  edges.renderOrder = 10;
+  overlay.add(fill, edges);
+}
+
+// What a gadget, light, drop, ramp, hazard, sign or start would be where it's
+// going: its shape as the game has it (a ramp's wedge, a slick's or a plate's
+// reach, a light's post and what it lights, a start's car and the way it faces).
+const ARROW = [[-0.5, -2], [0.5, -2], [0.5, 0.4], [1.4, 0.4], [0, 2.2], [-1.4, 0.4], [-0.5, 0.4]];
+function gadgetGhost(g, color = 0x05d9e8) {
+  const up = g.up || 0; // (on top of something)
+  const ground = H(g.x, g.z) + up;
+  const yaw = g.yaw || 0;
+  const at = (w, d, base, h, opacity = 0.25) => box({ x: g.x, z: g.z, w, d, yaw }, base, h, color, opacity);
+  const disc = (r, h, opacity = 0.25, base = ground) => ghostShape(new THREE.CylinderGeometry(r, r, h, 40).translate(g.x, base + h / 2, g.z), color, opacity);
+  switch (g.type) {
+    case 'lift':
+      for (const [px, pz] of liftPosts(g.x, g.z, g.w / 2, g.d / 2, yaw)) box({ x: px, z: pz, w: 0.4, d: 0.4, yaw: 0 }, H(px, pz) + up, g.hMax + 0.6, color, 0.25);
+      return at(g.w, g.d, ground, 0.6);
+    case 'gate':
+      return at(g.width, 1.2, ground, g.hMax);
+    case 'trigger':
+      return disc(g.r, 0.15);
+    case 'hazard':
+    case 'oil':
+      return disc(g.r, 0.12);
+    case 'sweeper':
+      // (Where its bar sweeps, round its pivot.)
+      disc(g.len, 0.06, 0.12);
+      return at(0.6, 0.6, ground, 1.8);
+    case 'mover':
+      // (The block, and how far it slides either way along its heading.)
+      at(g.w, g.d + g.travel * 2, ground, 0.05, 0.1);
+      return at(g.w, g.d, ground, 2.5);
+    case 'light': {
+      disc(g.reach, 0.05, 0.07);
+      const f = g.fixture || 'post';
+      if (f === 'bare') return at(0.8, 0.8, ground + g.height - 0.4, 0.8);
+      if (f === 'wall') return at(0.4, 0.6, ground + g.height - 0.3, 0.6);
+      if (f === 'bar') return at(0.3, g.span, ground + g.height - 0.15, 0.4);
+      if (f === 'ground') return at(0.7, 0.7, ground, 0.1);
+      if (f === 'search') return at(1.2, 1.2, ground, 1.6);
+      if (f === 'barrel') return ghostShape(new THREE.CylinderGeometry(0.42, 0.42, 1.0, 16).translate(g.x, ground + 0.5, g.z), color);
+      if (f === 'string') {
+        at(0.15, g.span, ground + g.height - 0.6, 0.6);
+        for (const s of [-1, 1]) {
+          const [px, pz] = [g.x + Math.sin(yaw) * s * (g.span / 2), g.z + Math.cos(yaw) * s * (g.span / 2)];
+          box({ x: px, z: pz, w: 0.2, d: 0.2, yaw }, H(px, pz) + up, g.height + 0.3, color, 0.25);
+        }
+        return;
+      }
+      const w = f === 'flood' ? 1.2 : f === 'post' ? 0.5 : 0.3;
+      return at(w, w, ground, g.height + 0.5);
+    }
+    case 'health':
+    case 'ammo':
+    case 'nitro':
+      return at(1.4, 1.4, ground + 0.1 + (g.height || 0), 1.4);
+    case 'ramp':
+    case 'kicker': {
+      const r = rampsOf([g], H)[0];
+      return ghostShape(rampGeometry(r, r.abs), color);
+    }
+    case 'barrel':
+      return ghostShape(new THREE.CylinderGeometry(0.45, 0.45, 1.1, 16).translate(g.x, ground + 0.55, g.z), color);
+    case 'sign': {
+      const { w, h } = signSize(g);
+      at(w + 0.2, 0.3, ground + g.height - 0.1, h + 0.2);
+      if (g.posts) {
+        for (const s of [-1, 1]) {
+          const [px, pz] = [g.x + Math.cos(yaw) * s * (w / 2 - 0.3), g.z - Math.sin(yaw) * s * (w / 2 - 0.3)];
+          box({ x: px, z: pz, w: 0.25, d: 0.25, yaw }, H(px, pz) + up, g.height + h, color, 0.25);
+        }
+      }
+      return;
+    }
+    case 'start':
+    case 'testStart':
+    case 'spawn': {
+      at(2.2, 4.6, ground, 1.4);
+      const shape = new THREE.Shape(ARROW.map(([x, y]) => new THREE.Vector2(x * 1.3, y * 1.3)));
+      return ghostShape(new THREE.ShapeGeometry(shape).rotateX(-Math.PI / 2).scale(1, 1, -1).rotateY(yaw).translate(g.x, ground + 0.3, g.z), color, 0.5);
+    }
+    default:
+      return at(2, 2, ground, 2);
+  }
+}
+
 function showOverlay() {
   for (const o of [...overlay.children]) {
     overlay.remove(o);
     dispose(o);
   }
+  ghostLayer.clear(); // (clones sharing the cached ghosts' geometry: not disposed)
   if (!session) return;
+  // (A footprint from what was drawn carries its own bottom and height.)
   const shown = (key, color, opacity) => {
     const it = session.item(key);
-    if (it) box(footBox(it), session.baseY(it), it.h || 2, color, opacity);
+    if (!it) return;
+    const fb = footBox(it);
+    const { y0, h } = session.heightOf(it);
+    box(fb, y0, h, color, opacity);
   };
   if (hovered && hovered !== selected && !drag && !placing) shown(hovered, 0xffffff, 0.08);
-  if (drag?.moved && !drag.feature) {
+  if (drag?.moved && drag.key && !drag.feature) {
     // The object where it's going: its box, moved and turned, kept at its height above the ground.
     const it = session.item(drag.key);
     const fb = footBox(it);
     const p = session.pose(drag.key);
-    const lift = session.baseY(it) - H(fb.x, fb.z);
-    box({ ...fb, x: fb.x + drag.x - p.x, z: fb.z + drag.z - p.z, yaw: fb.yaw + drag.yaw - p.yaw }, H(drag.x, drag.z) + lift, it.h || 2, 0x05d9e8, 0.25);
+    const { y0, h } = session.heightOf(it);
+    box({ ...fb, x: fb.x + drag.x - p.x, z: fb.z + drag.z - p.z, yaw: fb.yaw + drag.yaw - p.yaw }, H(drag.x, drag.z) + y0 - H(fb.x, fb.z), h, 0x05d9e8, 0.25);
   } else if (selected) shown(selected, 0xffb000, 0.15);
+  if (group.length) {
+    const d = drag?.group && (drag.moved || drag.rotating) ? drag : null;
+    const moves = d ? groupMoves(d) : null;
+    group.forEach((t, i) => {
+      const mv = moves?.[i];
+      if (t.gadget) {
+        const g = session.gadgets().find((q) => q.id === t.gadget);
+        if (g) gadgetGhost(mv ? { ...g, x: mv.x, z: mv.z, yaw: mv.yaw } : g, mv ? 0x05d9e8 : 0xffb000);
+        return;
+      }
+      const it = session.item(t.key);
+      if (!it) return;
+      const fb = footBox(it);
+      const { y0, h } = session.heightOf(it);
+      if (!mv) return box(fb, y0, h, 0xffb000, 0.15);
+      const p = session.pose(t.key);
+      box({ ...fb, x: mv.x + fb.x - p.x, z: mv.z + fb.z - p.z, yaw: fb.yaw + mv.yaw - p.yaw }, H(mv.x, mv.z) + y0 - H(fb.x, fb.z), h, 0x05d9e8, 0.25);
+    });
+  }
   if (placing && ghostAt) {
     const { src, lift } = placingSource();
     const fb = footBox(src);
-    const ghost = (x, z, yaw) => box({ x, z, w: fb.w, d: fb.d, yaw: fb.yaw + yaw }, H(x, z) + lift, src.h || 2, 0x05d9e8, 0.25);
+    // (The object itself, see-through, its bottom on what's under it (y: the top it's on); a box if it draws nothing alone.)
+    const model = ghostModel(placing.from, ghostSet(placing));
+    const ghost = (x, z, yaw, y = null) => {
+      if (!model) return box({ x, z, w: fb.w, d: fb.d, yaw: fb.yaw + yaw }, (y ?? H(x, z)) + lift, src.h || 2, 0x05d9e8, 0.25);
+      const g = model.view.clone();
+      g.matrixAutoUpdate = false;
+      g.matrix.makeTranslation(-model.px, 0, -model.pz).premultiply(new THREE.Matrix4().makeRotationY(yaw)).premultiply(new THREE.Matrix4().makeTranslation(x, (y ?? H(x, z)) - model.ground - model.drop, z));
+      ghostLayer.add(g);
+    };
     if (scatter) for (const [x, z, yaw] of scatter) ghost(x, z, yaw);
-    else if (lineFrom) for (const [x, z, yaw] of linePoses(lineFrom, [ghostAt.x, ghostAt.z])) ghost(x, z, yaw);
-    else ghost(ghostAt.x, ghostAt.z, placeYaw);
+    else if (runMode()) {
+      const side = longSide(src);
+      const posts = runHover && !runHover.close ? [...runPts, runHover.p] : runPts;
+      for (const p of runPieces(src, posts, !!runHover?.close)) box({ x: p.x, z: p.z, w: side.width, d: p.len, yaw: side.yaw + p.yaw }, H(p.x, p.z) + lift, src.h || 2, 0x05d9e8, 0.25);
+      const post = ([x, z], color) => box({ x, z, w: 0.7, d: 0.7, yaw: 0 }, H(x, z) + lift, (src.h || 2) + 0.6, color, 0.5);
+      runPts.forEach((p, k) => post(p, k === 0 && runHover?.close ? 0x39ff14 : 0xffb000));
+      if (runHover && !runHover.close) post(runHover.p, 0x05d9e8);
+    } else if (lineFrom) for (const [x, z, yaw] of linePoses(lineFrom, [ghostAt.x, ghostAt.z])) ghost(x, z, yaw);
+    else ghost(ghostAt.x, ghostAt.z, placeYaw + (placing.copied ? 0 : squareTurn(src)), ghostAt.y);
   }
+  if (pasting && ghostAt) pasteGhosts();
+  if (placingGadget && ghostAt) gadgetGhost({ ...newGadget(placingGadget, 'ghost', ghostAt.x, ghostAt.z, NO_TURN.has(placingGadget) ? 0 : placeYaw), ...placingPreset, up: upHere(ghostAt) });
+  // (Linking a gadget to a trigger pad: a line from the pad to the cursor, and the gadget under it outlined.)
+  const pad = linking && session.gadgets().find((q) => q.id === linking);
+  if (pad && linkAt) {
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(pad.x, H(pad.x, pad.z) + 0.4, pad.z), new THREE.Vector3(linkAt.x, linkAt.y + 0.4, linkAt.z)]), new THREE.LineDashedMaterial({ color: 0xffb000, dashSize: 0.8, gapSize: 0.5, depthTest: false, transparent: true, fog: false }));
+    line.computeLineDistances();
+    line.renderOrder = 11;
+    overlay.add(line);
+    const under = gadgetAt(linkAt.x, linkAt.z);
+    const g = under && under !== pad.id && session.gadgets().find((q) => q.id === under);
+    if (g) gadgetGhost(g, LINKABLE.has(g.type) ? 0x39ff14 : 0xff2a6d);
+  }
+  // (A spawn point placed in the Arenas tool: red where it can't go.)
+  if (tool === 'arena' && arenaSpawning && arenaGhost) gadgetGhost(newGadget('spawn', 'ghost', arenaGhost.x, arenaGhost.z, arenaGhost.yaw), arenaGhost.ok ? 0x05d9e8 : 0xff2a6d);
   drawRing();
   showFeature();
 }
@@ -462,7 +784,7 @@ const brushOpts = (dt) => ({ radius: Number($('radius').value), strength: Number
 const ANGLED = new Set(['smooth', 'flatten']);
 
 // The tool tabs (Select is always there, above them): each tab's tools, and the one it last had.
-const TAB_OF = { height: 'terrain', raise: 'terrain', lower: 'terrain', smooth: 'terrain', flatten: 'terrain', paint: 'terrain', erase: 'terrain', road: 'roads', lot: 'roads', events: 'events', arena: 'events', sky: 'sky' };
+const TAB_OF = { height: 'terrain', raise: 'terrain', lower: 'terrain', smooth: 'terrain', flatten: 'terrain', paint: 'terrain', erase: 'terrain', road: 'roads', bridge: 'roads', lot: 'roads', events: 'events', arena: 'events', sky: 'sky' };
 const tabTool = { objects: 'select', terrain: 'height', roads: 'road', events: 'events', sky: 'sky' };
 let tab = 'objects';
 function showTab(t) {
@@ -491,9 +813,12 @@ function setTool(t) {
   if ((t === 'raise' || t === 'lower') && wheelLift()) t = 'height';
   if (stroke) endStroke();
   tool = t;
+  linking = null;
   roadPts = [];
   roadBends = [];
   roadStage = 'drawing';
+  bridgePts = [];
+  bridgeSel = null;
   for (const b of document.querySelectorAll('#left [data-tool]')) b.classList.toggle('on', b.dataset.tool === t);
   if (TAB_OF[t]) {
     tabTool[TAB_OF[t]] = t;
@@ -510,6 +835,8 @@ function setTool(t) {
   $('lift-down').textContent = `▼ Down a step (${keyName(binding.liftDown[0])})`;
   $('brush-tip').textContent = keyText(BRUSH_TIPS[t] || '');
   $('road-opts').hidden = t !== 'road';
+  showBridgeOpts();
+  drawBridges();
   $('events-panel').hidden = t !== 'events';
   $('sky-panel').hidden = t !== 'sky';
   $('arena-panel').hidden = t !== 'arena';
@@ -533,7 +860,9 @@ function setTool(t) {
   showLotHover();
   if (t !== 'select') {
     placing = null;
+    pasting = null;
     ghostAt = null;
+    runPts = [];
     drag = null;
     hovered = null;
     renderCatalogue();
@@ -549,6 +878,9 @@ function clearGroup(g) {
     dispose(o);
   }
 }
+
+// A grid row: its label, then a slider and its number box (typed into as well).
+const sliderPair = (id, label, min, max, step, unit, value, extra = '') => `<label for="${id}">${label}</label><span class="slider"><input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${value}" ${extra}/><input class="num" id="${id}-v" data-for="${id}" data-unit="${unit}" inputmode="decimal" /></span>`;
 
 // A slider's number box (input.num, data-for the slider, data-unit shown
 // after it): it shows the slider's value; click it (or tab to it) and type
@@ -811,6 +1143,7 @@ scene.add(featLine);
 function selectFeature(f) {
   feature = f;
   selected = null;
+  group = [];
   refresh();
   showOverlay();
 }
@@ -858,6 +1191,7 @@ function deleteFeature() {
   if (f.type === 'gadget') {
     session.removeGadget(f.id);
     feature = null;
+    linking = null;
     return changed(false);
   }
   const make =
@@ -878,23 +1212,25 @@ function featureInspector(ins) {
       <h3>${esc(f.name)}</h3><div class="key">street${f.ringRoad ? ' (ring road)' : ''}</div>
       ${f.key ? `<div class="grid">
         <label for="st-name">name</label><input id="st-name" value="${esc(f.spec.name)}" />
-        <label for="st-width">width (m)</label><input id="st-width" type="number" min="4" max="60" step="1" value="${f.width}" />
+        ${sliderPair('st-width', 'width', 4, 60, 1, ' m', f.width)}
         <label for="st-surface">surface</label><select id="st-surface"><option value="asphalt"${f.surface === 'asphalt' ? ' selected' : ''}>Asphalt</option><option value="dirt"${f.surface === 'dirt' ? ' selected' : ''}>Dirt</option></select>
       </div>` : ''}
       ${f.fixed ? `<p class="note">${esc(f.fixed)}</p>` : ''}
       <div class="row">${f.key ? '<button id="st-apply">Apply</button>' : ''}${f.fixed ? '' : '<button id="f-del" class="danger">Delete street</button>'}</div>
       ${warn}`;
+    ins.querySelectorAll('input.num[data-for]').forEach(numberBox);
     $('st-apply')?.addEventListener('click', () =>
       editFeature('Rebuilding the street…', () => ({ plan: setStreet(session, f, { name: $('st-name').value, width: Number($('st-width').value), surface: $('st-surface').value }) }), f.at));
   } else if (f.type === 'node') {
     ins.innerHTML = `
       <h3>${esc(f.name)}</h3><div class="key">junction</div>
       ${f.movable ? `<div class="grid">
-        <label for="n-x">x (m)</label><input id="n-x" type="number" step="1" value="${f.x.toFixed(1)}" />
-        <label for="n-z">z (m)</label><input id="n-z" type="number" step="1" value="${f.z.toFixed(1)}" />
+        ${sliderPair('n-x', 'x', Math.floor(f.x - 200), Math.ceil(f.x + 200), 1, ' m', +f.x.toFixed(1))}
+        ${sliderPair('n-z', 'z', Math.floor(f.z - 200), Math.ceil(f.z + 200), 1, ' m', +f.z.toFixed(1))}
       </div><p class="note">Drag it to move it: every street through it follows.</p>` : '<p class="note">Part of a ring road or the rooftops: it moves with them.</p>'}
       <div class="row">${f.movable ? '<button id="f-del" class="danger">Remove junction</button>' : ''}</div>
       ${warn}`;
+    ins.querySelectorAll('input.num[data-for]').forEach(numberBox);
     for (const id of ['n-x', 'n-z']) {
       $(id)?.addEventListener('change', () => {
         const x = Number($('n-x').value);
@@ -910,10 +1246,11 @@ function featureInspector(ins) {
   } else {
     ins.innerHTML = `
       <h3>${esc(f.name)}</h3><div class="key">street, junction to junction</div>
-      <div class="grid"><label for="g-line">${f.line.axis} (m)</label><input id="g-line" type="number" step="5" value="${f.line.value}" /></div>
+      <div class="grid">${sliderPair('g-line', f.line.axis, f.line.value - 300, f.line.value + 300, 5, ' m', f.line.value)}</div>
       <p class="note">Moves the whole ${f.dir === 'h' ? 'row' : 'column'} of streets it's on.</p>
       <div class="row"><button id="f-del" class="danger">Delete this piece</button></div>
       ${warn}`;
+    ins.querySelectorAll('input.num[data-for]').forEach(numberBox);
     $('g-line').addEventListener('change', () => {
       const v = Number($('g-line').value);
       editFeature('Moving the streets…', () => ({ grid: gridMoveLine(session, f.line, v) }), f.line.axis === 'x' ? [v, f.at[1]] : [f.at[0], v]);
@@ -1019,6 +1356,105 @@ function placingSource() {
   return { src: f.item, lift: typeof f.item.y === 'number' ? f.item.y - f.ground : 0 };
 }
 
+// The object being placed as its district draws it, see-through: its ghost,
+// built once each ({ view, px, pz: its middle, ground: the ground under it
+// there, drop: how far its bottom is up off that ground, which placing takes
+// away so it sits on what's under it }); null if it draws nothing on its own.
+const ghostModels = new Map();
+// Objects sunk in their own district (the Spire's plaza, flush with its ground;
+// the Low Road's portal in its cut; the Culvert in the drain): a copy stands on what's under it.
+const SUNK = new Set(['plaza', 'portal', 'culvert', 'cantilever', 'pad']);
+const guestMaps = new Map();
+const ghostMat = new THREE.MeshBasicMaterial({ color: 0x05d9e8, transparent: true, opacity: 0.3, depthWrite: false, fog: false, side: THREE.DoubleSide });
+function ghostModel(from, set) {
+  if (ghostModels.session !== session) {
+    ghostModels.clear();
+    ghostModels.session = session;
+  }
+  const own = typeof from === 'string';
+  // (set: a copy's own settings; else what a new one starts as.)
+  const id = (own ? from : `${from.district}:${from.from}`) + (set ? `|${JSON.stringify(set)}` : '');
+  if (ghostModels.has(id)) return ghostModels.get(id);
+  let model = null;
+  try {
+    const item = own ? session.base.get(from) : from.item;
+    if (!own && !guestMaps.has(from.district)) guestMaps.set(from.district, districtMap(DISTRICTS.find((d) => d.id === from.district).city));
+    const map = own ? session.map : guestMaps.get(from.district);
+    const v = districtViewOf(map, tex, { only: [{ ...withSet(item, set ?? placeDefaults(item)), copy: true }] });
+    v.traverse((o) => {
+      if (o.isMesh && o.material?.blending !== THREE.AdditiveBlending) o.material = ghostMat;
+      else if (o !== v && !o.isGroup) o.visible = false;
+    });
+    const box = shownBox(v);
+    const [px, pz] = itemCentre(item);
+    const ground = own ? H(px, pz) : from.ground ?? 0;
+    const bottom = box.isEmpty() ? 0 : box.min.y - ground;
+    // (What stood sunk in its district's ground, in a cut or a ditch, comes up out of it.)
+    if (!box.isEmpty()) model = { view: v, px, pz, ground, drop: bottom > 0.5 || (SUNK.has(item.t) && bottom < 0) ? bottom : 0 };
+  } catch (err) {
+    console.warn('ghost', id, err);
+  }
+  ghostModels.set(id, model);
+  return model;
+}
+// What a view shows, as a box: its visible meshes, and of an instanced one
+// only the instances drawn (a view's hidden ones, its breakables' pieces
+// waiting to fly, stand at its origin at no size).
+function shownBox(root) {
+  const box = new THREE.Box3();
+  const b = new THREE.Box3();
+  const m = new THREE.Matrix4();
+  root.updateMatrixWorld(true);
+  root.traverse((o) => {
+    if (!o.isMesh || !o.visible || !o.geometry?.attributes.position) return;
+    if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+    if (!o.isInstancedMesh) return box.union(b.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld));
+    for (let k = 0; k < o.count; k++) {
+      o.getMatrixAt(k, m);
+      if (Math.abs(m.determinant()) < 1e-9) continue;
+      box.union(b.copy(o.geometry.boundingBox).applyMatrix4(m.premultiply(o.matrixWorld)));
+    }
+  });
+  return box;
+}
+
+const placingDrop = () => (placing ? ghostModel(placing.from, ghostSet(placing))?.drop || 0 : 0);
+
+// What a copy starts as (its settings): a speed hump a road wide; a solar
+// panel, a wall, a sea wall or a railing short (as in a run, one piece).
+function placeDefaults(src) {
+  if (!src) return null;
+  if (src.t === 'hump') return { len: 12 };
+  const side = longSide(src);
+  const short = src.t === 'panel' || ['wall', 'seawall', 'railing', 'barrier'].includes(modelOf({ id: src.t, t: src.t }));
+  return short && side?.len > 10 ? { len: 8 } : null;
+}
+// How far a copy's turned so it comes in square to the map (its nearest
+// quarter turn), however its original stands: by its box, its ramp, its ends,
+// its line or its own heading.
+function squareTurn(src) {
+  if (!src) return 0;
+  const end = (p) => [p[0], p.length > 2 ? p[2] : p[1]];
+  let yaw = 0;
+  if (src.obb) yaw = src.obb.yaw || 0;
+  else if (src.ramp) yaw = Math.atan2(src.ramp.dirX, src.ramp.dirZ);
+  else if (Array.isArray(src.a) && Array.isArray(src.b)) {
+    const [a, b] = [end(src.a), end(src.b)];
+    yaw = Math.atan2(b[0] - a[0], b[1] - a[1]);
+  } else if (src.pts?.length > 1) {
+    const [a, b] = [end(src.pts[0]), end(src.pts[src.pts.length - 1])];
+    yaw = Math.atan2(b[0] - a[0], b[1] - a[1]);
+  } else if (typeof src.dx === 'number' && typeof src.dz === 'number') yaw = Math.atan2(src.dx, src.dz);
+  else if (typeof src.yaw === 'number') yaw = src.yaw;
+  const q = Math.PI / 2;
+  return Math.round(yaw / q) * q - yaw;
+}
+
+const placingSourceOf = (from) => (typeof from === 'string' ? session.base.get(from) : from.item);
+const placingDefaults = () => (placing ? (placing.copied ? placing.copied.set : placeDefaults(placingSourceOf(placing.from))) : null);
+// A copy's ghost as it was (its settings, and its length if a run made it one); undefined: as new.
+const ghostSet = (entry) => (entry?.copied ? { ...entry.copied.set, ...(entry.copied.len ? { len: entry.copied.len } : {}) } : undefined);
+
 // Copies along a line from a to b, turned to run along it.
 function linePoses(a, b) {
   const { pts, yaw } = linePoints(a, b, spacing());
@@ -1027,10 +1463,58 @@ function linePoses(a, b) {
 }
 
 function placeLine(a, b) {
-  const ids = session.addMany(placing.from, linePoses(a, b));
+  const ids = session.addMany(placing.from, linePoses(a, b), -placingDrop(), placingDefaults());
   lineFrom = null;
   selected = ids[ids.length - 1] || null;
   changed();
+}
+
+// --- Fences and walls in a run (sdk/runs.js) ----------------------------------------
+// Placing In a run: click post after post, as a road's points; the run bends
+// at each post, and each stretch between is filled with the object, made to fit.
+
+const runMode = () => !!placing && $('place-mode').value === 'run' && runnable(placingSource().src);
+
+// Where a post at g goes: on the first post (closing the run), or in 15° steps
+// from the last and a whole grid step on (Alt, or snapping off: anywhere).
+function runSnap(g, e) {
+  if (runPts.length >= 3 && Math.hypot(runPts[0][0] - g.x, runPts[0][1] - g.z) < grabR(g.x, g.z)) return { p: runPts[0], close: true };
+  const last = runPts[runPts.length - 1];
+  if (!last) return { p: [snap(g.x, e), snap(g.z, e)] };
+  let a = Math.atan2(g.x - last[0], g.z - last[1]);
+  let L = Math.hypot(g.x - last[0], g.z - last[1]);
+  if (!e?.altKey && $('snap-turn').checked) a = Math.round(a / turnStep()) * turnStep();
+  if (snapping(e)) L = Math.max(gridSize(), Math.round(L / gridSize()) * gridSize());
+  const r2 = (v) => Math.round(v * 100) / 100;
+  return { p: [r2(last[0] + Math.sin(a) * L), r2(last[1] + Math.cos(a) * L)] };
+}
+
+function runClick(g, e) {
+  const s = runSnap(g, e);
+  if (s.close) return buildRun(true);
+  if (e.detail >= 2 && runPts.length >= 2) return buildRun();
+  const last = runPts[runPts.length - 1];
+  if (last && Math.hypot(s.p[0] - last[0], s.p[1] - last[1]) < 0.3) return;
+  runPts.push(s.p);
+  runHover = null;
+  showOverlay();
+  hint();
+}
+
+// The run built: every piece, as one step to undo. Placing goes on (Esc stops).
+function buildRun(closed = false) {
+  if (runPts.length < 2) return toast('Place at least two posts first.');
+  const pieces = runPieces(placingSource().src, runPts, closed && runPts.length >= 3);
+  if (pieces.length > 800) return toast('That run is too long for one go: build it in parts.');
+  runPts = [];
+  runHover = null;
+  if (pieces.length) {
+    const ids = session.addMany(placing.from, pieces.map((p) => [p.x, p.z, p.yaw, p.len]), -placingDrop());
+    selected = ids[ids.length - 1] || null;
+    changed();
+  }
+  showOverlay();
+  hint();
 }
 
 const onStreet = (x, z) => (session.map.edgeList || []).some((e) => e.street && G.nearestOnLine(e.pts, x, z).d < e.street.half + 1);
@@ -1237,7 +1721,9 @@ function renderEvents() {
   const d = evDraft;
   if (d) {
     const r = d.route;
-    const field = (id, label, value, type = 'number', step = 1) => `<label for="${id}">${label}</label><input id="${id}" type="${type}" step="${step}" value="${esc(value ?? '')}" />`;
+    // (Its numbers: sliders with their number boxes, each between its sensible ends.)
+    const RANGE = { 'ev-cars': [2, 8, ''], 'ev-purse': [0, 20000, ' $'], 'ev-laps': [1, 10, ''], 'ev-finish': [100, 2000, ' m'], 'ev-time': [30, 600, ' s'] };
+    const field = (id, label, value, type = 'number', step = 1) => (type === 'number' && RANGE[id] ? sliderPair(id, label, Math.min(RANGE[id][0], Number(value)), Math.max(RANGE[id][1], Number(value)), step, RANGE[id][2], value) : `<label for="${id}">${label}</label><input id="${id}" type="${type}" step="${step}" value="${esc(value ?? '')}" />`);
     html += `
       <h3>${evKey && savedEvent(evKey) ? 'Editing' : 'New'}: ${esc(TYPES[d.type] || d.type)}</h3>
       <div class="grid">
@@ -1247,6 +1733,7 @@ function renderEvents() {
         ${d.type === 'circuit' ? field('ev-laps', 'laps', d.laps) : ''}
         ${d.type === 'drag' ? field('ev-finish', 'length (m)', d.finishS ?? 414, 'number', 10) : ''}
         ${d.type === 'arena' ? `<label for="ev-mode">mode</label><select id="ev-mode">${Object.entries(MODES).map(([k, n]) => `<option value="${k}"${d.mode === k ? ' selected' : ''}>${n}</option>`).join('')}</select>${field('ev-time', 'time (s)', d.timeLimit, 'number', 10)}<label for="ev-site">ground</label><select id="ev-site">${arenaSites(session).map((a) => `<option value="${a.site}"${r.site === a.site ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
+        ${d.type === 'arena' ? '' : `<label for="ev-barrier">barriers</label><select id="ev-barrier" title="How the race's barriers look">${Object.entries(BARRIER_STYLES).map(([k, n]) => `<option value="${k}"${(d.barrierStyle || '') === k ? ' selected' : ''}>${n}</option>`).join('')}</select>`}
         ${isBoss() ? `<label for="ev-driver">boss</label><select id="ev-driver">${DRIVERS.map((q) => `<option value="${q.id}"${d.driver === q.id ? ' selected' : ''}>${esc(q.name)}</option>`).join('')}</select>` : ''}
       </div>
       <textarea id="ev-desc" placeholder="What the event is, for the event list">${esc(d.desc || '')}</textarea>
@@ -1262,9 +1749,11 @@ function renderEvents() {
         </div>
         <p class="note">${routeStageText(r)}</p>
         <div class="chips">${r.path.map((p, k) => `<span class="chip">${esc(pointLabel(r, k))}<b data-drop="${k}" title="Take it out">×</b></span>`).join('') || '<span class="note">No points yet.</span>'}</div>
-        <div class="row"><button id="ev-clear">Clear route</button></div>
-        <div class="checks">${shortcutOptions(session).map((c) => `<label><input type="checkbox" data-cut="${esc(c)}"${(r.shortcuts || []).includes(c) ? ' checked' : ''} /> Shortcut: ${esc(c)}</label>`).join('')}</div>` : ''}
-      ${r.kind === 'drag' ? `<div class="row"><button id="ev-start" class="${evStage === 'start' ? 'on' : ''}" title="Then click the start on a street">⚑ Place start</button><button id="ev-clear">Clear route</button></div>
+        <div class="row"><button id="ev-reverse" title="Race it the other way round"${r.path.length < 2 ? ' disabled' : ''}>⇄ Swap direction</button><button id="ev-clear">Clear route</button></div>
+        <h4>Shortcuts</h4>
+        <div class="row"><button id="ev-cut" class="${evStage === 'cut' ? 'on' : ''}" title="Click on the route where it leaves, then where it goes, then back on the route further on"${r.path.length < 2 ? ' disabled' : ''}>✂ Draw shortcut</button></div>
+        <div class="chips">${(r.shortcuts || []).map((c, k) => `<span class="chip">${esc(typeof c === 'string' ? `Shortcut: ${c}` : `Shortcut ${k + 1}`)}<b data-cut-drop="${k}" title="Take it out">×</b></span>`).join('') || '<span class="note">None.</span>'}</div>` : ''}
+      ${r.kind === 'drag' ? `<div class="row"><button id="ev-start" class="${evStage === 'start' ? 'on' : ''}" title="Then click the start on a street">⚑ Place start</button><button id="ev-reverse" title="Race it the other way down the street"${r.along && r.to !== null && r.to !== undefined ? '' : ' disabled'}>⇄ Swap direction</button><button id="ev-clear">Clear route</button></div>
         <p class="note">${r.along ? `Along ${esc(r.along)}. ` : ''}${routeStageText(r)}</p>` : ''}
       <div id="ev-preview">${previewText()}</div>
       <div class="row">
@@ -1302,6 +1791,10 @@ function readEvent() {
     if ($('ev-autodrops').checked) delete d.autoDrops;
     else d.autoDrops = false;
   }
+  if ($('ev-barrier')) {
+    if ($('ev-barrier').value) d.barrierStyle = $('ev-barrier').value;
+    else delete d.barrierStyle;
+  }
   d.purse = Math.max(0, Math.round(num('ev-purse', d.purse)));
   if (d.type === 'circuit') d.laps = Math.max(1, Math.round(num('ev-laps', d.laps)));
   if (d.type === 'drag') d.finishS = Math.max(100, num('ev-finish', d.finishS));
@@ -1316,11 +1809,6 @@ function readEvent() {
   const mods = [...document.querySelectorAll('[data-mod]')].filter((b) => b.checked).map((b) => b.dataset.mod);
   if (mods.length) d.modifiers = mods;
   else delete d.modifiers;
-  if (d.route.path) {
-    const cuts = [...document.querySelectorAll('[data-cut]')].filter((b) => b.checked).map((b) => b.dataset.cut);
-    if (cuts.length) d.route.shortcuts = cuts;
-    else delete d.route.shortcuts;
-  }
 }
 
 function saveEvent() {
@@ -1357,12 +1845,30 @@ function bindEvents() {
       previewEvent();
     });
   }
+  panel.querySelectorAll('input.num[data-for]').forEach(numberBox);
   panel.querySelectorAll('[data-drop]').forEach((el) =>
     el.addEventListener('click', () => {
       evDraft.route.path.splice(Number(el.dataset.drop), 1);
       renderEvents();
       previewEvent();
     }));
+  panel.querySelectorAll('[data-cut-drop]').forEach((el) =>
+    el.addEventListener('click', () => {
+      evDraft.route.shortcuts.splice(Number(el.dataset.cutDrop), 1);
+      if (!evDraft.route.shortcuts.length) delete evDraft.route.shortcuts;
+      renderEvents();
+      previewEvent();
+    }));
+  $('ev-cut')?.addEventListener('click', () => {
+    if (evStage === 'cut') return stopCut();
+    if (!evPreview?.pts) return toast('The route has to be set up first.');
+    evStage = 'cut';
+    evCut = [];
+    evSel = null;
+    renderEvents();
+    hint();
+    drawEventMarks();
+  });
   $('ev-start')?.addEventListener('click', () => {
     evStage = 'start';
     evSel = null;
@@ -1375,11 +1881,17 @@ function bindEvents() {
     renderEvents();
     hint();
   });
+  $('ev-reverse')?.addEventListener('click', reverseRoute);
   $('ev-clear')?.addEventListener('click', () => {
     evStage = null;
     evSel = null;
+    evCut = null;
     if (evDraft.route.kind === 'drag') Object.assign(evDraft.route, { along: '', from: [0, 0], to: null });
-    else evDraft.route.path = [];
+    else {
+      // (Its shortcuts went from it and back onto it: they go too.)
+      evDraft.route.path = [];
+      delete evDraft.route.shortcuts;
+    }
     renderEvents();
     previewEvent();
   });
@@ -1453,9 +1965,109 @@ function runAi() {
 
 // --- Selection and editing ---------------------------------------------------
 
+// --- Selecting several things --------------------------------------------------------
+// As in Windows: drag a box from empty ground round them, or Ctrl+click them one
+// by one (Ctrl+drag: a box added). Several selected move together (drag any of
+// them), turn together round their middle (the ring, Q/E, the wheel while
+// dragging), nudge, delete and copy together; the right bar has nothing for them.
+
+const sameThing = (a, b) => (a.key ? a.key === b.key : a.gadget === b.gadget);
+// What's selected, as things that move: several, or the one object or gadget.
+function selection() {
+  if (group.length) return group;
+  if (selected && canMove(session.item(selected))) return [{ key: selected }];
+  return feature?.type === 'gadget' ? [{ gadget: feature.id }] : [];
+}
+function setSelection(list) {
+  if (list.length > 1) {
+    group = list;
+    selected = null;
+    feature = null;
+    refresh();
+    showOverlay();
+    return;
+  }
+  if (!list.length) return select(null);
+  if (list[0].key) return select(list[0].key);
+  selectFeature(gadgetFeature(list[0].gadget));
+}
+// Ctrl+click: in, or out.
+function toggleThing(t) {
+  const now = selection();
+  setSelection(now.some((q) => sameThing(q, t)) ? now.filter((q) => !sameThing(q, t)) : [...now, t]);
+}
+// Where a thing stands and how it's turned (an object: its turn from how it was placed).
+function poseOf(t) {
+  if (t.key) return session.pose(t.key);
+  const g = session.gadgets().find((q) => q.id === t.gadget);
+  return { x: g.x, z: g.z, yaw: g.yaw || 0, type: g.type };
+}
+function middleOfThings(list) {
+  let [x0, x1, z0, z1] = [Infinity, -Infinity, Infinity, -Infinity];
+  for (const { p } of list) [x0, x1, z0, z1] = [Math.min(x0, p.x), Math.max(x1, p.x), Math.min(z0, p.z), Math.max(z1, p.z)];
+  return [(x0 + x1) / 2, (z0 + z1) / 2];
+}
+// The group as it is, ready to move: each with its pose; its middle.
+function groupMove(extra = {}) {
+  const members = group.map((t) => ({ ...t, p: poseOf(t) }));
+  const [cx, cz] = middleOfThings(members);
+  return { group: members, cx, cz, dx: 0, dz: 0, yaw: 0, yaw0: 0, ...extra };
+}
+// Where each goes: turned (yaw - yaw0) round the middle, then moved (dx, dz).
+function groupMoves(d) {
+  const a = d.yaw - d.yaw0;
+  const [c, sn] = [Math.cos(a), Math.sin(a)];
+  return d.group.map((m) => {
+    const [u, v] = [m.p.x - d.cx, m.p.z - d.cz];
+    const turns = !(m.gadget && NO_TURN.has(m.p.type));
+    return { ...(m.key ? { key: m.key } : { gadget: m.gadget }), x: d.cx + u * c + v * sn + d.dx, z: d.cz - u * sn + v * c + d.dz, yaw: m.p.yaw + (turns ? a : 0) };
+  });
+}
+function applyGroup(d) {
+  const moves = groupMoves(d);
+  if (session.moveMany(moves)) changed(moves.some((m) => m.key));
+  else showOverlay();
+}
+// Everything whose middle is in the box dragged on the screen (objects that move, gadgets).
+const MAX_BOXED = 1500;
+function boxSelect(d) {
+  const r = canvas.getBoundingClientRect();
+  const [x0, x1, y0, y1] = [Math.min(d.sx, d.x2), Math.max(d.sx, d.x2), Math.min(d.sy, d.y2), Math.max(d.sy, d.y2)];
+  const v = new THREE.Vector3();
+  const inBox = (x, y, z) => {
+    v.set(x, y, z).project(camera);
+    if (v.z > 1 || v.z < -1) return false;
+    const [px, py] = [r.left + ((v.x + 1) / 2) * r.width, r.top + ((1 - v.y) / 2) * r.height];
+    return px >= x0 && px <= x1 && py >= y0 && py <= y1;
+  };
+  const found = [];
+  for (const it of session.layout.items) {
+    if (it.hidden || !canMove(it) || GROUND.has(it.t)) continue;
+    const fb = footBox(it);
+    const { y0, h } = session.heightOf(it);
+    if (inBox(fb.x, y0 + h / 2, fb.z)) found.push({ key: it.key });
+  }
+  for (const g of session.gadgets()) if (inBox(g.x, H(g.x, g.z) + 1, g.z)) found.push({ gadget: g.id });
+  if (found.length > MAX_BOXED) {
+    toast(`${found.length} things in that box: the first ${MAX_BOXED} are selected.`);
+    found.length = MAX_BOXED;
+  }
+  const base = d.add ? selection() : [];
+  setSelection([...base, ...found.filter((t) => !base.some((q) => sameThing(q, t)))]);
+}
+// The box being dragged, on the screen.
+const marquee = document.createElement('div');
+marquee.style.cssText = 'position:fixed;display:none;border:1px dashed #05d9e8;background:rgba(5,217,232,0.08);pointer-events:none;z-index:5';
+document.body.append(marquee);
+function showMarquee(d) {
+  if (!d) return (marquee.style.display = 'none');
+  Object.assign(marquee.style, { display: 'block', left: `${Math.min(d.sx, d.x2)}px`, top: `${Math.min(d.sy, d.y2)}px`, width: `${Math.abs(d.x2 - d.sx)}px`, height: `${Math.abs(d.y2 - d.sy)}px` });
+}
+
 function select(key) {
   selected = key;
   feature = null;
+  group = [];
   refresh();
   showOverlay();
 }
@@ -1472,9 +2084,11 @@ function turn(dir, fine) {
   if (drag) {
     drag.yaw = snapTurn(drag.yaw + d, fine);
     showOverlay();
-  } else if (placing || placingGadget) {
+  } else if (placing || placingGadget || pasting) {
     placeYaw = snapTurn(placeYaw + d, fine);
     showOverlay();
+  } else if (group.length) {
+    applyGroup(groupMove({ yaw: d }));
   } else if (feature?.type === 'gadget') {
     const g = session.gadgets().find((q) => q.id === feature.id);
     if (g && session.setGadget(g.id, { yaw: snapTurn((g.yaw || 0) + d, fine) })) changed(false);
@@ -1484,13 +2098,49 @@ function turn(dir, fine) {
   }
 }
 
+// How far the arrows nudge: Nudge (the move grid, or metres) and, with Shift,
+// Fine; set in Controls, kept in this browser.
+const NUDGE_STORE = 'tt-sdk:nudge';
+const NUDGE_STEPS = [0.01, 0.02, 0.05, 0.1, 0.25, 0.5, 1, 2, 4, 8, 16];
+let nudgeAmounts = { step: 'grid', fine: 0.1 };
+try {
+  nudgeAmounts = { ...nudgeAmounts, ...JSON.parse(localStorage.getItem(NUDGE_STORE) || '{}') };
+} catch {
+  // (The defaults.)
+}
+const nudgeStep = (fine) => (fine ? Number(nudgeAmounts.fine) || 0.1 : nudgeAmounts.step === 'grid' ? gridSize() : Number(nudgeAmounts.step) || gridSize());
+
+// The selection nudged: objects (several together), a gadget (a light, a drop,
+// a ramp, a sign...), or a junction.
 function nudge(dx, dz) {
+  if (group.length) return applyGroup(groupMove({ dx, dz }));
+  if (!selected && feature?.type === 'gadget') {
+    const g = session.gadgets().find((q) => q.id === feature.id);
+    if (!g) return;
+    const [x, z] = [Math.round((g.x + dx) * 100) / 100, Math.round((g.z + dz) * 100) / 100];
+    if (session.setGadget(g.id, { x, z, up: session.topAt(x, z) })) changed(false);
+    feature = gadgetFeature(g.id);
+    return showOverlay();
+  }
+  if (!selected && feature?.type === 'node' && feature.movable) {
+    const [x, z] = [feature.x + dx, feature.z + dz];
+    const name = feature.name;
+    return editFeature('Moving the junction…', () => ({ plan: moveNode(session, name, x, z) }), [x, z], () => nodeProblem(session, name));
+  }
   if (!selected || !canMove(session.item(selected))) return;
   const p = session.pose(selected);
   if (session.place(selected, p.x + dx, p.z + dz, p.yaw)) changed();
 }
 
 function removeSelected() {
+  if (group.length) {
+    if (session.removeMany(group)) {
+      const objects = group.some((t) => t.key);
+      group = [];
+      changed(objects);
+    }
+    return;
+  }
   if (feature) return deleteFeature();
   if (selected && session.remove(selected)) {
     selected = null;
@@ -1499,6 +2149,19 @@ function removeSelected() {
 }
 
 function duplicate() {
+  // (Several, or a gadget on its own.)
+  if (group.length || (!selected && feature?.type === 'gadget')) {
+    const list = group.length ? group : selection();
+    // (What's locked can be moved and deleted, not copied: left out.)
+    const open = list.filter((t) => !t.key || !lockOf(specialOfType(session.item(t.key).t)));
+    if (open.length < list.length) toast('Some of them are locked: those can be moved or deleted, but not copied yet.');
+    const copies = session.duplicateMany(open, gridSize() * 4);
+    if (copies.length) {
+      changed(copies.some((t) => t.key));
+      setSelection(copies);
+    }
+    return;
+  }
   if (!selected || !canMove(session.item(selected))) return;
   const lock = lockOf(specialOfType(session.item(selected).t));
   if (lock) return toast(`Locked: it can be moved or deleted, but not copied yet. To unlock it: ${lock}.`);
@@ -1506,10 +2169,445 @@ function duplicate() {
   changed();
 }
 
+// --- Copy and paste, and the right-click menu ------------------------------------------
+// Copy (Ctrl+C, or Copy on the menu) takes what's selected and starts placing
+// it, as if it were picked in the Objects list: its ghost under the cursor, a
+// click places one (as many as you like), Space or Esc stops. Paste (Ctrl+V)
+// places what was copied last, again. One object comes as it is (its style,
+// settings, length and turn); a gadget with its settings; several together, as
+// they stood, turned together (the wheel, Q/E).
+
+// The clipboard: { things: [{ from, dx, dz, yaw, dy, len, set } | { gadget: its settings, dx, dz, yaw }] },
+// each from the middle of them all.
+let clip = null;
+let rmb = null; // the right button pressed: where, when, how far the mouse has gone since (a click opens the menu)
+
+function copySelection(at = null, cut = false) {
+  const list = selection();
+  if (!list.length) return toast(`Select something to ${cut ? 'cut' : 'copy'}: click it, or drag a box round several.`);
+  // (What's locked can be moved and deleted, not copied: left out.)
+  const open = list.filter((t) => !t.key || !lockOf(specialOfType(session.item(t.key).t)));
+  if (open.length < list.length) toast(open.length ? 'Some of them are locked: those can be moved or deleted, but not copied yet.' : 'Locked: it can be moved or deleted, but not copied yet.');
+  if (!open.length) return;
+  const members = open.map((t) => ({ ...t, p: poseOf(t) }));
+  const [cx, cz] = middleOfThings(members);
+  clip = {
+    things: members.map(({ key, gadget, p }) => {
+      if (gadget) {
+        const { id: _id, x, z, ...g } = structuredClone(session.gadgets().find((q) => q.id === gadget));
+        return { gadget: g, dx: x - cx, dz: z - cz, yaw: g.yaw || 0 };
+      }
+      return { from: session.source(key), dx: p.x - cx, dz: p.z - cz, yaw: p.yaw, dy: p.dy || 0, len: session.addOf(key)?.len || 0, set: session.settingsOf(key) };
+    }),
+  };
+  // (Cut (Ctrl+X): copied, then taken off the map; placing them puts them back somewhere.)
+  if (cut && session.removeMany(open)) {
+    selected = feature = null;
+    group = [];
+    changed(open.some((t) => t.key));
+  }
+  paste(at);
+}
+
+// Places what was copied (at: where its ghost starts, else under the cursor).
+function paste(at = null) {
+  if (!clip) return toast('Nothing copied yet: select something, then Ctrl+C (or right-click it: Copy).');
+  if (tool !== 'select') setTool('select');
+  placing = placingModel = pasting = null;
+  placingGadget = placingPreset = null;
+  linking = null;
+  lineFrom = null;
+  runPts = [];
+  ghostAt = at;
+  const one = clip.things.length === 1 ? clip.things[0] : null;
+  if (!one) {
+    pasting = clip;
+    placeYaw = 0;
+  } else if (one.gadget) {
+    // (A gadget: as if picked in the list, with its own settings and turn.)
+    const { type, yaw, up: _up, ...set } = one.gadget;
+    placingGadget = type;
+    placingPreset = set;
+    placeYaw = yaw || 0;
+  } else {
+    // (An object: as if picked in the list, and shown picked there, but as it was.)
+    const src = placingSourceOf(one.from);
+    const found = listedAs(src, one.from);
+    placingModel = found?.model || null;
+    placing = { ...(found?.style || {}), name: found?.style?.name || nameOf(src), from: one.from, copied: { set: one.set, len: one.len } };
+    placeYaw = one.yaw;
+  }
+  renderCatalogue();
+  showOverlay();
+  hint();
+}
+
+// The Objects list's model and style an object is (this map's own, or another
+// district's), or null if it isn't listed.
+function listedAs(src, from) {
+  const district = typeof from === 'string' ? null : from.district;
+  for (const m of modelList.values()) {
+    const style = m.styles.find((e) => e.t === src.t && (e.kind || null) === (src.kind || null) && (e.district || null) === district);
+    if (style) return { model: m, style };
+  }
+  return null;
+}
+
+// Where each of several pasted together goes, at (their middle there), turned placeYaw together.
+function pastePoses(at) {
+  const [c, sn] = [Math.cos(placeYaw), Math.sin(placeYaw)];
+  return pasting.things.map((t) => {
+    const turns = !(t.gadget && NO_TURN.has(t.gadget.type));
+    return { ...t, x: at.x + t.dx * c + t.dz * sn, z: at.z - t.dx * sn + t.dz * c, yaw: t.yaw + (turns ? placeYaw : 0) };
+  });
+}
+
+// Their ghosts, each as it was (its height off the ground too).
+function pasteGhosts() {
+  for (const p of pastePoses(ghostAt)) {
+    if (p.gadget) {
+      gadgetGhost({ ...p.gadget, x: p.x, z: p.z, yaw: p.yaw });
+      continue;
+    }
+    const y = H(p.x, p.z) + (p.dy || 0);
+    const model = ghostModel(p.from, { ...p.set, ...(p.len ? { len: p.len } : {}) });
+    if (!model) {
+      const src = placingSourceOf(p.from);
+      const fb = footBox(src);
+      box({ x: p.x, z: p.z, w: fb.w, d: fb.d, yaw: fb.yaw + p.yaw }, y, src.h || 2, 0x05d9e8, 0.25);
+      continue;
+    }
+    const g = model.view.clone();
+    g.matrixAutoUpdate = false;
+    g.matrix.makeTranslation(-model.px, 0, -model.pz).premultiply(new THREE.Matrix4().makeRotationY(p.yaw)).premultiply(new THREE.Matrix4().makeTranslation(p.x, y - model.ground, p.z));
+    ghostLayer.add(g);
+  }
+}
+
+// The right-click menu: a right-click (not held to look round) on something
+// selects it (if it wasn't already), then offers what can be done.
+const menu = document.createElement('div');
+menu.id = 'ctx-menu';
+menu.hidden = true;
+document.body.append(menu);
+let menuAt = null; // the ground where the menu was opened (Paste puts the ghost there)
+
+function openMenu(x, y, fromList = false) {
+  if (!session) return;
+  setRay({ clientX: x, clientY: y });
+  if (!fromList && tool === 'select' && !placing && !placingGadget && !pasting) {
+    const gp = groundHit();
+    const gid = gp ? gadgetAt(gp.x, gp.z) : null;
+    const hit = gid ? null : meshHit();
+    const key = hit ? session.pick(hit.x, hit.z, hit.y) : null;
+    const thing = gid ? { gadget: gid } : key && canMove(session.item(key)) ? { key } : null;
+    if (thing && !selection().some((q) => sameThing(q, thing))) setSelection([thing]);
+  }
+  const g = fromList ? null : groundHit();
+  menuAt = g ? { x: snap(g.x), z: snap(g.z), y: null } : null;
+  const has = selection().length > 0;
+  const rows = [
+    ['copy', 'Copy', 'Ctrl+C', has],
+    ['cut', 'Cut', 'Ctrl+X', has],
+    ['paste', 'Paste', 'Ctrl+V', !!clip],
+    null,
+    ['duplicate', 'Duplicate', 'Ctrl+D', has],
+    ['focus', 'Look at it', 'F', has || !!feature],
+    ['delete', 'Delete', keyName(binding.delete[0]), has || !!feature],
+  ];
+  menu.innerHTML = rows.map((r) => (r ? `<button data-act="${r[0]}"${r[3] ? '' : ' disabled'}><span>${r[1]}</span><kbd>${esc(r[2])}</kbd></button>` : '<hr />')).join('');
+  menu.hidden = false;
+  // (Kept on the screen.)
+  const b = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(4, Math.min(x, innerWidth - b.width - 4))}px`;
+  menu.style.top = `${Math.max(4, Math.min(y, innerHeight - b.height - 4))}px`;
+}
+
+function closeMenu() {
+  menu.hidden = true;
+}
+
+menu.addEventListener('contextmenu', (e) => e.preventDefault());
+menu.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-act]');
+  if (!b || b.disabled) return;
+  closeMenu();
+  if (b.dataset.act === 'copy') copySelection(menuAt);
+  else if (b.dataset.act === 'cut') copySelection(menuAt, true);
+  else if (b.dataset.act === 'paste') paste(menuAt);
+  else if (b.dataset.act === 'focus') focus();
+  else if (b.dataset.act === 'duplicate') duplicate();
+  else removeSelected();
+});
+// (A click anywhere else closes it; a left click on the map does only that.)
+window.addEventListener('mousedown', (e) => {
+  if (menu.hidden || menu.contains(e.target)) return;
+  closeMenu();
+  if (e.button === 0 && e.target === canvas) {
+    e.stopPropagation();
+    e.preventDefault();
+  }
+}, true);
+
+// --- On this map: the right bar's list -----------------------------------------------
+// Everything on the map, by name (objects and gadgets), under what's selected.
+// As in Windows Explorer: a click selects one (and looks at it), Ctrl+click adds
+// or takes one out, Shift+click selects everything from the last one clicked;
+// ↑ ↓ (Shift: several), Ctrl+A everything listed. Right-click: the menu (copy,
+// cut, paste, duplicate, delete), as on the map. Only the rows in sight are
+// drawn (a district has thousands).
+
+const ROW_H = 20;
+const LIST_H = 'tt-sdk:list-height';
+const listBox = $('obj-list');
+const listRowsEl = $('obj-list-rows');
+const collate = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' }).compare;
+const thingId = (t) => (t.key ? `k${t.key}` : `g${t.gadget}`);
+let listRows = []; // [{ id, thing, name, tag }], as listed (searched, sorted)
+let listMade = null; // (what they were made from: made again when it changes)
+let listAnchor = null; // the row a Shift+click (or Shift+arrow) runs from: its id
+let listCursor = null; // the row clicked or moved to last: its id
+let listShown = ''; // (the selection last shown: a new one is scrolled into sight)
+
+const gadgetLabel = (g) => (g.type === 'light' ? LIGHT_FIXTURES[g.fixture || GADGETS.light.fixture] || GADGETS.light.name : GADGETS[g.type].name);
+
+function makeList() {
+  const q = $('list-search').value.trim().toLowerCase();
+  const made = [session, session.layout, q, cat.length, others.length];
+  if (listMade && made.every((v, i) => v === listMade[i])) return;
+  listMade = made;
+  const names = new Map();
+  const name = (it) => {
+    const k = `${it.t}|${it.kind || ''}|${it.guest || ''}`;
+    if (!names.has(k)) names.set(k, nameOf(it));
+    return names.get(k);
+  };
+  const rows = [];
+  for (const it of session.layout.items) {
+    if (it.hidden || GROUND.has(it.t)) continue;
+    rows.push({ id: `k${it.key}`, thing: { key: it.key }, name: name(it), tag: it.key.startsWith('+') ? 'added' : '' });
+  }
+  for (const g of session.gadgets()) rows.push({ id: `g${g.id}`, thing: { gadget: g.id }, name: gadgetLabel(g), tag: `gadget ${g.id}` });
+  listRows = (q ? rows.filter((r) => r.name.toLowerCase().includes(q) || r.tag.includes(q) || r.id.slice(1).toLowerCase().includes(q)) : rows).sort((a, b) => collate(a.name, b.name) || collate(a.id, b.id));
+}
+
+// (After every refresh: what's on the map, and what's selected.)
+function showList() {
+  if (!session) {
+    listRows = [];
+    listMade = null;
+    $('list-count').textContent = '';
+    listRowsEl.innerHTML = '';
+    return;
+  }
+  makeList();
+  const sel = selection();
+  $('list-count').textContent = `${listRows.length}${$('list-search').value.trim() ? ' found' : ''}${sel.length > 1 ? ` · ${sel.length} selected` : ''}`;
+  const shown = sel.map(thingId).join(' ');
+  if (shown !== listShown) {
+    listShown = shown;
+    if (sel.length === 1) {
+      const i = listRows.findIndex((r) => r.id === shown);
+      if (i >= 0) {
+        listCursor = listRows[i].id;
+        listReveal(i);
+      }
+    }
+  }
+  drawList();
+}
+
+function drawList() {
+  if (!session) return;
+  const sel = new Set(selection().map(thingId));
+  if (!listRows.length) {
+    listRowsEl.style.height = '';
+    listRowsEl.innerHTML = `<div class="empty">${$('list-search').value.trim() ? 'Nothing on this map by that name.' : 'Nothing on this map yet.'}</div>`;
+    return;
+  }
+  listRowsEl.style.height = `${listRows.length * ROW_H}px`;
+  const first = Math.max(0, Math.floor(listBox.scrollTop / ROW_H) - 5);
+  const last = Math.min(listRows.length, Math.ceil((listBox.scrollTop + listBox.clientHeight) / ROW_H) + 5);
+  let html = '';
+  for (let i = first; i < last; i++) {
+    const r = listRows[i];
+    html += `<div class="lrow${sel.has(r.id) ? ' sel' : ''}${r.id === listCursor && document.activeElement === listBox ? ' anchor' : ''}" data-i="${i}" style="top:${i * ROW_H}px" title="${esc(r.name)}"><span>${esc(r.name)}</span>${r.tag ? `<small>${esc(r.tag)}</small>` : ''}</div>`;
+  }
+  listRowsEl.innerHTML = html;
+}
+
+// (A row brought into sight, if it's out of it.)
+function listReveal(i) {
+  const top = i * ROW_H;
+  if (top < listBox.scrollTop) listBox.scrollTop = top;
+  else if (top + ROW_H > listBox.scrollTop + listBox.clientHeight) listBox.scrollTop = top + ROW_H - listBox.clientHeight;
+}
+
+// Selected from the list: placing stops, and it's the Select tool's.
+function listSelect(list) {
+  if (placing || placingGadget || pasting) stopPlacing();
+  if (tool !== 'select') setTool('select');
+  setSelection(list);
+}
+
+function listClick(r, e) {
+  const ctrl = e.ctrlKey || e.metaKey;
+  const a = e.shiftKey ? listRows.findIndex((q) => q.id === listAnchor) : -1;
+  listCursor = r.id;
+  if (a >= 0) {
+    const b = listRows.indexOf(r);
+    const range = listRows.slice(Math.min(a, b), Math.max(a, b) + 1).map((q) => q.thing);
+    const keep = ctrl ? selection().filter((t) => !range.some((q) => sameThing(q, t))) : [];
+    return listSelect([...keep, ...range]);
+  }
+  listAnchor = r.id;
+  if (ctrl) {
+    if (placing || placingGadget || pasting) stopPlacing();
+    return toggleThing(r.thing);
+  }
+  listSelect([r.thing]);
+  focus();
+}
+
+listBox.addEventListener('scroll', () => drawList());
+listBox.addEventListener('focus', () => drawList());
+listBox.addEventListener('blur', () => drawList());
+listBox.addEventListener('mousedown', (e) => {
+  const row = e.target.closest('.lrow');
+  if (!session || e.button !== 0) return;
+  e.preventDefault(); // (no text selected; the list takes the keys)
+  listBox.focus({ preventScroll: true });
+  if (row) listClick(listRows[+row.dataset.i], e);
+});
+listBox.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  if (!session) return;
+  const r = listRows[+e.target.closest('.lrow')?.dataset.i];
+  listBox.focus({ preventScroll: true });
+  if (r && !selection().some((t) => sameThing(t, r.thing))) {
+    listAnchor = listCursor = r.id;
+    listSelect([r.thing]);
+  }
+  openMenu(e.clientX, e.clientY, true);
+});
+// (The one under the cursor, outlined on the map.)
+listBox.addEventListener('mousemove', (e) => {
+  const key = listRows[+e.target.closest('.lrow')?.dataset.i]?.thing.key || null;
+  if (session && key !== hovered) {
+    hovered = key;
+    showOverlay();
+  }
+});
+listBox.addEventListener('mouseleave', () => {
+  if (session && hovered) {
+    hovered = null;
+    showOverlay();
+  }
+});
+// ↑ ↓ Page Up/Down Home End (Shift: from the anchor), Ctrl+A, Enter looks at it.
+// (Taken here, before the map's own keys: the arrows don't nudge while the list has them.)
+listBox.addEventListener('keydown', (e) => {
+  if (!session || !listRows.length) return;
+  const ctrl = e.ctrlKey || e.metaKey;
+  if (ctrl && e.code === 'KeyA') {
+    e.preventDefault();
+    e.stopPropagation();
+    return listSelect(listRows.map((r) => r.thing));
+  }
+  if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+    e.preventDefault();
+    e.stopPropagation();
+    return focus();
+  }
+  const page = Math.max(1, Math.floor(listBox.clientHeight / ROW_H) - 1);
+  const step = { ArrowUp: -1, ArrowDown: 1, PageUp: -page, PageDown: page, Home: -Infinity, End: Infinity }[e.code];
+  if (step === undefined || ctrl || e.altKey) return;
+  e.preventDefault();
+  e.stopPropagation();
+  let at = listRows.findIndex((r) => r.id === listCursor);
+  if (at < 0) at = step > 0 ? -1 : listRows.length;
+  const i = Math.max(0, Math.min(listRows.length - 1, at + step));
+  listCursor = listRows[i].id;
+  listReveal(i);
+  const a = e.shiftKey ? listRows.findIndex((r) => r.id === listAnchor) : -1;
+  if (a >= 0) return listSelect(listRows.slice(Math.min(a, i), Math.max(a, i) + 1).map((r) => r.thing));
+  listAnchor = listCursor;
+  listSelect([listRows[i].thing]);
+  focus();
+});
+// (Clicked elsewhere, but for the menu: the keys are the map's again.)
+window.addEventListener('mousedown', (e) => {
+  if (document.activeElement === listBox && !listBox.contains(e.target) && !menu.contains(e.target)) listBox.blur();
+}, true);
+
+$('list-search').addEventListener('input', () => {
+  $('list-search-clear').hidden = !$('list-search').value;
+  listBox.scrollTop = 0;
+  showList();
+});
+$('list-search-clear').addEventListener('click', () => {
+  $('list-search').value = '';
+  $('list-search-clear').hidden = true;
+  showList();
+  $('list-search').focus();
+});
+
+// The split between the selection and the list: dragged (and kept).
+try {
+  const h = Number(localStorage.getItem(LIST_H));
+  if (h > 0) $('scene-list').style.height = `${h}px`;
+} catch {
+  // (The default, then.)
+}
+$('list-split').addEventListener('mousedown', (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  const [box, split] = [$('scene-list'), $('list-split')];
+  const [y0, h0] = [e.clientY, box.offsetHeight];
+  split.classList.add('on');
+  const move = (ev) => {
+    box.style.height = `${Math.max(90, Math.min($('right').clientHeight - 80, h0 + y0 - ev.clientY))}px`;
+    drawList();
+  };
+  const up = () => {
+    removeEventListener('mousemove', move);
+    removeEventListener('mouseup', up);
+    split.classList.remove('on');
+    try {
+      localStorage.setItem(LIST_H, String(box.offsetHeight));
+    } catch {
+      // (Kept for this session only.)
+    }
+  };
+  addEventListener('mousemove', move);
+  addEventListener('mouseup', up);
+});
+addEventListener('resize', () => drawList());
+
+// Done placing objects or gadgets (Space, or Esc): what was placed last stays selected.
+function stopPlacing() {
+  placing = null;
+  ghostAt = null;
+  lineFrom = null;
+  runPts = [];
+  placingGadget = placingPreset = null;
+  pasting = null;
+  renderCatalogue();
+  showOverlay();
+  hint();
+}
+
 function placeEntry(entry, g, e, dropped) {
-  const key = session.add(entry.from, snap(g.x, e), snap(g.z, e), placeYaw);
+  // (Where the ghost is: on the ground or on top of something; its bottom there.)
+  const at = !dropped && ghostAt ? ghostAt : { x: snap(g.x, e), z: snap(g.z, e), y: null };
+  const up = at.y === null || at.y === undefined ? 0 : at.y - H(at.x, at.z);
+  // (A copy (Copy, Paste): as it was, its settings, length and turn; else as the list has it.)
+  const c = entry.copied;
+  const src = placingSourceOf(entry.from);
+  const key = session.addMany(entry.from, [[at.x, at.z, placeYaw + (c ? 0 : squareTurn(src)), c?.len || 0]], up - (ghostModel(entry.from, ghostSet(entry))?.drop || 0), c ? c.set : placeDefaults(src))[0];
   selected = key;
-  if (dropped || !e.shiftKey) {
+  // (Clicked: it keeps placing, more of the same, until Space or Esc; dragged in from the list: just the one.)
+  if (dropped) {
     placing = null;
     ghostAt = null;
     renderCatalogue();
@@ -1519,17 +2617,28 @@ function placeEntry(entry, g, e, dropped) {
 
 // (The selected object; or a light, drop, gadget, junction or site.)
 function focus() {
+  if (group.length) {
+    const d = groupMove();
+    const reach = Math.max(10, ...d.group.map((m) => Math.hypot(m.p.x - d.cx, m.p.z - d.cz)));
+    cam.pitch = Math.min(cam.pitch, -0.35);
+    const fw = forward();
+    const dist = Math.max(25, reach * 2.4);
+    [cam.x, cam.z, cam.y] = [d.cx - fw.x * dist, d.cz - fw.z * dist, H(d.cx, d.cz) - fw.y * dist];
+    return;
+  }
   const it = selected && session.item(selected);
   const spot = !it && feature && typeof feature.x === 'number';
   if (!it && !spot) return;
   const fb = it ? footBox(it) : { x: feature.x, z: feature.z, w: 2 * (feature.r || 4), d: 2 * (feature.r || 4) };
-  const h = it ? it.h || 2 : 4;
+  // (Its height as drawn, where it's been drawn: an item's h isn't always one.)
+  const tall = it ? session.heightOf(it) : null;
+  const h = tall ? tall.h : 4;
   const dist = Math.max(25, Math.max(fb.w, fb.d, h) * 2.2);
   cam.pitch = Math.min(cam.pitch, -0.35);
   const f = forward();
   cam.x = fb.x - f.x * dist;
   cam.z = fb.z - f.z * dist;
-  cam.y = (it ? session.baseY(it) : H(fb.x, fb.z)) + h / 2 - f.y * dist;
+  cam.y = (tall ? tall.y0 : H(fb.x, fb.z)) + h / 2 - f.y * dist;
 }
 
 function toggleTop() {
@@ -1557,8 +2666,7 @@ function nameOf(it) {
 // district's list takes a second or two to make the first time, so they're
 // made in the background, one at a time, and kept in this browser.
 
-const OTHERS_VERSION = 1; // (bump when what an object carries changes)
-const entryOf = (uid) => cat.find((c) => c.uid === uid) || others.find((c) => c.uid === uid) || null;
+const OTHERS_VERSION = 3; // (bump when what an object carries changes)
 
 function loadOthers() {
   others = [];
@@ -1626,23 +2734,29 @@ function refresh() {
 
   const it = selected && session.item(selected);
   const ins = $('inspector');
-  if (feature) featureInspector(ins);
+  if (group.length) {
+    ins.innerHTML = `<h3>${group.length} selected</h3><p class="note">They move and turn together: drag any of them, or the ring round them.</p>`;
+  } else if (feature) featureInspector(ins);
   else if (!it) {
     ins.innerHTML = `<p class="note">Click an object to select it. Drag it to move it.<br><br>Pick an object on the left, then click in the world to place it (or drag it in).</p>`;
   } else {
     const p = session.pose(selected);
     const movable = canMove(it);
     const moved = !selected.startsWith('+') && doc.edits.move[selected];
-    const field = (id, label, value, step) => `<label for="${id}">${label}</label><input id="${id}" type="number" step="${step}" value="${+value.toFixed(3)}" ${movable ? '' : 'disabled'} />`;
+    // (A copy of a fence or wall: how long it is.)
+    const add = session.addOf(selected);
+    const own = add && (add.item || session.base.get(add.from));
+    const long = own && runnable(own) ? add.len || longSide(own).len : null;
     ins.innerHTML = `
       <h3>${esc(nameOf(it))}</h3>
       <div class="key">${esc(selected.startsWith('+') ? `copy of ${sourceName(session.source(selected))}` : selected)}</div>
       <div class="grid">
-        ${field('in-x', 'x (m)', p.x, 0.5)}
-        ${field('in-z', 'z (m)', p.z, 0.5)}
-        ${field('in-turn', 'turn (°)', (p.yaw * 180) / Math.PI, 15)}
-        ${field('in-lift', 'lift (m)', p.dy, 0.25)}
+        ${sliderPair('in-x', 'x', Math.floor(p.x - 200), Math.ceil(p.x + 200), 0.5, ' m', +p.x.toFixed(1), movable ? '' : 'disabled')}
+        ${sliderPair('in-z', 'z', Math.floor(p.z - 200), Math.ceil(p.z + 200), 0.5, ' m', +p.z.toFixed(1), movable ? '' : 'disabled')}
+        ${sliderPair('in-turn', 'turn', 0, 359, 1, '°', Math.round(((((p.yaw * 180) / Math.PI) % 360) + 360) % 360), movable ? '' : 'disabled')}
       </div>
+      <label>Lift <input type="range" id="in-lift" min="${Math.min(-10, Math.floor(p.dy))}" max="${Math.max(30, Math.ceil(p.dy))}" step="0.25" value="${+p.dy.toFixed(2)}" ${movable ? '' : 'disabled'} /><input class="num" id="in-lift-v" data-for="in-lift" data-unit=" m" inputmode="decimal" /></label>
+      ${long ? `<label>Length <input type="range" id="in-len" min="0.5" max="${Math.max(400, Math.ceil(long))}" step="0.5" value="${+long.toFixed(1)}" /><input class="num" id="in-len-v" data-for="in-len" data-unit=" m" inputmode="decimal" /></label>` : ''}
       <div class="row">
         <button id="b-left" title="Turn 15° (Q; Shift+Q: 1°)">⟲ 15°</button>
         <button id="b-right" title="Turn the other way 15° (E; Shift+E: 1°)">⟳ 15°</button>
@@ -1651,7 +2765,9 @@ function refresh() {
         ${moved ? '<button id="b-reset">Put back</button>' : ''}
         <button id="b-del" class="danger" title="Delete">Delete</button>
       </div>
+      ${optionsHtml(it)}
       ${LINKED[it.t] ? `<p class="note">${esc(LINKED[it.t])}</p>` : ''}`;
+    optionsWire(it);
     const read = () => [Number($('in-x').value), Number($('in-z').value), (Number($('in-turn').value) * Math.PI) / 180, Number($('in-lift').value)];
     for (const id of ['in-x', 'in-z', 'in-turn', 'in-lift']) {
       $(id)?.addEventListener('change', () => {
@@ -1659,6 +2775,13 @@ function refresh() {
         if ([x, z, yaw, dy].every(Number.isFinite) && session.place(selected, x, z, yaw, dy)) changed();
       });
     }
+    if ($('in-len-v')) numberBox($('in-len-v'));
+    for (const id of ['in-x', 'in-z', 'in-turn', 'in-lift']) if ($(`${id}-v`)) numberBox($(`${id}-v`));
+    $('in-len')?.addEventListener('change', () => {
+      const v = Math.min(400, Math.max(0.5, Number($('in-len').value)));
+      if (Number.isFinite(v) && session.setLength(selected, Math.abs(v - longSide(own).len) < 0.001 ? null : v)) changed();
+      else refresh();
+    });
     $('b-dup').addEventListener('click', duplicate);
     $('b-left').addEventListener('click', (ev) => turn(1, ev.shiftKey));
     $('b-right').addEventListener('click', (ev) => turn(-1, ev.shiftKey));
@@ -1673,12 +2796,18 @@ function refresh() {
     <div>Deleted: ${e.remove.length} · Moved: ${Object.keys(e.move).length} · Added: ${e.add.length}</div>
     ${lost ? `<div class="warn">${lost} edit${lost > 1 ? 's' : ''} lost ${lost > 1 ? 'their objects' : 'its object'} (the district changed since).</div>` : ''}
     <div>${session.map.style.name || doc.name}: ${session.layout.items.filter((it) => !it.hidden).length} objects</div>`;
+  showList();
   hint();
 }
+
+// What's being placed, by name (a light by its fixture).
+const placingName = () => (placingPreset?.fixture ? LIGHT_FIXTURES[placingPreset.fixture] : GADGETS[placingGadget].name);
 
 function hint() {
   $('hint').textContent = !session
     ? 'Open a built-in district or a .ttmap file to start'
+    : linking
+      ? `Linking to trigger pad ${linking}: click a lift pad, gate, spinning bar or moving block to link it · Link a gadget again, or Esc, stops`
     : tool === 'arena'
       ? arenaDraw
         ? 'Arena: click round its edge (it snaps to blocks, sites, kerbs and arenas) · click the first point, or Space, to close it · Backspace takes a point back · Esc stops'
@@ -1693,25 +2822,78 @@ function hint() {
       ? roadStage === 'shaping'
         ? 'Road: drag a blue handle to curve that stretch (double-click it: straight), an amber one to move a point · Build street (or Enter) · Esc cancels'
         : 'Road: click to place points (15° steps; Alt: any angle) · Space or double-click: stop placing · Backspace takes a point back · Esc cancels'
+      : tool === 'bridge'
+        ? bridgePts.length
+          ? 'Bridge: click along its path · double-click, Space or Enter builds it · Backspace takes a point back · Esc stops'
+          : 'Bridge: click along its path to draw one (its settings on the left) · click a bridge to select it (Delete removes it) · Ctrl+Z undo'
       : tool === 'lot'
         ? 'Lot: click a block to make it the chosen kind · 1 back to Select · Ctrl+Z undo'
         : tool === 'height'
           ? `Raise / lower: mouse wheel over the ground (or ${keyName(binding.liftUp[0])} / ${keyName(binding.liftDown[0])}), a grid step up or down (hold ${keyName(binding.liftFine[0])}: 25 cm) · hold the right button to zoom and fly · [ ] size · 1 back to Select · Ctrl+Z undo`
           : tool !== 'select'
           ? `${TOOL_NAMES[tool]}: hold the left button and move${ANGLED.has(tool) && Number($('angle').value) ? ' (angled: rising the way you look)' : ''} · [ ] size · 1 back to Select · Ctrl+Z undo`
+          : pasting
+            ? `Pasting ${pasting.things.length} things together: click where they go (as many times as you like) · wheel or Q/E to turn them · Alt: no snap · Space or Esc to stop`
           : placingGadget
-            ? `Placing a ${GADGETS[placingGadget].name.toLowerCase()}: click where it goes (Shift: keep placing) · wheel or Q/E to turn · Esc to stop`
+            ? `Placing ${/^[aeiou]/i.test(placingName()) ? 'an' : 'a'} ${placingName().toLowerCase()}: click where each goes${NO_TURN.has(placingGadget) ? '' : ' · wheel or Q/E to turn'} · Space or Esc to stop`
+            : runMode()
+            ? `Placing ${placing.name} in a run: click each post (15° steps; Alt: any angle) · click the first post to close it · Space, Enter or double-click builds it · Backspace takes a post back · Esc ${runPts.length ? 'starts again' : 'stops'}`
             : placing && $('place-mode').value === 'line'
-            ? `Placing ${placing.name} along a line: click ${lineFrom ? 'where it ends' : 'where it starts'} · wheel or Q/E to turn · Esc to stop`
+            ? `Placing ${placing.name} along a line: click ${lineFrom ? 'where it ends' : 'where it starts'} · wheel or Q/E to turn · Space or Esc to stop`
             : placing && $('place-mode').value === 'scatter'
-              ? `Scattering ${placing.name}: hold the left button and brush (spacing sets how far apart) · Esc to stop`
+              ? `Scattering ${placing.name}: hold the left button and brush (spacing sets how far apart) · Space or Esc to stop`
               : placing
-    ? `Placing ${placing.name}: click to place (Shift: keep placing) · wheel or Q/E to turn · Alt: no snap · Esc to stop`
+    ? `Placing ${placing.name}: click to place, as many as you like · wheel or Q/E to turn · Alt: no snap · Space or Esc to stop${runnable(placingSource().src) ? ' · Place: In a run puts them post to post, like a road' : ''}`
     : drag
       ? 'Wheel or Q/E to turn · Alt: no snap'
+      : group.length
+        ? `${group.length} selected: drag any of them to move them all · the ring or Q/E turns them · arrows nudge · Del delete · Ctrl+C copy · Ctrl+X cut · Ctrl+D duplicate · right-click: menu · Ctrl+click adds or takes one out · Esc deselect`
       : selected
-        ? 'Drag to move · Q/E turn (Shift: 1°) · arrows nudge · Del delete · Ctrl+D copy · F focus · Esc deselect'
-        : 'Click to select · hold right button + WASD to fly (Space up, Ctrl down) · middle drag to pan · wheel to zoom · Tab top view · P test drive';
+        ? 'Drag to move · Q/E turn (Shift: 1°) · arrows nudge · Del delete · Ctrl+C copy · Ctrl+X cut · Ctrl+D duplicate · right-click: menu · Ctrl+click another to select several · F focus · Esc deselect'
+        : 'Click to select · drag a box to select several (Ctrl: add) · hold right button + WASD to fly (Space up, Ctrl down) · middle drag to pan · wheel to zoom · Tab top view · P test drive';
+}
+
+// An object's options (sdk/objectOptions.js): its colour, light, width, text…
+function optionsHtml(it) {
+  const list = OBJECT_OPTIONS[it.t];
+  if (!list || !canMove(it)) return '';
+  const set = session.settingsOf(selected);
+  const val = (k) => set[k] ?? optionDefault(it, k);
+  const field = ([k, label, kind, a, b, step, unit]) => {
+    const id = `op-${k}`;
+    if (kind === 'color') return `<label for="${id}">${label}</label><input id="${id}" data-op="${k}" type="color" value="${esc(String(val(k)))}" />`;
+    if (kind === 'select') return `<label for="${id}">${label}</label><select id="${id}" data-op="${k}">${Object.entries(a).map(([v, n]) => `<option value="${esc(v)}"${String(val(k)) === v ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+    if (kind === 'text') return `<label for="${id}">${label}</label><input id="${id}" data-op="${k}" type="text" maxlength="40" value="${esc(String(val(k)))}" />`;
+    // (A slider with its number box, typed into as well; wide enough for what it is now.)
+    const v = Number(val(k)) || a;
+    return `<label>${label} <input type="range" id="${id}" data-op="${k}" data-kind="range" min="${Math.min(a, v)}" max="${Math.max(b, Math.ceil(v))}" step="${step}" value="${v}" /><input class="num" id="${id}-v" data-for="${id}" data-unit="${unit || ''}" inputmode="decimal" /></label>`;
+  };
+  const own = Object.keys(set).length;
+  const pairs = list.filter((o) => o[2] !== 'range');
+  const sliders = list.filter((o) => o[2] === 'range');
+  return `<h4>Options</h4>${pairs.length ? `<div class="grid">${pairs.map(field).join('')}</div>` : ''}${sliders.map(field).join('')}${own ? '<div class="row"><button id="op-reset" title="Back to how it was">Reset options</button></div>' : ''}`;
+}
+
+function optionsWire(it) {
+  const list = OBJECT_OPTIONS[it.t];
+  if (!list) return;
+  for (const el of document.querySelectorAll('#inspector [data-op]')) {
+    el.addEventListener('change', () => {
+      const o = list.find((q) => q[0] === el.dataset.op);
+      let v = el.value;
+      if (el.dataset.kind === 'range') {
+        v = Number(v);
+        if (!Number.isFinite(v)) return refresh();
+        v = Math.min(Number(el.max), Math.max(Number(el.min), v));
+      }
+      if (session.setSettings(selected, { [o[0]]: v })) changed();
+    });
+  }
+  document.querySelectorAll('#inspector input.num[data-for^="op-"]').forEach(numberBox);
+  $('op-reset')?.addEventListener('click', () => {
+    const none = Object.fromEntries(Object.keys(session.settingsOf(selected)).map((k) => [k, null]));
+    if (session.setSettings(selected, none)) changed();
+  });
 }
 
 // The Creator: a special asset stays locked until its trigger is met
@@ -1729,33 +2911,112 @@ function renderCatalogue() {
   const from = $('from').value || 'all';
   const pool = from === 'here' ? cat : from === 'all' ? [...cat, ...others] : others.filter((e) => e.district === from);
   const short = (e) => (e.districtName || 'this map').replace(/^The /, '').split(' ')[0];
-  const html = CATEGORIES.map((c) => {
-    const list = pool.filter((e) => e.category === c && (!q || e.name.toLowerCase().includes(q) || (e.districtName || '').toLowerCase().includes(q)));
-    if (!list.length) return '';
-    return `<h4>${c}</h4>${list
-      .map((e) => {
-        const lock = districtLock(e, career) || lockOf(specialOfType(e.t), career);
-        const tip = `${e.count} in ${e.districtName || 'this map'} · ${e.size.map((v) => v.toFixed(1)).join(' × ')} m`;
-        return `<div class="entry${placing === e ? ' on' : ''}${lock ? ' locked' : ''}" draggable="${!lock}" data-id="${esc(e.uid)}" title="${esc(tip)}"${lockAttrs(lock)}><span>${lock ? '🔒 ' : ''}${esc(e.name)}</span><i>${from === 'all' ? esc(short(e)) : e.count}</i></div>`;
+  // (The same model from every district, or by another name, is one entry: its styles picked on the right.)
+  modelList = new Map(models(pool).map((m) => [m.key, m]));
+  const objectsIn = (c) => [...modelList.values()].filter((m) => m.category === c && (!q || m.name.toLowerCase().includes(q) || m.styles.some((e) => e.name.toLowerCase().includes(q) || (e.districtName || '').toLowerCase().includes(q))));
+  const gadgets = Object.entries(GADGETS)
+    .filter(([, g]) => !g.hidden)
+    .flatMap(([t, g]) => (t === 'light' ? Object.entries(LIGHT_FIXTURES).map(([f, name]) => ({ t, f, name, about: LIGHT_ABOUT[f], group: g.group })) : [{ t, f: null, name: g.name, about: g.about, group: g.group }]))
+    .filter((e) => !q || e.name.toLowerCase().includes(q) || (e.f && 'light'.includes(q)));
+  // (Each section: what's placed in it first, then the districts' objects.)
+  const html = SECTIONS.map((c) => {
+    const placed = gadgets.filter((e) => GADGET_SECTION[e.group || 'Gadgets'] === c);
+    const list = objectsIn(c);
+    if (!placed.length && !list.length) return '';
+    return `<h4>${c}</h4>${placed.map(({ t, f, name, about }) => {
+      const lock = lockOf(specialOfGadget(t), career);
+      const on = placingGadget === t && (placingPreset?.fixture ?? null) === f;
+      return `<div class="entry${on ? ' on' : ''}${lock ? ' locked' : ''}" data-gadget="${t}"${f ? ` data-fixture="${f}"` : ''} title="${esc(about)}"${lockAttrs(lock)}><span>${lock ? '🔒 ' : ''}${esc(name)}</span></div>`;
+    }).join('')}${list
+      .map((m) => {
+        const locks = m.styles.map((e) => styleLock(e, career));
+        const lock = locks.every(Boolean) ? locks[0] : null;
+        const tip = m.styles.map((e) => `${e.districtName || 'This map'}: ${e.name}, ${e.size.map((v) => v.toFixed(1)).join(' × ')} m (${e.count} there)`).join('\n');
+        const n = m.styles.length;
+        const side = n > 1 ? `${n} styles` : from === 'all' ? short(m.styles[0]) : m.styles[0].count;
+        return `<div class="entry${placingModel?.key === m.key && placing ? ' on' : ''}${lock ? ' locked' : ''}" draggable="${!lock}" data-model="${esc(m.key)}" title="${esc(tip)}"${lockAttrs(lock)}><span>${lock ? '🔒 ' : ''}${esc(m.name)}</span><i>${esc(String(side))}</i></div>`;
       })
       .join('')}`;
   }).join('');
-  const gadgets = Object.entries(GADGETS).filter(([, g]) => !q || g.name.toLowerCase().includes(q));
-  const gadgetHtml = GROUPS.map((group) => {
-    const list = gadgets.filter(([, g]) => (g.group || 'Gadgets') === group);
-    return list.length ? `<h4>${group}</h4>${list.map(([t, g]) => {
-      const lock = lockOf(specialOfGadget(t), career);
-      return `<div class="entry${placingGadget === t ? ' on' : ''}${lock ? ' locked' : ''}" data-gadget="${t}" title="${esc(g.about)}"${lockAttrs(lock)}><span>${lock ? '🔒 ' : ''}${esc(g.name)}</span></div>`;
-    }).join('')}` : '';
-  }).join('');
   const loading = othersLoading && from !== 'here' ? '<p class="loading">Loading the other districts\' objects…</p>' : '';
-  $('cat').innerHTML = gadgetHtml + (html || (loading ? '' : '<p class="none">Nothing matches.</p>')) + loading;
-  $('place-opts').hidden = !placing;
+  $('cat').innerHTML = (html || (loading ? '' : '<p class="none">Nothing matches.</p>')) + loading;
+  showPlaceOpts();
+}
+
+// How it's placed (on the right, while an object is being placed): In a run only
+// for what can go in one; Spacing only along a line or scattered.
+// A style's lock (the Creator: its district, or its special asset), or null.
+const styleLock = (e, career = CREATOR ? loadCareer() : null) => districtLock(e, career) || lockOf(specialOfType(e.t), career);
+// The style of a model to place: the one picked last, else the first (this map's own come first) not locked.
+function pickStyle(m) {
+  if (!m) return null;
+  const open = m.styles.filter((e) => !styleLock(e));
+  return open.find((e) => e.uid === stylePicked.get(m.key)) || open[0] || null;
+}
+
+function showPlaceOpts() {
+  const shapes = placingGadget ? GADGET_SHAPES[placingGadget] : null;
+  $('place-opts').hidden = !placing && !shapes;
+  if (!placing && !shapes) return;
+  $('mode-row').hidden = !placing;
+  $('shape-row').hidden = !shapes;
+  if (shapes) {
+    // (A gadget with shapes: a ramp, long or a kicker.)
+    $('place-title').textContent = `Placing: ${placingName()}`;
+    $('style-row').hidden = $('spacing-row').hidden = true;
+    const on = shapeOf({ type: placingGadget, ...placingPreset });
+    $('place-shape').innerHTML = Object.entries(shapes).map(([k, sh]) => `<option value="${k}"${k === on ? ' selected' : ''}>${esc(sh.name)}</option>`).join('');
+    return;
+  }
+  const styles = placingModel?.styles.includes(placing) ? placingModel.styles : [placing];
+  $('place-title').textContent = `Placing: ${styles.length > 1 ? placingModel.name : placing.name}`;
+  $('style-row').hidden = styles.length < 2;
+  if (styles.length > 1) {
+    const career = CREATOR ? loadCareer() : null;
+    const named = new Set(styles.map((e) => e.name)).size > 1;
+    $('place-style').innerHTML = styles
+      .map((e, i) => {
+        const lock = styleLock(e, career);
+        return `<option value="${i}"${e === placing ? ' selected' : ''}${lock ? ' disabled' : ''}>${lock ? '🔒 ' : ''}${esc(e.districtName || 'This map')}${named ? ` · ${esc(e.name)}` : ''} (${e.size[0].toFixed(0)} × ${e.size[2].toFixed(0)} m)</option>`;
+      })
+      .join('');
+  }
+  const canRun = !!session && runnable(placingSource().src);
+  $('run-mode').hidden = $('run-mode').disabled = !canRun;
+  if (canRun && runWanted) $('place-mode').value = 'run';
+  else if (!canRun && $('place-mode').value === 'run') $('place-mode').value = 'one';
+  $('spacing-row').hidden = !['line', 'scatter'].includes($('place-mode').value);
 }
 
 // --- Input ------------------------------------------------------------------------
 
-$('search').addEventListener('input', renderCatalogue);
+// The search's × (only while something's typed) clears it.
+$('search').addEventListener('input', () => {
+  $('search-clear').hidden = !$('search').value;
+  renderCatalogue();
+});
+$('search-clear').addEventListener('click', () => {
+  $('search').value = '';
+  $('search-clear').hidden = true;
+  renderCatalogue();
+  $('search').focus();
+});
+$('place-style').addEventListener('change', () => {
+  const e = placingModel?.styles[Number($('place-style').value)];
+  if (!e) return;
+  placing = e;
+  stylePicked.set(placingModel.key, e.uid);
+  showPlaceOpts();
+  showOverlay();
+  hint();
+});
+$('place-shape').addEventListener('change', () => {
+  if (!placingGadget) return;
+  shapePicked.set(placingGadget, $('place-shape').value);
+  placingPreset = shapeSettings(placingGadget, $('place-shape').value);
+  showOverlay();
+  hint();
+});
 $('from').addEventListener('change', renderCatalogue);
 $('left').addEventListener('click', (e) => {
   const b = e.target.closest('button');
@@ -1787,6 +3048,11 @@ $('kind').addEventListener('change', showBrush);
 $('road-build').addEventListener('click', buildRoad);
 $('place-mode').addEventListener('change', () => {
   lineFrom = null;
+  runPts = [];
+  runHover = null;
+  runWanted = $('place-mode').value === 'run';
+  showPlaceOpts();
+  showOverlay();
   hint();
 });
 $('cat').addEventListener('click', (e) => {
@@ -1795,22 +3061,35 @@ $('cat').addEventListener('click', (e) => {
   const gEl = e.target.closest('[data-gadget]');
   if (gEl && session) {
     if (tool !== 'select') setTool('select');
-    placingGadget = placingGadget === gEl.dataset.gadget ? null : gEl.dataset.gadget;
+    const fixture = gEl.dataset.fixture || null;
+    const same = placingGadget === gEl.dataset.gadget && (placingPreset?.fixture ?? null) === fixture;
+    placingGadget = same ? null : gEl.dataset.gadget;
+    placingPreset = same || !fixture ? null : lightPreset(fixture);
+    const shapes = !same && GADGET_SHAPES[gEl.dataset.gadget];
+    if (shapes) placingPreset = shapeSettings(gEl.dataset.gadget, shapePicked.get(gEl.dataset.gadget) || Object.keys(shapes)[0]);
     placing = null;
+    pasting = null;
     placeYaw = 0;
+    ghostAt = null;
     renderCatalogue();
+    showOverlay();
     hint();
     return;
   }
   const el = e.target.closest('.entry');
   if (!el || !session) return;
-  placingGadget = null;
+  placingGadget = placingPreset = null;
+  pasting = null;
+  linking = null;
   if (el.dataset.lock) return toast(`Locked: ${el.dataset.lock}`);
-  const entry = entryOf(el.dataset.id);
+  const model = modelList.get(el.dataset.model);
   if (tool !== 'select') setTool('select');
-  placing = placing === entry ? null : entry;
+  const same = !!placing && placingModel?.key === model?.key;
+  placingModel = same ? null : model;
+  placing = same ? null : pickStyle(model);
   placeYaw = 0;
   ghostAt = null;
+  runPts = [];
   renderCatalogue();
   hint();
 });
@@ -1818,9 +3097,10 @@ $('cat').addEventListener('dragstart', (e) => {
   const el = e.target.closest('.entry');
   if (!el) return;
   if (el.dataset.lock) return e.preventDefault();
-  e.dataTransfer.setData('text/plain', el.dataset.id);
+  e.dataTransfer.setData('text/plain', el.dataset.model);
   if (tool !== 'select') setTool('select');
-  placing = entryOf(el.dataset.id);
+  placingModel = modelList.get(el.dataset.model);
+  placing = pickStyle(placingModel);
   placeYaw = 0;
 });
 canvas.addEventListener('dragover', (e) => {
@@ -1844,6 +3124,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (!session) return;
   canvas.focus();
   if (e.button === 2) {
+    rmb = { x: e.clientX, y: e.clientY, at: performance.now(), moved: 0 };
     flying = true;
     pivotUnder(e);
     canvas.requestPointerLock?.();
@@ -1885,6 +3166,26 @@ canvas.addEventListener('mousedown', (e) => {
     }
     return;
   }
+  if (tool === 'bridge') {
+    const g = groundHit();
+    if (!g) return;
+    // (Not drawing one: a click on a bridge selects it.)
+    if (!bridgePts.length && e.detail < 2) {
+      const hit = bridgeAt(g);
+      if (hit || bridgeSel) {
+        bridgeSel = hit;
+        showBridgeOpts();
+        drawBridges();
+        if (hit) return;
+      }
+    }
+    if (e.detail >= 2) return endBridge();
+    bridgePts.push([snap(g.x, e), snap(g.z, e)]);
+    showBridgeOpts();
+    drawBridges(g);
+    hint();
+    return;
+  }
   if (tool === 'lot') {
     const g = groundHit();
     if (g) setLot(g);
@@ -1899,8 +3200,16 @@ canvas.addEventListener('mousedown', (e) => {
     const g = groundHit();
     if (!g) return;
     const r = evDraft?.route;
+    if (evStage === 'cut' && r?.path) return cutClick(g);
     if ((r?.path || r?.kind === 'drag') && evStage !== 'start') {
       const at = routePointAt(g);
+      // (Ctrl+click a point: taken out.)
+      if (at !== null && (e.ctrlKey || e.metaKey) && r.path) {
+        r.path.splice(at, 1);
+        evSel = null;
+        renderEvents();
+        return previewEvent();
+      }
       if (at !== null) {
         evSel = at;
         drag = { routePoint: at, sx: e.clientX, sy: e.clientY, at: [g.x, g.z], moved: false };
@@ -1938,18 +3247,32 @@ canvas.addEventListener('mousedown', (e) => {
   if (placingGadget) {
     const g = groundHit();
     if (!g) return;
-    const id = session.addGadget(placingGadget, snap(g.x, e), snap(g.z, e), placeYaw);
-    if (!e.shiftKey) placingGadget = null;
+    // (Where its ghost is: on the ground, or up on top of something.)
+    const at = ghostAt || { x: snap(g.x, e), z: snap(g.z, e), y: null };
+    const up = upHere(at);
+    const id = session.addGadget(placingGadget, at.x, at.z, placeYaw, { ...placingPreset, ...(up ? { up } : {}) });
     renderCatalogue();
     changed(false);
     selectFeature(gadgetFeature(id));
+    return;
+  }
+  if (pasting) {
+    const g = groundHit();
+    if (!g) return;
+    const made = session.pasteMany(pastePoses(ghostAt || { x: snap(g.x, e), z: snap(g.z, e) }));
+    if (made.length) {
+      changed(made.some((t) => t.key));
+      setSelection(made);
+    }
+    hint();
     return;
   }
   if (placing) {
     const g = groundHit();
     if (!g) return;
     const mode = $('place-mode').value;
-    if (mode === 'line') {
+    if (runMode()) runClick(g, e);
+    else if (mode === 'line') {
       if (!lineFrom) lineFrom = [snap(g.x, e), snap(g.z, e)];
       else placeLine(lineFrom, [snap(g.x, e), snap(g.z, e)]);
     } else if (mode === 'scatter') {
@@ -1957,6 +3280,11 @@ canvas.addEventListener('mousedown', (e) => {
       ghostAt = { x: g.x, z: g.z };
     } else placeEntry(placing, g, e, false);
     hint();
+    return;
+  }
+  if (linking) {
+    const g = groundHit();
+    linkTo(g ? gadgetAt(g.x, g.z) : null);
     return;
   }
   // The rotation ring round the selection: drag it (its handle, or anywhere on it) to turn.
@@ -1969,21 +3297,36 @@ canvas.addEventListener('mousedown', (e) => {
   // A gadget (drawn on its own); else an object; else a junction, street or site.
   const gp = groundHit();
   const gid = gp ? gadgetAt(gp.x, gp.z) : null;
+  const hit = gid ? null : meshHit();
+  const key = hit ? session.pick(hit.x, hit.z, hit.y) : null;
+  const thing = gid ? { gadget: gid } : key && canMove(session.item(key)) ? { key } : null;
+  // (Ctrl: one in or out of the selection; or, from empty ground, a box of them added.)
+  if (e.ctrlKey) {
+    if (thing) toggleThing(thing);
+    else drag = { box: true, add: true, sx: e.clientX, sy: e.clientY, x2: e.clientX, y2: e.clientY, moved: false };
+    return;
+  }
+  // (One of several selected: they all move; let go without moving, just it's selected.)
+  if (thing && group.some((t) => sameThing(t, thing))) {
+    if (gp) drag = groupMove({ only: thing, sx: e.clientX, sy: e.clientY, ax: gp.x, az: gp.z, moved: false });
+    return;
+  }
   if (gid) {
     const f = gadgetFeature(gid);
     selectFeature(f);
     drag = { feature: f, sx: e.clientX, sy: e.clientY, ox: f.x - gp.x, oz: f.z - gp.z, x: f.x, z: f.z, yaw: 0, moved: false };
     return;
   }
-  const hit = meshHit();
-  const key = hit ? session.pick(hit.x, hit.z, hit.y) : null;
   const f = !key && hit ? featureAt(session, hit.x, hit.z) : null;
-  if (f) {
+  if (f?.type === 'node' && f.movable) {
     selectFeature(f);
-    if (f.type === 'node' && f.movable) {
-      const g = groundHit();
-      if (g) drag = { feature: f, sx: e.clientX, sy: e.clientY, ox: f.x - g.x, oz: f.z - g.z, x: f.x, z: f.z, yaw: 0, moved: false };
-    }
+    const g = groundHit();
+    if (g) drag = { feature: f, sx: e.clientX, sy: e.clientY, ox: f.x - g.x, oz: f.z - g.z, x: f.x, z: f.z, yaw: 0, moved: false };
+    return;
+  }
+  // (Empty ground, or a street or site: a click selects it, or nothing; a drag, a box.)
+  if (!key) {
+    drag = { box: true, click: f, sx: e.clientX, sy: e.clientY, x2: e.clientX, y2: e.clientY, moved: false };
     return;
   }
   select(key);
@@ -1998,6 +3341,7 @@ let hoverAt = 0;
 window.addEventListener('mousemove', (e) => {
   if (!session) return;
   if (flying) {
+    if (rmb) rmb.moved += Math.abs(e.movementX) + Math.abs(e.movementY);
     lookBy(-e.movementX * 0.003, -e.movementY * 0.003);
     return;
   }
@@ -2019,6 +3363,7 @@ window.addEventListener('mousemove', (e) => {
   if (tool === 'arena') return arenaMove(g, e);
   if (tool !== 'select' && !drag?.road && drag?.routePoint === undefined) {
     brushAt = g ? { ...g, snapped: tool === 'road' ? roadSnap([g.x, g.z], e) : null } : null;
+    if (tool === 'bridge' && bridgePts.length) drawBridges(g);
     showBrush();
     showRoad();
     showLotHover();
@@ -2027,6 +3372,17 @@ window.addEventListener('mousemove', (e) => {
   if (drag) {
     if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 4) return;
     drag.moved = true;
+    if (drag.box) {
+      [drag.x2, drag.y2] = [e.clientX, e.clientY];
+      showMarquee(drag);
+      return;
+    }
+    if (drag.group && !drag.rotating) {
+      if (g) [drag.dx, drag.dz] = [snap(g.x - drag.ax, e), snap(g.z - drag.az, e)];
+      showOverlay();
+      hint();
+      return;
+    }
     if (drag.routePoint !== undefined) {
       if (g) drag.at = [g.x, g.z];
       drawEventMarks();
@@ -2066,8 +3422,17 @@ window.addEventListener('mousemove', (e) => {
     hint();
     return;
   }
-  if (placing) {
-    ghostAt = g ? { x: snap(g.x, e), z: snap(g.z, e) } : null;
+  if (placing || placingGadget || pasting) {
+    // (One object at a time: on whatever's under the cursor, the ground or the top of something.)
+    const s = (placing && $('place-mode').value === 'one' && !runMode()) || placingGadget ? surfaceHit() : null;
+    const at = s || g;
+    ghostAt = at ? { x: snap(at.x, e), z: snap(at.z, e), y: s ? s.y : null } : null;
+    runHover = g && runMode() ? runSnap(g, e) : null;
+    showOverlay();
+    return;
+  }
+  if (linking) {
+    linkAt = g;
     showOverlay();
     return;
   }
@@ -2087,6 +3452,10 @@ window.addEventListener('mouseup', (e) => {
     flying = false;
     lookPivot = null;
     document.exitPointerLock?.();
+    // (A right-click, not a look round or a fly: the menu.)
+    const r = rmb;
+    rmb = null;
+    if (r && !r.flew && r.moved < 6 && performance.now() - r.at < 400) openMenu(r.x, r.y);
     return;
   }
   if (e.button === 1) {
@@ -2097,7 +3466,7 @@ window.addEventListener('mouseup', (e) => {
     const list = scatter;
     scatter = null;
     if (list.length) {
-      session.addMany(placing.from, list);
+      session.addMany(placing.from, list, -placingDrop(), placingDefaults());
       changed();
     } else showOverlay();
     return;
@@ -2111,6 +3480,18 @@ window.addEventListener('mouseup', (e) => {
     drag = null;
     if (d.road) return showRoad();
     if (d.arena) return arenaDrop(d);
+    if (d.box) {
+      showMarquee(null);
+      if (d.moved) return boxSelect(d);
+      if (d.click) selectFeature(d.click);
+      else if (!d.add) select(null);
+      return;
+    }
+    if (d.group) {
+      if (d.moved) return applyGroup(d);
+      if (d.only) return setSelection([d.only]);
+      return showOverlay();
+    }
     if (d.routePoint !== undefined) {
       // (A route point dropped: where it's let go, as if clicked there.)
       if (d.moved) {
@@ -2129,7 +3510,9 @@ window.addEventListener('mouseup', (e) => {
       return drawEventMarks();
     }
     if (d.moved && d.feature?.type === 'gadget') {
-      if (session.setGadget(d.feature.id, { x: Math.round(d.x * 100) / 100, z: Math.round(d.z * 100) / 100, ...(d.rotating ? { yaw: d.yaw } : {}) })) changed(false);
+      // (Moved: up onto, or down off, what's there.)
+      const [x, z] = [Math.round(d.x * 100) / 100, Math.round(d.z * 100) / 100];
+      if (session.setGadget(d.feature.id, { x, z, ...(d.rotating ? { yaw: d.yaw } : { up: session.topAt(x, z) }) })) changed(false);
       feature = gadgetFeature(d.feature.id);
       showOverlay();
       return;
@@ -2147,6 +3530,7 @@ window.addEventListener('mouseup', (e) => {
 });
 
 canvas.addEventListener('wheel', (e) => {
+  closeMenu();
   e.preventDefault();
   if (!session) return;
   if (tool === 'height' && !flying) {
@@ -2162,7 +3546,8 @@ canvas.addEventListener('wheel', (e) => {
     liftStep(dir, g, fineHeld(e));
     return;
   }
-  if (drag || placing) {
+  // (Holding the right button, the wheel zooms instead.)
+  if ((drag || placing || placingGadget || pasting) && !flying) {
     turn(e.deltaY < 0 ? 1 : -1, e.shiftKey);
     return;
   }
@@ -2175,9 +3560,14 @@ canvas.addEventListener('wheel', (e) => {
 
 window.addEventListener('keydown', (e) => {
   if (e.target.matches?.('input, select, textarea')) return;
+  if (!menu.hidden && e.code === 'Escape') {
+    e.preventDefault();
+    return closeMenu();
+  }
   keys.add(e.code);
   if (!session) return;
   if (flying) {
+    if (rmb) rmb.flew = true; // (so letting go of the right button isn't a click)
     e.preventDefault(); // WASD, Space and Ctrl fly while the right button is held
     return;
   }
@@ -2202,6 +3592,21 @@ window.addEventListener('keydown', (e) => {
     duplicate();
     return;
   }
+  if (ctrl && e.code === 'KeyC') {
+    e.preventDefault();
+    copySelection();
+    return;
+  }
+  if (ctrl && e.code === 'KeyX') {
+    e.preventDefault();
+    copySelection(null, true);
+    return;
+  }
+  if (ctrl && e.code === 'KeyV') {
+    e.preventDefault();
+    paste();
+    return;
+  }
   if (ctrl) return;
   if (tool === 'arena' && arenaKey(e)) return;
   if (tool === 'height') {
@@ -2220,8 +3625,50 @@ window.addEventListener('keydown', (e) => {
   const act = actionFor(e.code, 'edit');
   // Placing a road's points, or a race's: stop, take a point back, build (and Esc cancels a road).
   const roadPlacing = tool === 'road' && roadPts.length;
+  const bridgePlacing = tool === 'bridge' && bridgePts.length;
+  // Drawing a bridge: build it, take a point back, or (Esc) stop; Delete: the bridge selected.
+  if (tool === 'bridge') {
+    const p = actionFor(e.code, 'place');
+    if (bridgePlacing && (p || act === 'cancel')) {
+      e.preventDefault();
+      if (p === 'endPlacing' || p === 'buildRoad') return endBridge();
+      if (p === 'backPoint') bridgePts.pop();
+      else bridgePts = [];
+      showBridgeOpts();
+      drawBridges();
+      hint();
+      return;
+    }
+    if (!bridgePlacing && bridgeSel && act === 'delete') {
+      e.preventDefault();
+      if (session.removeBridge(bridgeSel)) {
+        bridgeSel = null;
+        changed(false);
+        showBridgeOpts();
+        drawBridges();
+      }
+      return;
+    }
+  }
   const racePlacing = tool === 'events' && evDraft?.route?.path;
-  const place = roadPlacing || racePlacing ? actionFor(e.code, 'place') : null;
+  const runPlacing = runPts.length && runMode();
+  const place = roadPlacing || racePlacing || runPlacing ? actionFor(e.code, 'place') : null;
+  // Placing objects or gadgets (one per click): Space stops.
+  if (!runPlacing && (placing || placingGadget || pasting) && actionFor(e.code, 'place') === 'endPlacing') {
+    e.preventDefault();
+    stopPlacing();
+    return;
+  }
+  // Placing a run's posts: build it, take a post back, or (Esc) start it again.
+  if (runPlacing && (place || act === 'cancel')) {
+    e.preventDefault();
+    if (place === 'endPlacing' || place === 'buildRoad') return buildRun();
+    if (place === 'backPoint') runPts.pop();
+    else runPts = [];
+    showOverlay();
+    hint();
+    return;
+  }
   if (roadPlacing && (place || act === 'cancel')) {
     e.preventDefault();
     if (place === 'endPlacing') endRoadPlacing();
@@ -2237,6 +3684,15 @@ window.addEventListener('keydown', (e) => {
   }
   // Placing a race: stopping, the last point is the finish; Delete takes out the selected point.
   if (racePlacing) {
+    // Drawing a shortcut: take back a point, or stop (what's drawn so far is dropped).
+    if (evStage === 'cut' && (place === 'backPoint' || place === 'endPlacing' || act === 'cancel')) {
+      e.preventDefault();
+      if (place === 'backPoint' && evCut?.length) {
+        evCut.pop();
+        return drawEventMarks();
+      }
+      return stopCut();
+    }
     if (place === 'endPlacing' && evStage === 'placing') {
       e.preventDefault();
       return finishRoute();
@@ -2249,7 +3705,7 @@ window.addEventListener('keydown', (e) => {
       return previewEvent();
     }
   }
-  const step = e.shiftKey ? 0.1 : gridSize();
+  const step = nudgeStep(e.shiftKey);
   const [fx, fz] = flat();
   const [rx, rz] = right();
   switch (act) {
@@ -2306,12 +3762,12 @@ window.addEventListener('keydown', (e) => {
       $('snap').checked = !$('snap').checked;
       break;
     case 'cancel':
-      placing = null;
-      ghostAt = null;
-      lineFrom = null;
-      placingGadget = null;
+      if (linking) {
+        stopLinking();
+        break;
+      }
+      stopPlacing();
       drag = null;
-      renderCatalogue();
       select(null);
       break;
     default:
@@ -2361,6 +3817,10 @@ $('cam-reset').addEventListener('click', () => {
   $('top-view').classList.remove('on');
 });
 $('drive').addEventListener('click', () => session && testDrive());
+$('customize-car').addEventListener('click', () => {
+  toggleControls(false);
+  openCarEditor(tex);
+});
 window.addEventListener('beforeunload', (e) => {
   // (Flying with Ctrl held, W closes the tab: it asks first.)
   if (session?.dirty || flying) e.preventDefault();
@@ -2372,7 +3832,8 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
-  pollPad(dt);
+  // (Customize Car covers the view: it draws its own.)
+  if (carEditorOpen()) return requestAnimationFrame(frame);
   if (flying && session) {
     const speed = (held('flyFast') ? 4 : 1) * (20 + altitude() * 0.6) * dt;
     const f = forward();
@@ -2531,6 +3992,7 @@ if (CREATOR) {
 // Lights (render/lightView.js) and drops (as the game floats them) with them.
 // (trying: { id, patch }, a setting being dragged, shown before it's kept.)
 function rebuildGadgets(trying = null) {
+  rebuildBridges();
   if (gadgetGroup) {
     scene.remove(gadgetGroup);
     dispose(gadgetGroup);
@@ -2539,7 +4001,7 @@ function rebuildGadgets(trying = null) {
   if (!session?.gadgets().length) return;
   const all = session.gadgets().map((g) => (trying && g.id === trying.id ? { ...g, ...trying.patch } : g));
   const def = addGadgets({ cx: 0, cz: 0, y: 0, size: 1e6, obstacles: [], ramps: [], lifts: [], sweepers: [], hazards: [], movers: [] }, all, H);
-  const parts = [gadgetView(buildArena(def), tex, { ownClock: true }), placedView(all, H, tex), startMarkers(all, H)].filter(Boolean);
+  const parts = [gadgetView(buildArena(def), tex, { ownClock: true }), placedView(all, H, tex), startMarkers(all, H), lightMarkers(all, H), linkLines(all)].filter(Boolean);
   const drops = all.filter((g) => DROPS.has(g.type)).map((g, k) => {
     const m = makePickupMesh(g.type);
     m.position.set(g.x, H(g.x, g.z) + 0.8 + (g.height || 0), g.z);
@@ -2558,10 +4020,65 @@ function rebuildGadgets(trying = null) {
   scene.add(gadgetGroup);
 }
 
+// --- Trigger pads: linking gadgets to them -------------------------------------------
+// A trigger pad's Link a gadget button stays on (linking) till it's pressed
+// again, Esc, or a gadget's clicked: that gadget is linked to the pad (its
+// link), and from then on runs only when the pad's driven over (sim/gadgets.js
+// runLinked; a gate opens). On the map, a dashed line joins each pad to what
+// it sets off.
+
+const gadgetName = (g) => `${GADGETS[g.type].name.toLowerCase()} ${g.id}`;
+
+function startLinking(id) {
+  linking = id;
+  linkAt = null;
+  if (feature?.id !== id) selectFeature(gadgetFeature(id));
+  refresh();
+  showOverlay();
+}
+
+function stopLinking() {
+  linking = null;
+  linkAt = null;
+  refresh();
+  showOverlay();
+}
+
+// A click while linking: the gadget there (if it can be set off) linked to the pad.
+function linkTo(gid) {
+  const pad = session.gadgets().find((q) => q.id === linking);
+  const g = gid && session.gadgets().find((q) => q.id === gid);
+  if (!pad) return stopLinking();
+  if (!g || g.id === pad.id) return toast('Click a lift pad, gate, spinning bar or moving block to link it (or press Link a gadget again to stop).');
+  if (!LINKABLE.has(g.type)) return toast(`A ${GADGETS[g.type].name.toLowerCase()} can't be set off by a trigger pad: only lift pads, gates, spinning bars and moving blocks.`);
+  linking = null;
+  linkAt = null;
+  if (session.setGadget(g.id, { link: pad.id })) changed(false);
+  toast(`The ${gadgetName(g)} now ${g.type === 'gate' ? 'opens' : 'runs'} while trigger pad ${pad.id} is switched on (drive onto it to switch it on, and again to switch it off).`);
+  selectFeature(gadgetFeature(pad.id));
+  showOverlay();
+}
+
+// The SDK's lines (not in the game) from each trigger pad to what it sets off.
+function linkLines(all) {
+  const pads = new Map(all.filter((g) => g.type === 'trigger').map((g) => [g.id, g]));
+  const pts = [];
+  for (const g of all) {
+    const pad = LINKABLE.has(g.type) && pads.get(g.link);
+    if (pad) pts.push(new THREE.Vector3(pad.x, H(pad.x, pad.z) + 0.4, pad.z), new THREE.Vector3(g.x, H(g.x, g.z) + 0.6, g.z));
+  }
+  if (!pts.length) return null;
+  const lines = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineDashedMaterial({ color: 0x40f0ff, dashSize: 0.8, gapSize: 0.5, depthTest: false, transparent: true, opacity: 0.8, fog: false }));
+  lines.computeLineDistances();
+  lines.renderOrder = 11;
+  return lines;
+}
+
 // How far a gadget reaches from its middle (for picking it and outlining it).
 const reachOf = (g) =>
   g.type === 'lift' ? Math.hypot(g.w, g.d) / 2 : g.type === 'gate' ? g.width / 2 : g.type === 'sweeper' ? g.len : g.type === 'mover' ? g.travel + Math.hypot(g.w, g.d) / 2
-    : g.type === 'ramp' || g.type === 'kicker' ? Math.max(g.len, g.width) / 2 : g.type === 'sign' ? signSize(g).w / 2 : g.type === 'barrel' ? 1 : g.r ?? 2;
+    : g.type === 'ramp' || g.type === 'kicker' ? Math.max(g.len, g.width) / 2 : g.type === 'sign' ? signSize(g).w / 2 : g.type === 'barrel' ? 1
+    : g.type === 'light' && SPAN_LIGHTS.has(g.fixture) ? g.span / 2 : g.r ?? 2;
 
 function gadgetAt(x, z) {
   let best = null;
@@ -2583,7 +4100,14 @@ function gadgetInspector(ins, f) {
   const G = GADGETS[g.type];
   const kind = { Lights: 'light', Drops: 'drop', Ramps: 'ramp', Hazards: 'hazard', Signs: 'sign', Starts: 'start' }[G.group] || 'gadget';
   const turns = !NO_TURN.has(g.type);
-  const sliders = (SETTINGS[g.type] || []).filter(([k]) => typeof g[k] === 'number');
+  const sliders = (SETTINGS[g.type] || []).filter(([k]) => {
+    if (typeof g[k] !== 'number') return false;
+    if (g.type === 'light') return !((k === 'height' && LIGHT_PRESETS[g.fixture]?.fixed) || (k === 'span' && !SPAN_LIGHTS.has(g.fixture)));
+    // (A gate's timer: only when it's not switched by a pad.)
+    if (g.type === 'gate' && k === 'period') return !g.link;
+    return true;
+  });
+  const linked = g.type === 'trigger' ? session.gadgets().filter((q) => q.link === g.id && LINKABLE.has(q.type)) : [];
   const triggers = session.gadgets().filter((q) => q.type === 'trigger');
   const realOn = session.gadgets().filter((q) => q.type === 'light' && q.real).length;
   const slider = (id, label, min, max, step, unit, value, k = '') => `<label>${esc(label)} <input type="range" id="${id}"${k ? ` data-k="${k}"` : ''} min="${min}" max="${max}" step="${step}" value="${value}" /><input class="num" id="${id}-v" data-for="${id}" data-unit="${unit}" inputmode="decimal" /></label>`;
@@ -2592,26 +4116,32 @@ function gadgetInspector(ins, f) {
     ramp: 'In every event on this map and free roam (a race only uses it if the route runs over it).',
     hazard: g.type === 'oil' ? 'In every event on this map and free roam.' : 'In every event on this map and free roam: once it has gone off it stays gone for the rest of the event.',
     sign: 'In every event on this map and free roam. Its posts are solid; so is the sign itself when its bottom is below 2.2 m.',
-    start: g.type === 'start' ? 'Free roam on this map starts here (Test drive still starts where you are looking).' : 'Only in arena events, and only inside the arena\'s ground.',
+    start: g.type === 'start' ? 'Free roam on this map starts here (Test drive starts at the Test drive start, if there is one).' : g.type === 'testStart' ? 'Test drive (P, or the ▶ Test drive button) starts here. Racing an event (Shift+P) starts on its own grid.' : 'Only in arena events, and only inside the arena\'s ground.',
     light: 'Lights show in every event on this map and in free roam; a lamp post or floodlight tower is solid.',
     drop: "Drops are in every event on this map (not drag races) and in free roam, as well as the event's own (an event can turn its own off).",
     gadget: 'Gadgets work in free roam and in arena events.',
   };
   ins.innerHTML = `
     <h3>${esc(G.name)}</h3><div class="key">${kind} ${esc(g.id)}</div>
-    <p class="note">${esc(G.about)}</p>
+    <p class="note">${esc(g.type === 'light' ? LIGHT_ABOUT[g.fixture] || G.about : G.about)}</p>
     <div class="sliders">
       ${g.type === 'sign' ? `<label>Words <input id="gd-text" maxlength="24" value="${esc(g.text || '')}" /></label>
         <label>Style <select id="gd-style">${options(SIGN_STYLES, g.style)}</select></label>` : ''}
       ${g.type === 'light' || g.type === 'sign' ? `<label>Colour <span class="swatches">${LIGHT_COLORS.map((c) => `<button class="sw${g.color === c ? ' on' : ''}" data-color="${c}" title="${c}" style="background:${c}"></button>`).join('')}<input type="color" id="gd-color" value="${g.color}" title="Any colour" /></span></label>` : ''}
       ${g.type === 'light' ? `<label>Fixture <select id="gd-fixture">${options(LIGHT_FIXTURES, g.fixture)}</select></label>` : ''}
+      ${GADGET_SHAPES[g.type] ? `<label title="Sets its size; the sliders change it from there">Shape <select id="gd-shape">${Object.entries(GADGET_SHAPES[g.type]).map(([k, sh]) => `<option value="${k}"${shapeOf(g) === k ? ' selected' : ''}>${esc(sh.name)}</option>`).join('')}${shapeOf(g) ? '' : '<option selected disabled>Your own</option>'}</select></label>` : ''}
+      ${g.type === 'hazard' ? `<label title="Flames: burns a car and sets it alight. Sparks: shocks it (its engine cuts out; its nitro and weapons won't fire) for a moment.">Kind <select id="gd-kind">${options(HAZARD_KINDS, g.kind || 'fire')}</select></label>` : ''}
       ${sliders.map(([k, label, min, max, step, unit]) => slider(`gd-${k}`, label, min, max, step, unit, g[k], k)).join('')}
       ${turns ? slider('gd-turn', 'Turn', 0, 359, 1, '°', Math.round((((g.yaw || 0) * 180) / Math.PI + 360) % 360)) : ''}
       ${g.type === 'sign' ? `<label class="check"><input type="checkbox" id="gd-posts"${g.posts ? ' checked' : ''} /> On posts (solid, down to the ground)</label>` : ''}
       ${g.type === 'light' ? `<label>Flicker <select id="gd-flicker">${options(LIGHT_FLICKER, g.flicker)}</select></label>
         <label class="check" title="A real light shines on the cars and the walls round it, not just the ground. Each one costs a little speed, so a map can have ${MAX_REAL_LIGHTS}."><input type="checkbox" id="gd-real"${g.real ? ' checked' : ''}${!g.real && realOn >= MAX_REAL_LIGHTS ? ' disabled' : ''} /> Real light: shines on cars and walls (${realOn} of ${MAX_REAL_LIGHTS} on this map)</label>` : ''}
-      ${g.type === 'gate' ? `<label>Opened by <select id="gd-link"><option value="">its timer</option>${triggers.map((t) => `<option value="${t.id}"${g.link === t.id ? ' selected' : ''}>trigger pad ${t.id}</option>`).join('')}</select></label>` : ''}
+      ${['lift', 'gate', 'sweeper', 'mover'].includes(g.type) ? `<label class="check" title="Off: it stays where it rests (a gate stays shut), even when a trigger pad's switched on."><input type="checkbox" id="gd-moving"${g.still ? '' : ' checked'} /> Moves (its animation)</label>` : ''}
+      ${g.type === 'gate' ? `<label>Opens <select id="gd-link"><option value="">on its timer</option>${triggers.map((t) => `<option value="${t.id}"${g.link === t.id ? ' selected' : ''}>while trigger pad ${t.id} is on</option>`).join('')}</select></label>` : ''}
+      ${LINKABLE.has(g.type) && g.type !== 'gate' ? `<label>Runs <select id="gd-link"><option value="">on its own</option>${triggers.map((t) => `<option value="${t.id}"${g.link === t.id ? ' selected' : ''}>while trigger pad ${t.id} is on</option>`).join('')}</select></label>` : ''}
     </div>
+    ${g.type === 'trigger' ? `<div class="links"><span>Switches:</span> ${linked.length ? linked.map((q) => `<span class="link">${esc(gadgetName(q))}<button class="unlink" data-unlink="${q.id}" title="Unlink it: it moves on its own again">×</button></span>`).join('') : '<i>nothing yet</i>'}</div>
+      <div class="row"><button id="gd-linking" class="${linking === g.id ? 'on' : ''}" title="Then click a lift pad, gate, spinning bar or moving block on the map (Esc, or this again, stops)">${linking === g.id ? 'Linking: click a gadget…' : 'Link a gadget'}</button></div>` : ''}
     <div class="row">${!turns ? '' : '<button id="gd-left" title="Turn 15° (Q)">⟲ 15°</button><button id="gd-right" title="Turn the other way 15° (E)">⟳ 15°</button>'}<button id="f-del" class="danger">Delete</button></div>
     <p class="note">Drag it to move it${!turns ? '' : '; drag its ring (or Q/E) to turn it'}. ${WHERE[kind]}</p>`;
   // (What the controls say now: shown while a slider's dragged, kept when it's let go.)
@@ -2619,7 +4149,12 @@ function gadgetInspector(ins, f) {
     const patch = $('gd-turn') ? { yaw: (Number($('gd-turn').value) * Math.PI) / 180 } : {};
     for (const el of ins.querySelectorAll('input[type=range][data-k]')) patch[el.dataset.k] = Number(el.value);
     if ($('gd-link')) patch.link = $('gd-link').value;
-    if ($('gd-fixture')) Object.assign(patch, { fixture: $('gd-fixture').value, flicker: $('gd-flicker').value, real: $('gd-real').checked });
+    if ($('gd-kind')) patch.kind = $('gd-kind').value;
+    if ($('gd-moving')) patch.still = !$('gd-moving').checked;
+    if ($('gd-fixture')) {
+      Object.assign(patch, { fixture: $('gd-fixture').value, flicker: $('gd-flicker').value, real: $('gd-real').checked });
+      if (patch.fixture !== g.fixture) Object.assign(patch, lightResize(patch.fixture));
+    }
     if ($('gd-color')) patch.color = $('gd-color').value;
     if ($('gd-text')) Object.assign(patch, { text: signText($('gd-text').value) || g.text, style: $('gd-style').value, posts: $('gd-posts').checked });
     return patch;
@@ -2634,7 +4169,8 @@ function gadgetInspector(ins, f) {
     el.addEventListener('input', () => rebuildGadgets({ id: g.id, patch: read() }));
     el.addEventListener('change', () => apply());
   }
-  for (const el of ins.querySelectorAll('select, #gd-real, #gd-posts, #gd-text')) el.addEventListener('change', () => apply());
+  for (const el of ins.querySelectorAll('select:not(#gd-shape), #gd-real, #gd-posts, #gd-text, #gd-moving')) el.addEventListener('change', () => apply());
+  $('gd-shape')?.addEventListener('change', () => apply(shapeSettings(g.type, $('gd-shape').value)));
   $('gd-text')?.addEventListener('input', () => {
     // (The letters the game's pixel font has, capitals.)
     const t = signText($('gd-text').value);
@@ -2644,6 +4180,10 @@ function gadgetInspector(ins, f) {
   ins.querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => apply({ color: b.dataset.color })));
   $('gd-left')?.addEventListener('click', (ev) => turn(1, ev.shiftKey));
   $('gd-right')?.addEventListener('click', (ev) => turn(-1, ev.shiftKey));
+  $('gd-linking')?.addEventListener('click', () => (linking === g.id ? stopLinking() : startLinking(g.id)));
+  ins.querySelectorAll('[data-unlink]').forEach((b) => b.addEventListener('click', () => {
+    if (session.setGadget(b.dataset.unlink, { link: '' })) changed(false);
+  }));
   $('f-del').addEventListener('click', deleteFeature);
 }
 
@@ -2713,6 +4253,7 @@ let arenaSel = null; // the selected arena (its index: an arena event's route.si
 let arenaDraw = null; // { pts, of (redrawing that arena), block (taking a block's outline) } while drawing
 let arenaSpawning = false;
 let arenaHover = null; // the snapped point under the cursor while drawing
+let arenaGhost = null; // placing spawn points: where the next would go { x, z, yaw, ok (inside it) }
 let arenaCorner = null; // the selected corner (for Delete)
 const arenaMarks = new THREE.Group();
 scene.add(arenaMarks);
@@ -2815,7 +4356,9 @@ function renderArenaPanel() {
   $('arena-redraw')?.addEventListener('click', () => startArenaDraw(a.index));
   $('arena-spawn')?.addEventListener('click', () => {
     arenaSpawning = !arenaSpawning;
+    arenaGhost = null;
     renderArenaPanel();
+    showOverlay();
     hint();
   });
   $('arena-event')?.addEventListener('click', () => {
@@ -2993,6 +4536,17 @@ function arenaMove(g, e) {
   }
   arenaHover = arenaDraw && !arenaDraw.block ? arenaSnap(g, arenaDraw.of) : null;
   drawArenas();
+  if (arenaSpawning) {
+    // (Facing the middle, as it'll be placed.)
+    const a = arenaList()[arenaSel];
+    const poly = a && !a.removed ? outlineOf(a) : null;
+    const [mx, mz] = poly ? middleOf(poly) : [g.x, g.z + 1];
+    arenaGhost = { x: g.x, z: g.z, yaw: Math.atan2(mx - g.x, mz - g.z), ok: !!poly && G.pointInPoly(g.x, g.z, poly) };
+    showOverlay();
+  } else if (arenaGhost) {
+    arenaGhost = null;
+    showOverlay();
+  }
 }
 
 function arenaDrop(d) {
@@ -3064,7 +4618,9 @@ function arenaKey(e) {
   }
   if (act === 'cancel' && arenaSpawning) {
     arenaSpawning = false;
+    arenaGhost = null;
     renderArenaPanel();
+    showOverlay();
     hint();
     e.preventDefault();
     return true;
@@ -3175,108 +4731,6 @@ $('marks').addEventListener('click', () => {
   sdkPut('playtest', null).catch(() => {});
 });
 
-// --- Gamepad ---------------------------------------------------------------------------
-// Sticks fly (left moves, right looks, triggers down and up, left stick in:
-// faster); A acts at the crosshair as a click would; B cancels; X deletes;
-// Y copies; LB/RB turn; the d-pad nudges; Back looks down; Start test drives.
-
-let padPrev = [];
-function pollPad(dt) {
-  const pad = [...(navigator.getGamepads?.() || [])].find((p) => p && p.connected);
-  $('crosshair').hidden = !pad || !session;
-  if (!pad || !session) return;
-  const r = canvas.getBoundingClientRect();
-  const [mx, my] = [r.left + r.width / 2, r.top + r.height / 2];
-  Object.assign($('crosshair').style, { left: `${mx}px`, top: `${my}px` });
-  const axis = (i) => (Math.abs(pad.axes[i] || 0) > 0.15 ? pad.axes[i] : 0);
-  const held = (i) => !!pad.buttons[i]?.pressed;
-  const now = pad.buttons.map((b) => b.pressed);
-  const hit = (i) => now[i] && !padPrev[i];
-  padPrev = now;
-  const speed = (held(10) ? 4 : 1) * (20 + altitude() * 0.6) * dt;
-  const f = forward();
-  const [rx, rz] = right();
-  if (axis(2) || axis(3)) lookBy(-axis(2) * 2.2 * dt, -axis(3) * 1.6 * dt);
-  cam.x += (f.x * -axis(1) + rx * axis(0)) * speed;
-  cam.y += (f.y * -axis(1) + (held(7) ? 1 : 0) - (held(6) ? 1 : 0)) * speed;
-  cam.z += (f.z * -axis(1) + rz * axis(0)) * speed;
-  const at = { clientX: mx, clientY: my, button: 0, bubbles: true };
-  if (hit(0)) {
-    canvas.dispatchEvent(new MouseEvent('mousedown', at));
-    canvas.dispatchEvent(new MouseEvent('mouseup', at));
-  }
-  if (hit(1)) window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Escape' }));
-  if (hit(2)) removeSelected();
-  if (hit(3)) duplicate();
-  if (hit(4)) turn(1, false);
-  if (hit(5)) turn(-1, false);
-  const step = gridSize();
-  const [fx, fz] = flat();
-  if (tool === 'height' && (hit(12) || hit(13))) liftStep(hit(12) ? 1 : -1, viewMiddle());
-  else if (hit(12)) nudge(fx * step, fz * step);
-  else if (hit(13)) nudge(-fx * step, -fz * step);
-  if (hit(14)) nudge(-rx * step, -rz * step);
-  if (hit(15)) nudge(rx * step, rz * step);
-  if (hit(8)) toggleTop();
-  if (hit(9)) testDrive();
-}
-
-// --- Touch ----------------------------------------------------------------------------
-// One finger works as the mouse (tap to select or place, drag to move, brush
-// or draw); dragging where there's nothing to move looks around. Two fingers
-// pan, and pinch to zoom.
-
-let touch = null;
-const mouseAt = (type, t, target = canvas) => target.dispatchEvent(new MouseEvent(type, { clientX: t.clientX, clientY: t.clientY, button: 0, bubbles: true }));
-const mid = (a, b) => [(a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)];
-canvas.addEventListener('touchstart', (e) => {
-  e.preventDefault();
-  if (!session) return;
-  if (e.touches.length === 1) {
-    const t = e.touches[0];
-    mouseAt('mousedown', t);
-    const looking = tool === 'select' && !drag && !placing && !placingGadget;
-    touch = { mode: looking ? 'look' : 'mouse', x: t.clientX, y: t.clientY };
-    if (looking) pivotUnder(t);
-  } else if (e.touches.length === 2) {
-    if (touch?.mode === 'mouse') mouseAt('mouseup', e.touches[0]);
-    const [x, y, dist] = mid(e.touches[0], e.touches[1]);
-    touch = { mode: 'two', x, y, dist };
-  }
-}, { passive: false });
-canvas.addEventListener('touchmove', (e) => {
-  e.preventDefault();
-  if (!touch) return;
-  if (touch.mode === 'two' && e.touches.length >= 2) {
-    const [x, y, dist] = mid(e.touches[0], e.touches[1]);
-    const s = altitude() * 0.0018;
-    const [rx, rz] = right();
-    const [fx, fz] = flat();
-    cam.x += -rx * (x - touch.x) * s + fx * (y - touch.y) * s;
-    cam.z += -rz * (x - touch.x) * s + fz * (y - touch.y) * s;
-    const f = forward();
-    const step = (dist - touch.dist) * altitude() * 0.004;
-    cam.x += f.x * step;
-    cam.y += f.y * step;
-    cam.z += f.z * step;
-    Object.assign(touch, { x, y, dist });
-    return;
-  }
-  const t = e.touches[0];
-  if (touch.mode === 'look') {
-    lookBy(-(t.clientX - touch.x) * 0.005, -(t.clientY - touch.y) * 0.005);
-  } else mouseAt('mousemove', t);
-  Object.assign(touch, { x: t.clientX, y: t.clientY });
-}, { passive: false });
-canvas.addEventListener('touchend', (e) => {
-  e.preventDefault();
-  if (touch?.mode === 'mouse' && e.changedTouches[0]) mouseAt('mouseup', e.changedTouches[0]);
-  if (!e.touches.length) {
-    touch = null;
-    lookPivot = null;
-  }
-}, { passive: false });
-
 // --- Controls ------------------------------------------------------------------------
 // Every key the SDK uses, changeable (kept in this browser): each action has a
 // key, and may have an alt key too. Each group has its own keys: flying ones
@@ -3293,18 +4747,18 @@ const ACTIONS = [
     ['liftUp', 'Up a step, where the brush is', 'KeyW'], ['liftDown', 'Down a step', 'KeyS'],
     ['liftFine', 'Hold for 25 cm steps (the wheel, the keys above)', 'AltLeft'],
   ]],
-  ['Roads, races and arenas (while placing points)', 'place', [
-    ['endPlacing', 'Stop placing points (a race: the last is the finish; an arena: close it)', 'Space'],
-    ['backPoint', 'Road or arena: take the last point back', 'Backspace'],
-    ['buildRoad', 'Road: build the street (an arena: close it)', 'Enter', 'NumpadEnter'],
+  ['Roads, races, arenas, runs and objects (while placing)', 'place', [
+    ['endPlacing', 'Stop placing (objects and gadgets; a race: the last point is the finish; an arena: close it; a run of fence or wall: build it)', 'Space'],
+    ['backPoint', 'Road, arena or run: take the last point back', 'Backspace'],
+    ['buildRoad', 'Road: build the street (an arena: close it; a run: build it)', 'Enter', 'NumpadEnter'],
   ]],
   ['Editing', 'edit', [
-    ['delete', 'Delete the selection', 'Delete', 'Backspace'], ['turnLeft', 'Turn left 15° (Shift: 1°)', 'KeyQ'], ['turnRight', 'Turn right 15° (Shift: 1°)', 'KeyE'],
-    ['nudgeUp', 'Nudge forward (Shift: 10 cm)', 'ArrowUp'], ['nudgeDown', 'Nudge back', 'ArrowDown'], ['nudgeLeft', 'Nudge left', 'ArrowLeft'], ['nudgeRight', 'Nudge right', 'ArrowRight'],
-    ['focus', 'Focus the selection', 'KeyF'], ['snap', 'Snapping on/off', 'KeyG'], ['cancel', 'Cancel (a road being drawn too) / deselect', 'Escape'],
+    ['delete', 'Delete the selection (or a race\'s selected point, an arena\'s selected corner)', 'Delete', 'Backspace'], ['turnLeft', 'Turn left 15° (Shift: 1°)', 'KeyQ'], ['turnRight', 'Turn right 15° (Shift: 1°)', 'KeyE'],
+    ['nudgeUp', 'Nudge forward (how far: below; Shift: the fine amount)', 'ArrowUp'], ['nudgeDown', 'Nudge back', 'ArrowDown'], ['nudgeLeft', 'Nudge left', 'ArrowLeft'], ['nudgeRight', 'Nudge right', 'ArrowRight'],
+    ['focus', 'Focus the selection', 'KeyF'], ['snap', 'Snapping on/off', 'KeyG'], ['cancel', 'Cancel or stop (placing, a road, a run, an arena outline, linking) / deselect', 'Escape'],
   ]],
   ['View and play', 'edit', [
-    ['topView', 'Top view', 'Tab'], ['testDrive', 'Test drive (Shift: race the event)', 'KeyP'],
+    ['topView', 'Top view', 'Tab'], ['testDrive', 'Test drive, from the Test drive start or where you look (Shift: race the event)', 'KeyP'],
   ]],
   ['Tools', 'edit', [
     ['tool1', 'Select', 'Digit1'], ['tool2', 'Raise / lower (wheel toggle off: Raise)', 'Digit2'], ['tool3', 'Lower (wheel toggle off)', 'Digit3'], ['tool4', 'Smooth', 'Digit4'], ['tool5', 'Flatten', 'Digit5'],
@@ -3352,26 +4806,33 @@ const keyName = (code) => KEY_NAMES[code] || code.replace(/^Key|^Digit|^Numpad/,
 const FIXED_KEYS = [
   // [what, key, alt key]: set out like the others, in their columns.
   ['Undo', 'Ctrl+Z'], ['Redo', 'Ctrl+Y', 'Ctrl+Shift+Z'], ['Save', 'Ctrl+S'], ['Duplicate the selection', 'Ctrl+D'],
-  ['No snapping while moving or placing', 'Hold Alt'], ['Finer turns (1°) and nudges (10 cm)', 'Hold Shift'],
+  ['Copy the selection, and place it (as if picked in the Objects list)', 'Ctrl+C'], ['Paste: place what was copied, again', 'Ctrl+V'],
+  ['Cut the selection: take it off the map, and place it (as Copy does)', 'Ctrl+X'],
+  ['On this map (the list): select the one above or below (Shift: several)', '↑ ↓'], ['On this map (the list): select everything listed', 'Ctrl+A'],
+  ['No snapping while moving, turning or placing (roads, runs: any angle)', 'Hold Alt'], ['Finer turns (1°) and nudges (the fine amount)', 'Hold Shift'],
+  ['A typed slider number: set it', 'Enter'], ['A typed slider number: keep the old one', 'Esc'],
+  ['Customize Car: close it (the car stays as you left it)', 'Esc'],
 ];
 // [what, button]: in the key column, like the keys.
 const MOUSE = [
-  ['Select, place, brush, or draw a road', 'Left click'], ['Select a street, junction, site or gadget', 'Left click'],
-  ['Place, and keep placing', 'Shift + click'], ['Move the selection (or brush, or scatter)', 'Left drag'], ['Turn the selection', 'Drag its ring'],
+  ['The menu: copy, cut, paste, duplicate, delete (right-clicking something selects it)', 'Right click'],
+  ['On this map (the list): select one and look at it', 'Click'], ['On this map (the list): select several, one by one (in or out)', 'Ctrl + click'],
+  ['On this map (the list): select everything from the last one clicked', 'Shift + click'], ['On this map (the list): its menu', 'Right click'],
+  ['Select, place, brush, draw a road, or set a lot', 'Left click'], ['Select a street, junction, site or gadget', 'Left click'],
+  ['Place objects, one per click (Space or Esc stops)', 'Click'], ['Place one object', 'Drag it in from the list'],
+  ['Along a line: where it starts, then where it ends', 'Click, click'], ['Scatter: brush them on', 'Left drag'],
+  ['Move the selection (several: drag any of them), a junction or a gadget', 'Left drag'],
+  ['Select several: a box round them, from empty ground', 'Left drag'], ['Select several, one by one (in or out)', 'Ctrl + click'], ['Add a box of them to the selection', 'Ctrl + drag'], ['Brush the ground (Smooth, Flatten, Paint…)', 'Left drag'], ['Turn the selection (several: round their middle)', 'Drag its ring'],
   ['Look around, and fly with the keys', 'Hold right'], ['Pan', 'Middle drag'], ['Zoom', 'Wheel'], ['Turn while moving or placing (Shift: 1°)', 'Wheel'],
-  ['Raise / lower: a grid step up or down', 'Wheel'], ['Raise / lower: a 25 cm step up or down', '{fine} + wheel'], ['Raise / lower: zoom', 'Hold right + wheel'],
+  ['Raise / lower: a grid step up or down', 'Wheel'], ['Raise / lower: a 25 cm step up or down', '{fine} + wheel'], ['Raise / lower: zoom', 'Hold right + wheel'], ['Placing or dragging: zoom instead of turning', 'Hold right + wheel'],
   ['Road: curve a stretch, or move a point', 'Drag a handle'], ['Road: stop placing points, or straighten a curve', 'Double-click'],
-  ['Arena: move a corner, or add one at a midpoint', 'Drag a handle'], ['Arena: close the outline', 'Click its first point'],
+  ['Race: move a point (the start and finish too)', 'Drag it'], ['Race: add a point', 'Click the route'], ['Race: select a point', 'Click it'], ['Race: take out a point', 'Ctrl+click it'], ['Race: draw a shortcut', '✂ Draw shortcut, then click on the route, round, and back on it'], ['Bridge: draw one (Roads tab: Bridge)', 'Click along its path, double-click to build'], ['Bridge: select one', 'Click it'],
+  ['Arena: move a corner, or add one at a midpoint', 'Drag a handle'], ['Arena: select a corner', 'Click it'],
+  ['Arena: close the outline', 'Click its first point'], ['Arena: close the outline', 'Double-click'],
+  ['Trigger pad: link a gadget to it (after Link a gadget)', 'Click the gadget'],
+  ['Run of fence or wall: close it round', 'Click its first post'], ['Run of fence or wall: build it', 'Double-click'],
+  ['Customize Car: turn round the car', 'Left drag'], ['Customize Car: zoom', 'Wheel'], ['Customize Car: close it', 'Click outside it'],
 ];
-const GAMEPAD = [
-  ['Fly, and look round', 'Sticks'], ['Down / up', 'LT / RT'], ['Faster', 'Left stick in'], ['Act at the crosshair (a click)', 'A'],
-  ['Cancel / deselect', 'B'], ['Delete the selection', 'X'], ['Copy the selection', 'Y'], ['Turn 15°', 'LB / RB'],
-  ['Nudge (Raise / lower: a step up or down)', 'D-pad'], ['Top view', 'Back'], ['Test drive', 'Start'],
-];
-const TOUCH = [
-  ['Select, place, brush or draw (as the mouse)', 'One finger'], ['Look round (where there\'s nothing to move)', 'Drag one finger'],
-  ['Pan', 'Two fingers'], ['Zoom', 'Pinch'],
-]
 
 let waiting = null; // { action, slot (0: its key, 1: its alt) }: the key being changed
 let keysNote = ''; // why the last change wasn't made
@@ -3383,13 +4844,18 @@ function renderControls() {
     return `<button data-bind="${a}" data-slot="${slot}" class="${on ? 'wait' : code ? '' : 'none'}">${on ? 'Press…' : code ? esc(keyName(code)) : '—'}</button>`;
   };
   const row = ([a, label]) => `<div class="krow"><span>${esc(label)}</span><span class="keys">${key(a, 0)}${key(a, 1)}${binding[a][1] ? `<button class="clear" data-clear="${a}" title="No alt key">×</button>` : '<i class="clear"></i>'}</span></div>`;
+  // (The arrows' nudge amounts, under the Editing keys.)
+  const nudgeRows = `
+      <h4>Nudge amounts (the arrow keys)</h4>
+      <div class="krow"><span>Nudge</span><span class="keys"><select id="nudge-step"><option value="grid"${nudgeAmounts.step === 'grid' ? ' selected' : ''}>The move grid</option>${NUDGE_STEPS.map((v) => `<option value="${v}"${Number(nudgeAmounts.step) === v ? ' selected' : ''}>${v < 1 ? `${Math.round(v * 100)} cm` : `${v} m`}</option>`).join('')}</select></span></div>
+      <div class="krow"><span>Fine nudge (holding Shift)</span><span class="keys"><select id="nudge-fine">${NUDGE_STEPS.map((v) => `<option value="${v}"${Number(nudgeAmounts.fine) === v ? ' selected' : ''}>${v < 1 ? `${Math.round(v * 100)} cm` : `${v} m`}</option>`).join('')}</select></span></div>`;
   panel.innerHTML = `<h3>Controls</h3>
     <p class="note">Click a key to change it, then press the new one (Esc keeps it; × takes an alt key off). A key another action in the same group had is swapped over.</p>
     ${keysNote ? `<p class="note warn">${esc(keysNote)}</p>` : ''}
     <div class="krow head"><span></span><span class="keys"><b>Key</b><b>Alt</b><i class="clear"></i></span></div>
-    ${ACTIONS.map(([title, , list]) => `<h4>${esc(title)}</h4>${list.map(row).join('')}`).join('')}
+    ${ACTIONS.map(([title, , list]) => `<h4>${esc(title)}</h4>${list.map(row).join('')}${title === 'Editing' ? nudgeRows : ''}`).join('')}
     <h4>Fixed keys</h4>${FIXED_KEYS.map(([what, k, alt]) => `<div class="krow fixed"><span>${esc(what)}</span><span class="keys"><kbd>${esc(k)}</kbd><kbd class="${alt ? '' : 'none'}">${esc(alt || '')}</kbd><i class="clear"></i></span></div>`).join('')}
-    ${[['Mouse', MOUSE], ['Gamepad', GAMEPAD], ['Touch', TOUCH]].map(([title, list]) => `<h4>${title}</h4>${list.map(([what, k]) => `<div class="krow fixed"><span>${esc(keyText(what))}</span><span class="keys"><kbd class="wide">${esc(keyText(k))}</kbd><i class="clear"></i></span></div>`).join('')}`).join('')}
+    ${[['Mouse', MOUSE]].map(([title, list]) => `<h4>${title}</h4>${list.map(([what, k]) => `<div class="krow fixed"><span>${esc(keyText(what))}</span><span class="keys"><kbd class="wide">${esc(keyText(k))}</kbd><i class="clear"></i></span></div>`).join('')}`).join('')}
     <div class="row" style="margin-top:10px"><button id="keys-reset">Reset to defaults</button><button id="keys-close">Close</button></div>`;
   panel.querySelectorAll('[data-bind]').forEach((b) => b.addEventListener('click', () => {
     waiting = { action: b.dataset.bind, slot: Number(b.dataset.slot) };
@@ -3402,8 +4868,25 @@ function renderControls() {
     saveKeys();
     renderControls();
   }));
+  for (const [id, k] of [['nudge-step', 'step'], ['nudge-fine', 'fine']]) {
+    $(id).addEventListener('change', () => {
+      nudgeAmounts[k] = $(id).value === 'grid' ? 'grid' : Number($(id).value);
+      try {
+        localStorage.setItem(NUDGE_STORE, JSON.stringify(nudgeAmounts));
+      } catch {
+        // (Kept for this session only.)
+      }
+      $(id).blur(); // (so the arrows nudge again)
+    });
+  }
   $('keys-reset').addEventListener('click', () => {
     binding = structuredClone(DEFAULT_KEYS);
+    nudgeAmounts = { step: 'grid', fine: 0.1 };
+    try {
+      localStorage.removeItem(NUDGE_STORE);
+    } catch {
+      // (Nothing kept.)
+    }
     keysNote = '';
     saveKeys();
     renderControls();
@@ -3466,26 +4949,45 @@ function orbitPivot() {
   const it = selected && session.item(selected);
   if (it) {
     const fb = footBox(it);
-    return new THREE.Vector3(fb.x, session.baseY(it) + (it.h || 2) / 2, fb.z);
+    const { y0, h } = session.heightOf(it);
+    return new THREE.Vector3(fb.x, y0 + h / 2, fb.z);
   }
   if (feature && typeof feature.x === 'number') return new THREE.Vector3(feature.x, H(feature.x, feature.z), feature.z);
   return lookPivot;
 }
 
 // Nothing selected: looking round turns round the ground under the cursor
-// (where it was when the right button went down, or the touch began).
+// (where it was when the right button went down).
 let lookPivot = null;
 function pivotUnder(e) {
   setRay(e);
   lookPivot = groundHit();
 }
 
+// The camera's own axes (right, up, forward) at a heading and pitch.
+function camAxes() {
+  const f = forward();
+  const r = new THREE.Vector3(-Math.cos(cam.yaw), 0, Math.sin(cam.yaw));
+  return [r, new THREE.Vector3().crossVectors(r, f), f];
+}
+
 function lookBy(dyaw, dpitch) {
   const pivot = orbitPivot();
-  const dist = pivot ? pivot.distanceTo(new THREE.Vector3(cam.x, cam.y, cam.z)) : 0;
+  const at = new THREE.Vector3(cam.x, cam.y, cam.z);
+  const dist = pivot ? pivot.distanceTo(at) : 0;
+  // Round the ground under the cursor (nothing selected): the camera turns
+  // round it as a whole, so it stays where it is in the view, not pulled to the middle.
+  const free = pivot && pivot === lookPivot;
+  const off = free ? at.sub(pivot) : null;
+  const before = free ? camAxes().map((a) => off.dot(a)) : null;
   cam.yaw += dyaw;
   cam.pitch = Math.max(-1.55, Math.min(1.4, cam.pitch + dpitch));
   if (!pivot) return;
+  if (free) {
+    const p = camAxes().reduce((v, a, k) => v.addScaledVector(a, before[k]), pivot.clone());
+    Object.assign(cam, { x: p.x, y: p.y, z: p.z });
+    return;
+  }
   const f = forward();
   cam.x = pivot.x - f.x * dist;
   cam.y = pivot.y - f.y * dist;
@@ -3498,11 +5000,16 @@ function lookBy(dyaw, dpitch) {
 
 function ringOf() {
   if (!session || tool !== 'select' || placing || placingGadget) return null;
+  if (group.length) {
+    const d = groupMove();
+    const r = Math.max(4, ...d.group.map((m) => Math.hypot(m.p.x - d.cx, m.p.z - d.cz))) + 4;
+    return { x: d.cx, z: d.cz, y: H(d.cx, d.cz), r, yaw: 0, drag: d };
+  }
   const it = selected && session.item(selected);
   if (it && canMove(it)) {
     const fb = footBox(it);
     const p = session.pose(selected);
-    return { x: fb.x, z: fb.z, y: session.baseY(it), r: Math.max(fb.w, fb.d) / 2 + 2.5, yaw: fb.yaw, drag: { key: selected, ox: 0, oz: 0, x: p.x, z: p.z, yaw: p.yaw, yaw0: p.yaw, cx: fb.x, cz: fb.z } };
+    return { x: fb.x, z: fb.z, y: session.heightOf(it).y0, r: Math.max(fb.w, fb.d) / 2 + 2.5, yaw: fb.yaw, drag: { key: selected, ox: 0, oz: 0, x: p.x, z: p.z, yaw: p.yaw, yaw0: p.yaw, cx: fb.x, cz: fb.z } };
   }
   if (feature?.type === 'gadget') {
     const g = session.gadgets().find((q) => q.id === feature.id);
@@ -3540,7 +5047,52 @@ function drawRing() {
 // points, a start gate (green) and a finish gate (chequered), where the game
 // puts them.
 
-let evStage = null; // null, 'start', 'placing', 'editing'
+let evStage = null; // null, 'start', 'placing', 'editing', 'cut' (drawing a shortcut)
+let evCut = null; // the shortcut being drawn: its points ([x, z])
+
+// How far (m) a ground point is from the race's line (the preview's), or Infinity.
+function offRoute(g) {
+  const pts = evPreview && !evPreview.error ? evPreview.pts : null;
+  let best = Infinity;
+  for (let k = 1; k < (pts?.length || 0); k++) {
+    const [ax, az] = pts[k - 1];
+    const [bx, bz] = pts[k];
+    const L2 = (bx - ax) ** 2 + (bz - az) ** 2 || 1;
+    const t = Math.max(0, Math.min(1, ((g.x - ax) * (bx - ax) + (g.z - az) * (bz - az)) / L2));
+    best = Math.min(best, Math.hypot(g.x - ax - t * (bx - ax), g.z - az - t * (bz - az)));
+  }
+  return best;
+}
+
+// Drawing a shortcut: it starts on the race's route, goes where it's clicked,
+// and is added when a click lands back on the route further on (the game
+// puts its ends on the route's middle).
+function cutClick(g) {
+  const on = offRoute(g) < 10;
+  const p = [Math.round(g.x * 10) / 10, Math.round(g.z * 10) / 10];
+  if (!evCut.length) {
+    if (!on) return toast("Start the shortcut on the race's route.");
+    evCut.push(p);
+    return drawEventMarks();
+  }
+  if (!on) {
+    evCut.push(p);
+    return drawEventMarks();
+  }
+  if (Math.hypot(p[0] - evCut[0][0], p[1] - evCut[0][1]) < 20) return toast('Join the route further on (20 m or more from where the shortcut leaves it).');
+  evCut.push(p);
+  (evDraft.route.shortcuts ||= []).push({ path: evCut });
+  stopCut();
+  previewEvent();
+}
+
+function stopCut() {
+  evStage = 'editing';
+  evCut = null;
+  renderEvents();
+  hint();
+  drawEventMarks();
+}
 let evSel = null; // the selected route point
 const eventMarks = new THREE.Group();
 scene.add(eventMarks);
@@ -3552,9 +5104,10 @@ function routeStageText(r) {
     if (r.along && r.to !== null && r.to !== undefined) return 'Drag the start or the finish along the street to move it.';
     return 'Press Place start, then click the start on a street.';
   }
+  if (evStage === 'cut') return `Drawing a shortcut: click on the route where it leaves, then where it goes (anywhere), then back on the route further on: that's it added. ${keyName(binding.backPoint?.[0] || 'Backspace')}: take back a point; Esc: stop.`;
   if (evStage === 'start') return 'Click the start anywhere: on a street, off the streets, or up on top of something (not inside it).';
   if (evStage === 'placing') return `Click where the race goes: a junction, a way through a site or lot, or anywhere (off the streets it goes straight there, and up onto things). Space (or Finish here): ${r.kind === 'circuit' ? 'it comes back round to the start' : 'the last point is the finish'}.`;
-  if (r.path.length) return 'Drag a point to move it (the start and finish too); click the route to add one; select one and press Delete to take it out.';
+  if (r.path.length) return 'Drag a point to move it (the start and finish too); click the route to add one; Ctrl+click one (or select it and press Delete) to take it out.';
   return 'Press Place start, then click the start on the map.';
 }
 
@@ -3568,6 +5121,26 @@ function finishRoute() {
   renderEvents();
   previewEvent();
   hint();
+}
+
+// The race the other way round. A sprint: its finish is the start, its start
+// the finish. A circuit: the same start, round the loop the other way. A
+// drag: from where it finished, to where it started. (Its shortcuts are
+// drawn from the route as it goes, either way.)
+function reverseRoute() {
+  const r = evDraft.route;
+  if (r.kind === 'drag') [r.from, r.to] = [r.to, r.from];
+  else if (r.kind === 'sprint') r.path.reverse();
+  else if (isSpot(r.path[0])) r.path = [r.path[0], ...r.path.slice(1).reverse()];
+  else {
+    // (A circuit starting so far along its first street: the same place, from that street's other end.)
+    const [a, b] = [routePos(r.path[0]), routePos(r.path[1])];
+    if (r.start !== undefined && a && b) r.start = Math.max(1, Math.round(Math.hypot(b[0] - a[0], b[1] - a[1]) - r.start));
+    r.path = [r.path[1], r.path[0], ...r.path.slice(2).reverse()];
+  }
+  evSel = null;
+  renderEvents();
+  previewEvent();
 }
 
 // Place start clicked at spot S: a new race starts there. One there already:
@@ -3761,6 +5334,43 @@ function drawEventMarks() {
   if (tool !== 'events' || !r || !session) return;
   const basic = (color) => new THREE.MeshBasicMaterial({ color, depthTest: false, fog: false });
   const size = Math.max(2, altitude() * 0.015);
+  // The shortcuts (purple): where the game puts them; the one being drawn, and its points.
+  const cutLine = (pts) => {
+    if (pts.length < 2) return;
+    const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts.map(([x, z]) => new THREE.Vector3(x, H(x, z) + 0.6, z))), new THREE.LineBasicMaterial({ color: 0xb967ff, depthTest: false, fog: false }));
+    l.renderOrder = 14;
+    eventMarks.add(l);
+  };
+  if (!evPreview?.error) for (const c of evPreview?.cuts || []) cutLine(c);
+  if (evStage === 'cut' && evCut) {
+    cutLine(evCut);
+    for (const [x, z] of evCut) {
+      const m = new THREE.Mesh(new THREE.OctahedronGeometry(size * 0.7), basic(0xb967ff));
+      m.position.set(x, H(x, z) + size * 2, z);
+      m.renderOrder = 15;
+      eventMarks.add(m);
+    }
+  }
+  // Arrows along the route the game builds, the way the cars drive (spaced
+  // and sized by how high the camera is).
+  const line = !evPreview?.error && evPreview?.pts;
+  if (line && line.length > 1) {
+    const L = G.lineLength(line);
+    const gap = Math.max(25, altitude() * 0.12);
+    const a = size * 1.2;
+    const pos = [];
+    for (let s = gap / 2; s < L; s += gap) {
+      const p = G.pointAlong(line, s);
+      const y = H(p.x, p.z) + 0.7;
+      // (A flat arrowhead: its tip ahead, its two back corners either side.)
+      pos.push(p.x + p.dx * a, y, p.z + p.dz * a, p.x - p.dx * a * 0.6 - p.dz * a * 0.8, y, p.z - p.dz * a * 0.6 + p.dx * a * 0.8, p.x - p.dx * a * 0.6 + p.dz * a * 0.8, y, p.z - p.dz * a * 0.6 - p.dx * a * 0.8);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    const arrows = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0x05d9e8, depthTest: false, fog: false, side: THREE.DoubleSide }));
+    arrows.renderOrder = 13;
+    eventMarks.add(arrows);
+  }
   // The route's points, numbered by colour: the start green, the finish white, the rest amber, selected cyan.
   const marks = routeMarks();
   marks.forEach((mp, k) => {

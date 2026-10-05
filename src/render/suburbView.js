@@ -2,6 +2,8 @@ import { npcCar } from './npcCars.js';
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
+import * as Parts from './parts.js';
+import { shards } from './shards.js';
 import { box, obbBox, flatPoly, rampGeometry, tint } from './shapes.js';
 import { textTexture } from './textures.js';
 import { sprinklerOn } from '../sim/sprinklers.js';
@@ -463,17 +465,19 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
     },
     tree(it) {
       const o = it.obb;
-      trees.push({ x: o.x, z: o.z, y: H(o.x, o.z), s: it.s || 1, kind: it.kind, cycle: it.cycle || 0 });
+      trees.push({ x: o.x, z: o.z, y: H(o.x, o.z), s: (it.s || 1) * (Number(it.set?.size) || 1), kind: it.kind, cycle: it.cycle || 0, leaves: it.set?.leaves || null });
     },
     brk(it) {
       const kind = it.kind === 'fence' ? (it.h > 1.2 ? 'wood' : 'picket') : it.kind;
       if (props[kind]) props[kind].push(it);
     },
     sprinkler(it) {
-      sprinklers.push({ id: it.id, x: it.x, z: it.z, y: H(it.x, it.z) });
+      sprinklers.push({ id: it.id, x: it.x, z: it.z, y: H(it.x, it.z), still: !!it.set?.still });
     },
     pool(it) {
-      B.pool.push(flatPoly(it.poly, () => it.y + 0.15));
+      // (A copy stands on ground with no hole cut for it: its water just above the ground, inside its coping.)
+      const wy = it.copy ? Math.max(it.y + 0.15, Math.min(...it.poly.map(([x, z]) => H(x, z))) + 0.01) : it.y + 0.15;
+      B.pool.push(flatPoly(it.poly, () => wy));
       // The coping round the edge.
       for (let k = 0; k < it.poly.length; k++) {
         const [ax, az] = it.poly[k];
@@ -527,6 +531,13 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
         const [x, z] = P4(o, 0, s * (o.hd - 0.15));
         paint(box(0.08, 0.8, 0.08, x, y + 1.4, z), '#c8c8c8');
       }
+      // Its wheels.
+      for (const su of [-1, 1]) {
+        for (const sv of [-1, 1]) {
+          const [x, z] = P4(o, su * (o.hw - 0.05), sv * (o.hd - 0.45));
+          paint(new THREE.CylinderGeometry(0.3, 0.3, 0.16, 12).rotateZ(Math.PI / 2).rotateY(o.yaw).translate(x, y + 0.3, z), '#1c1c20');
+        }
+      }
     },
     frame(it) {
       // A timber frame: posts, plates and the rafters of a roof to come.
@@ -568,16 +579,35 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
       paint(rampGeometry(it.ramp, it.y), '#5a3e22');
     },
     dozer(it) {
+      // A bulldozer: its tracks on their wheels (sprocket behind, idler in
+      // front), the body, the hood and its grille, the cab's glass between its
+      // pillars under a roof, an exhaust, the blade on its arms, a ripper behind.
       const o = it.obb;
       const y = H(o.x, o.z);
-      paint(obbBox({ ...o, hd: o.hd - 0.6 }, 1.6, y + 0.8), '#e0a820');
-      paint(obbBox({ ...o, hw: o.hw * 0.6, hd: o.hd * 0.4 }, 1.4, y + 2.3), '#1c1c24');
-      const [bx, bz] = P4(o, 0, o.hd - 0.2);
-      paint(box(o.hw * 2 + 0.6, 1.2, 0.3, bx, y + 0.6, bz, o.yaw), '#5a5a60');
+      const { hw, hd } = o;
+      const put = (g, color) => paint(Parts.placed(g, o.x, y, o.z, o.yaw), color);
       for (const s of [-1, 1]) {
-        const [tx, tz] = P4(o, s * (o.hw - 0.3), -0.6);
-        paint(box(0.6, 0.9, o.hd * 1.6, tx, y + 0.45, tz, o.yaw), '#2a2a30');
+        const u = s * (hw - 0.35);
+        // A track: a belt rounded at both ends, the sprocket and the idler in
+        // its ends, road wheels between them, all inside it.
+        const [v0, v1, r] = [-0.5 - hd * 0.8, -0.5 + hd * 0.8, 0.42];
+        put(Parts.belt(v0, v1, r, 0.7, u, 0.45), '#2a2a30');
+        put(Parts.wheel(0.34, 0.1, u + s * 0.36, 0.45, v0 + r), '#5a5a60');
+        put(Parts.wheel(0.32, 0.1, u + s * 0.36, 0.45, v1 - r), '#5a5a60');
+        for (let k = 1; k <= 4; k++) put(Parts.wheel(0.22, 0.1, u + s * 0.36, 0.3, v0 + r + ((v1 - v0 - 2 * r) * k) / 5), '#5a5a60');
+        put(Parts.slab([u, 1.0, -0.2], [u, 0.7, hd - 0.3], 0.22, 0.25), '#c89010');
       }
+      put(Parts.block(hw * 2 - 1.4, 1.0, hd * 1.4, 0, 1.3, -0.4), '#e0a820');
+      put(Parts.block(hw * 1.1, 0.9, hd * 0.7, 0, 2.2, hd * 0.25), '#e0a820');
+      put(Parts.block(hw * 1.0, 0.7, 0.06, 0, 2.15, hd * 0.6 + 0.04), '#1c1c24');
+      put(Parts.block(hw * 1.2, 1.3, hd * 0.6, 0, 2.45, -hd * 0.45), '#2a3a4a');
+      for (const su of [-1, 1]) for (const sv of [-1, 1]) put(Parts.block(0.12, 1.3, 0.12, su * hw * 0.6, 2.45, -hd * 0.45 + sv * hd * 0.3), '#1c1c24');
+      put(Parts.block(hw * 1.35, 0.14, hd * 0.75, 0, 3.17, -hd * 0.45), '#e0a820');
+      put(Parts.rod([hw * 0.35, 2.6, hd * 0.4], [hw * 0.35, 3.6, hd * 0.4], 0.08), '#1c1c24');
+      put(Parts.block(hw * 2 + 0.6, 1.25, 0.3, 0, 0.7, hd - 0.2), '#5a5a60');
+      put(Parts.block(hw * 2 + 0.6, 0.12, 0.34, 0, 0.1, hd - 0.15), '#2a2a30');
+      put(Parts.block(0.2, 1.0, 0.2, 0, 0.6, -hd - 0.1), '#2a2a30');
+      put(Parts.block(hw * 1.2, 0.2, 0.3, 0, 1.0, -hd * 0.95), '#c89010');
     },
     digger(it) {
       const o = it.obb;
@@ -638,30 +668,57 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
     play(it) {
       const o = it.obb;
       const y = H(o.x, o.z);
+      const h = it.h;
+      const put = (g, color) => paint(Parts.placed(g, o.x, y, o.z, o.yaw), color);
       if (it.kind === 'swings') {
+        // An A-frame at each end, braced, the top bar between, each seat on two chains.
+        const L = o.hw;
+        const foot = Math.min(o.hd, h * 0.45);
         for (const s of [-1, 1]) {
-          const [x, z] = P4(o, s * o.hw, 0);
-          paint(box(0.12, it.h, o.hd * 2, x, y + it.h / 2, z, o.yaw), '#c83a3a');
+          for (const sv of [-1, 1]) put(Parts.rod([s * L, 0, sv * foot], [s * L, h, 0], 0.07), '#c83a3a');
+          put(Parts.rod([s * L, 0.7, -foot * 0.82], [s * L, 0.7, foot * 0.82], 0.04), '#c83a3a');
         }
-        paint(box(o.hw * 2, 0.12, 0.12, o.x, y + it.h, o.z, o.yaw), '#c83a3a');
+        put(Parts.rod([-L - 0.15, h, 0], [L + 0.15, h, 0], 0.08), '#c83a3a');
         for (const u of [-1.5, 0, 1.5]) {
-          const [x, z] = P4(o, u, 0);
-          paint(box(0.5, 0.06, 0.25, x, y + 0.5, z, o.yaw), '#3a3a40');
+          if (Math.abs(u) > L - 0.4) continue;
+          for (const c of [-0.22, 0.22]) put(Parts.rod([u + c, h, 0], [u + c, 0.52, 0], 0.03, 4), '#b8b8c0');
+          put(Parts.block(0.55, 0.05, 0.25, u, 0.5, 0), '#3a3a40');
         }
       } else if (it.kind === 'slide') {
-        const g = new THREE.BoxGeometry(0.8, 0.1, o.hd * 2.2);
-        g.rotateX(0.7);
-        g.rotateY(o.yaw);
-        g.translate(o.x, y + it.h / 2, o.z);
-        paint(g, '#e8c020');
-        const [lx, lz] = P4(o, 0, -o.hd);
-        paint(box(0.8, it.h, 0.2, lx, y + it.h / 2, lz, o.yaw), '#3a6ab8');
-      } else {
-        for (const u of [-o.hw, o.hw]) for (const v of [-o.hd, o.hd]) {
-          const [x, z] = P4(o, u, v);
-          paint(box(0.12, it.h, 0.12, x, y + it.h / 2, z), '#3a8a5a');
+        // A ladder up the back, a platform with rails round it, the chute down
+        // the front with its sides, a run-out at its foot.
+        const pz = -o.hd + 0.5;
+        put(Parts.block(0.9, 0.08, 0.8, 0, h, pz), '#3a6ab8');
+        for (const s of [-1, 1]) {
+          for (const dz of [-0.35, 0.35]) put(Parts.rod([s * 0.4, 0, pz + dz], [s * 0.4, h + 0.9, pz + dz], 0.05), '#3a6ab8');
+          put(Parts.rod([s * 0.4, h + 0.85, pz - 0.35], [s * 0.4, h + 0.85, pz + 0.35], 0.035), '#3a6ab8');
+          put(Parts.rod([s * 0.32, 0, -o.hd - 0.5], [s * 0.32, h, pz - 0.38], 0.04), '#c8c8c8');
         }
-        paint(obbBox(o, 0.1, y + it.h), '#3a8a5a');
+        const run = pz - 0.38 + o.hd + 0.5;
+        for (let k = 1; k * 0.3 < h; k++) {
+          const z = -o.hd - 0.5 + (run * k * 0.3) / h;
+          put(Parts.rod([-0.32, k * 0.3, z], [0.32, k * 0.3, z], 0.025), '#c8c8c8');
+        }
+        const a = [0, h + 0.03, pz + 0.4];
+        const b = [0, 0.35, o.hd - 0.4];
+        put(Parts.slab(a, b, 0.7, 0.06), '#e8c020');
+        for (const s of [-1, 1]) put(Parts.slab([s * 0.37, a[1] + 0.15, a[2]], [s * 0.37, b[1] + 0.15, b[2]], 0.05, 0.3), '#e8c020');
+        put(Parts.block(0.7, 0.06, 0.8, 0, 0.33, o.hd), '#e8c020');
+      } else {
+        // A climbing frame: four posts, a deck halfway up, rails round it, a
+        // ladder up to it, a pitched roof.
+        const deck = h * 0.45;
+        for (const u of [-o.hw, o.hw]) for (const v of [-o.hd, o.hd]) put(Parts.rod([u, 0, v], [u, h, v], 0.07), '#3a8a5a');
+        put(Parts.block(o.hw * 2, 0.1, o.hd * 2, 0, deck, 0), '#8a6a44');
+        for (const [[ua, va], [ub, vb]] of [[[-o.hw, o.hd], [o.hw, o.hd]], [[-o.hw, -o.hd], [-o.hw, o.hd]], [[o.hw, -o.hd], [o.hw, o.hd]]]) put(Parts.rod([ua, deck + 0.8, va], [ub, deck + 0.8, vb], 0.035), '#3a8a5a');
+        for (const s of [-1, 1]) put(Parts.rod([s * 0.3, 0, -o.hd - 0.7], [s * 0.3, deck, -o.hd], 0.035), '#c8c8c8');
+        for (let k = 1; k * 0.3 < deck; k++) {
+          const z = -o.hd - 0.7 + (0.7 * k * 0.3) / deck;
+          put(Parts.rod([-0.3, k * 0.3, z], [0.3, k * 0.3, z], 0.025), '#c8c8c8');
+        }
+        const eave = o.hw + 0.2;
+        const pitch = Math.atan2(0.95, eave);
+        for (const s of [-1, 1]) put(new THREE.BoxGeometry(Math.hypot(eave, 0.95), 0.08, o.hd * 2 + 0.4).rotateZ(-s * pitch).translate((s * eave) / 2, h + 0.43, 0), '#3a8a5a');
       }
     },
     bench(it) {
@@ -702,6 +759,24 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
         paint(box(0.45, 0.08, 0.45, x, H(x, z) - 0.02, z, it.yaw + Math.PI / 4), '#f0f0f0');
       }
       paint(new THREE.CylinderGeometry(2.7, 2.9, 0.25, 12).translate(it.x, it.y - 0.05, it.z), '#9a7050');
+      // The infield grass inside the base paths, the dirt round home, the
+      // backstop behind it, and the warning track round the outfield.
+      paint(flatPoly([at(0, 4.5), at(14.5, 19), at(0, 33.5), at(-14.5, 19)], (x, z) => H(x, z) + 0.03), '#3f7a3a');
+      B.dirt.push(flatPoly([...Array(16).keys()].map((q) => at(Math.sin((q / 16) * Math.PI * 2) * 4.2, Math.cos((q / 16) * Math.PI * 2) * 4.2)), (x, z) => H(x, z) - 0.05));
+      for (let q = -3; q <= 3; q++) {
+        const a = (q / 3) * 0.9;
+        const [x, z] = at(Math.sin(a) * 9, -Math.cos(a) * 9);
+        paint(box(0.14, 4, 0.14, x, H(x, z) + 2, z), '#3a3a40');
+        if (q < 3) {
+          const [x1, z1] = at(Math.sin(((q + 1) / 3) * 0.9) * 9, -Math.cos(((q + 1) / 3) * 0.9) * 9);
+          paint(box(0.05, 3.6, Math.hypot(x1 - x, z1 - z), (x + x1) / 2, H(x, z) + 2.1, (z + z1) / 2, Math.atan2(x1 - x, z1 - z)), '#5a5a64');
+        }
+      }
+      const arc = (R) => [...Array(19).keys()].map((q) => {
+        const a = (q / 18 - 0.5) * (Math.PI / 2);
+        return at(Math.sin(a) * R, Math.cos(a) * R);
+      });
+      B.dirt.push(flatPoly([...arc(64), ...arc(60).reverse()], (x, z) => H(x, z) - 0.05));
       for (const s of [-1, 1]) {
         const [x, z] = at(s * 21, 21);
         B.lines.push(box(0.12, 0.02, 60, (home[0] + x) / 2 + (x - home[0]) * 0.2, H(x, z) - 0.04, (home[1] + z) / 2 + (z - home[1]) * 0.2, Math.atan2(x - home[0], z - home[1])));
@@ -726,7 +801,7 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
       const y = H(o.x, o.z);
       paint(obbBox({ ...o, hw: 0.5, hd: 0.5 }, it.h - 4, y), '#6a6a74');
       paint(box(1, 3.6, 8, o.x, y + it.h - 2, o.z, o.yaw), '#2a2a34');
-      for (const s of [-1, 1]) text(it.name, '#ffc850', o.x + s * 0.52, y + it.h - 3.6, o.z, s, 0, 7.4);
+      for (const s of [-1, 1]) text(it.set?.text || it.name, it.set?.color || '#ffc850', o.x + s * 0.52, y + it.h - 3.6, o.z, s, 0, 7.4);
     },
     riverWall(it) {
       const o = it.obb;
@@ -784,7 +859,7 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
       m.compose(new THREE.Vector3(t.x, t.y + h * 0.62, t.z), q, new THREE.Vector3(r, r * 0.9, r));
       cm.setMatrixAt(k, m);
       q.identity();
-      col.set(t.kind === 'oak' ? OAK_LEAVES[t.cycle % OAK_LEAVES.length] : MAPLE_LEAVES[t.cycle % MAPLE_LEAVES.length]);
+      col.set(t.leaves || (t.kind === 'oak' ? OAK_LEAVES[t.cycle % OAK_LEAVES.length] : MAPLE_LEAVES[t.cycle % MAPLE_LEAVES.length]));
       cm.setColorAt(k, col);
     });
     tm.frustumCulled = false;
@@ -854,6 +929,8 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
   // with them all standing again. dirs: { id: [dx, dz] } from 'break' events.
   let shownDown = new Set();
   const dirs = new Map();
+  let bits = null; // (down: in pieces; finish() makes it)
+  const zero = new THREE.Matrix4().makeScale(0, 0, 0);
   function setBroken(broken = {}) {
     const ids = Object.keys(broken);
     if (ids.length < shownDown.size) {
@@ -866,13 +943,18 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
       }
       shownDown = new Set();
       dirs.clear();
+      bits?.clear();
     }
     for (const id of ids) {
       if (shownDown.has(id)) continue;
       shownDown.add(id);
       const p = propMeshes.get(+id);
       if (!p) continue;
-      p.mesh.setMatrixAt(p.k, propMatrix(p.it, true, dirs.get(+id) || [0, 1]));
+      const o = p.it.obb;
+      const kind = p.it.kind === 'fence' ? (p.it.h > 1.2 ? 'wood' : 'picket') : p.it.kind;
+      const fy = H(o.x, o.z);
+      bits?.burst(o.x, fy, o.z, fy, Math.max(o.hw, o.hd) * 2, p.it.h || 1, PROP[kind]?.color || '#c8c0a8', dirs.get(+id) || [0, 1], +id);
+      p.mesh.setMatrixAt(p.k, zero);
       p.mesh.instanceMatrix.needsUpdate = true;
     }
   }
@@ -886,7 +968,27 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
   let sprayWindow = -1;
   function sprayMeshBuild() {
     if (!sprinklers.length) return;
-    const g = mergeGeometries([new THREE.PlaneGeometry(6, 1.6).translate(0, 0.8, 0), new THREE.PlaneGeometry(6, 1.6).rotateY(Math.PI / 2).translate(0, 0.8, 0)]);
+    // (Its jets: arcs of water out from the head, the long one widening as it falls.)
+    const arc = (R, Hh, w0, w1) => {
+      const pos = [];
+      const uv = [];
+      const idx = [];
+      for (let k = 0; k <= 12; k++) {
+        const u = k / 12;
+        const y = Hh * 4 * u * (1 - u);
+        const w = w0 + (w1 - w0) * u;
+        pos.push(-w / 2, y, R * u, w / 2, y, R * u);
+        uv.push(0, u, 1, u);
+        if (k) idx.push((k - 1) * 2, k * 2, (k - 1) * 2 + 1, (k - 1) * 2 + 1, k * 2, k * 2 + 1);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      return geo;
+    };
+    const g = mergeGeometries([arc(3.4, 1.4, 0.1, 1.1), arc(1.6, 0.6, 0.08, 0.5).rotateY(0.4), new THREE.PlaneGeometry(1.4, 0.5).rotateY(Math.PI / 2).translate(0, 0.25, 0.3)]);
     sprayMesh = new THREE.InstancedMesh(g, mats.spray, sprinklers.length);
     sprayMesh.renderOrder = 2;
     sprayMesh.frustumCulled = false;
@@ -903,7 +1005,10 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
         if (w !== sprayWindow) sprayMesh.setMatrixAt(k, zero);
         return;
       }
-      m.makeRotationY(t * 1.2 + p.id);
+      // An impulse sprinkler: ticking one way round in steps, sweeping back fast.
+      const ph = (t * 0.16 + p.id * 0.37) % 1;
+      const sweep = ph < 0.85 ? -1.4 + 2.8 * (Math.floor((ph / 0.85) * 28) / 28) : 1.4 - 2.8 * ((ph - 0.85) / 0.15);
+      m.makeRotationY(p.id + (p.still ? 0 : sweep));
       m.setPosition(p.x, p.y, p.z);
       sprayMesh.setMatrixAt(k, m);
     });
@@ -918,12 +1023,14 @@ export function suburbView({ map, tex, H, group, items, text, clipToConvex, merg
     treeMeshes();
     propMeshesBuild();
     sprayMeshBuild();
+    bits = shards(add);
     for (const m of mistMeshes) add(m);
     const beaconMesh = beacons.length ? new THREE.Mesh(merged(beacons), mats.beacon) : null;
     add(beaconMesh);
     return {
       animate(t, real) {
         updateSprays(t);
+        bits?.update(real);
         if (beaconMesh) beaconMesh.visible = Math.floor(real * 1.2) % 2 === 0;
         for (const m of mistMeshes) {
           const [x, z, q] = m.userData.base;

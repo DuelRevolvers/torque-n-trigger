@@ -5,7 +5,7 @@ import { DRIVERS, buildDriver, rankForPr } from '../parts/drivers.js';
 import { recordText } from '../career/career.js';
 import { rankSpread, makeBots, maxCars, PR_CLASSES, prClass } from '../career/multiplayer.js';
 import { maps, campaignEvents, eventRef, eventByRef, modeName } from '../career/playlist.js';
-import { DEVICES, devicesClash } from '../input/localInput.js';
+import { DEVICES, PADS } from '../input/localInput.js';
 import { NetSession } from '../net/session.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -27,7 +27,8 @@ export const loanerCars = () => LOANERS.map((l, k) => ({
 }));
 
 // One lobby for quick races and campaign events, solo or multiplayer. In
-// multiplayer, 1-4 local split-screen players can also open the room online
+// multiplayer, 1-4 local split-screen players (P1 on keyboard + mouse or a
+// gamepad, the rest on gamepads) can also open the room online
 // (a 5-letter code); remote players join it from their own lobby. The host runs
 // the race; the online session lives on app.net across races.
 export class LobbyScreen {
@@ -238,7 +239,7 @@ export class LobbyScreen {
     const entrants = this.entrants();
     this.bots = makeBots(s.bots, entrants.map((p) => p.pr), s.seed, cls.maxPr);
     const split = s.seats.length > 1;
-    const clash = split && s.seats.some((a, i) => s.seats.some((b, j) => j > i && devicesClash(a.device, b.device)));
+    const clash = split && s.seats.some((a, i) => s.seats.some((b, j) => j > i && a.device === b.device));
     const over = entrants.some((p) => p.pr > cls.maxPr);
     const waiting = entrants.some((p) => !p.ready);
     const total = entrants.length + s.bots;
@@ -252,7 +253,8 @@ export class LobbyScreen {
       const own = (this.app.career?.cars || []).map(opt).join('');
       return `${own ? `<optgroup label="Your garage">${own}</optgroup>` : ''}<optgroup label="Loaners">${this.loaners.map(opt).join('')}</optgroup>`;
     };
-    const deviceOptions = (sel) => DEVICES.map((d) => `<option value="${d.id}" ${d.id === sel ? 'selected' : ''}>${d.name}</option>`).join('');
+    // Only P1 can take the keyboard and mouse; extra players use gamepads.
+    const deviceOptions = (sel, i) => (i === 0 ? DEVICES : PADS).map((d) => `<option value="${d.id}" ${d.id === sel ? 'selected' : ''}>${d.name}</option>`).join('');
     const rankTag = (pr) => `<span class="rank rank-${rankForPr(pr || 0)}">${rankForPr(pr || 0)}</span><span class="seat-pr">PR ${pr ?? '?'}</span>`;
     const overNote = (pr) => (pr > cls.maxPr ? `<div class="err">Over the ${cls.name} cap (PR ${cls.maxPr}).</div>` : '');
 
@@ -260,7 +262,7 @@ export class LobbyScreen {
       const e = this.carEntry(seat.car);
       return `<div class="seat"><div class="seat-top"><b class="pn">P${i + 1}</b>
         <select class="car-pick" data-i="${i}">${carOptions(seat.car)}</select>
-        ${split ? `<select class="dev-pick" data-i="${i}">${deviceOptions(seat.device)}</select>` : ''}
+        ${split ? `<select class="dev-pick" data-i="${i}">${deviceOptions(seat.device, i)}</select>` : ''}
         ${rankTag(e.pr)}${i > 0 ? `<button class="btn small drop" data-i="${i}">&#10005;</button>` : ''}</div>
         ${overNote(e.pr)}<div class="record">${esc(e.record)}</div></div>`;
     }).join('');
@@ -297,7 +299,7 @@ export class LobbyScreen {
       <div class="hint">${esc(ev.desc || '')} Up to ${max} cars.</div>
       <h3>${solo ? 'Your car' : 'Players'}</h3>
       ${seatRows}
-      ${!solo && phone ? '<div class="hint">Split-screen isn\'t available on phones.</div>' : canAddPlayer ? '<button class="btn small add-player">+ LOCAL PLAYER</button>' : ''}
+      ${!solo && phone ? '<div class="hint">Split-screen isn\'t available on phones.</div>' : canAddPlayer ? '<button class="btn small add-player">+ LOCAL PLAYER</button><div class="hint">Each extra local player needs a gamepad.</div>' : ''}
       ${online}
       ${rankNote}
       ${clash ? '<div class="err">Two players are on the same controls. Give each player their own.</div>' : ''}
@@ -372,19 +374,9 @@ export class LobbyScreen {
     on('.start', 'click', () => this.start());
   }
 
-  // First controller not already taken; a lone full keyboard splits in two.
+  // First gamepad not already taken (there are as many as seats).
   freeDevice() {
-    const s = this.state;
-    const pads = this.app.localInput.gamepads.connected().length;
-    const order = [...DEVICES.filter((d) => d.id.startsWith('pad')).slice(0, pads).map((d) => d.id), 'kbRight', 'kbLeft'];
-    const kbSeat = s.seats.find((x) => x.device === 'kb');
-    const pick = () => order.find((id) => s.seats.every((x) => !devicesClash(x.device, id)));
-    let id = pick();
-    if (!id && kbSeat) {
-      kbSeat.device = 'kbLeft';
-      id = pick();
-    }
-    return id || 'pad0';
+    return PADS.find((d) => this.state.seats.every((x) => x.device !== d.id)).id;
   }
 
   // A joined player's view: their car and ready state; the host sets the rest.

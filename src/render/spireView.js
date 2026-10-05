@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
-import { box, obbBox, flatPoly, scaleUv, indexed } from './shapes.js';
+import { box, obbBox, flatPoly, scaleUv, indexed, tint } from './shapes.js';
 import * as G from '../sim/geom2d.js';
 
 // The Corporate Spire's own kit (used by planView): its ground draped over the
@@ -270,12 +270,15 @@ export function spireView({ map, tex, H, group, items, text, clipToConvex, merge
       const s = it.s || 1;
       const y = H(it.x, it.z);
       B.trunk.push(box(0.9 * s, 6 * s, 0.9 * s, it.x, y + 3 * s, it.z));
-      for (const [dx, dy, dz, r] of [[0, 9, 0, 4.6], [2.4, 7.6, 1.2, 3.4], [-2.2, 8, -1.4, 3.6], [0.6, 11.4, -0.8, 3.2]]) B.plant.push(new THREE.IcosahedronGeometry(r * s, 0).translate(it.x + dx * s, y + dy * s, it.z + dz * s));
+      const leaves = (g) => (it.set?.leaves ? B.painted.push(tint(g, it.set.leaves)) : B.plant.push(g));
+      for (const [dx, dy, dz, r] of [[0, 9, 0, 4.6], [2.4, 7.6, 1.2, 3.4], [-2.2, 8, -1.4, 3.6], [0.6, 11.4, -0.8, 3.2]]) leaves(new THREE.IcosahedronGeometry(r * s, 0).translate(it.x + dx * s, y + dy * s, it.z + dz * s));
     },
     streetTree(it) {
       const y = H(it.x, it.z);
       B.trunk.push(box(0.5, 4, 0.5, it.x, y + 2, it.z));
-      B.plant.push(new THREE.IcosahedronGeometry(2.8, 0).translate(it.x, y + 6, it.z), new THREE.IcosahedronGeometry(2, 0).translate(it.x + 0.8, y + 7.8, it.z - 0.4));
+      const crowns = [new THREE.IcosahedronGeometry(2.8, 0).translate(it.x, y + 6, it.z), new THREE.IcosahedronGeometry(2, 0).translate(it.x + 0.8, y + 7.8, it.z - 0.4)];
+      if (it.set?.leaves) B.painted.push(...crowns.map((g) => tint(g, it.set.leaves)));
+      else B.plant.push(...crowns);
     },
     medianTree(it) {
       B.trunk.push(box(0.35, 3, 0.35, it.x, it.y + 1.5, it.z));
@@ -291,6 +294,18 @@ export function spireView({ map, tex, H, group, items, text, clipToConvex, merge
       }
       B.goldLit.push(new THREE.ConeGeometry(r + 1, 3, 8).translate(it.x, y + 7.2, it.z));
       B.gold.push(new THREE.SphereGeometry(0.5, 8, 6).translate(it.x, y + 9, it.z));
+    },
+    parkWall(it) {
+      // A stretch of the park's stone wall, a pillar at each end (one a hair
+      // bigger, where two stretches meet).
+      const o = it.obb;
+      const y = H(o.x, o.z);
+      B.stone.push(obbBox({ ...o, hw: 0.3 }, 1.8, y - 0.4), obbBox({ ...o, hw: 0.38, hd: o.hd - 0.3 }, 0.12, y + 1.4));
+      for (const s of [-1, 1]) {
+        const [px, pz] = [o.x + Math.sin(o.yaw) * s * (o.hd - 0.45), o.z + Math.cos(o.yaw) * s * (o.hd - 0.45)];
+        const r = s < 0 ? 0.45 : 0.46;
+        B.stone.push(obbBox({ x: px, z: pz, hw: r, hd: r, yaw: o.yaw }, 2.8, y - 0.4), obbBox({ x: px, z: pz, hw: r + 0.14, hd: r + 0.14, yaw: o.yaw }, 0.22, y + 2.4));
+      }
     },
     parkGate(it) {
       B.stone.push(obbBox(it.obb, it.h, it.y));

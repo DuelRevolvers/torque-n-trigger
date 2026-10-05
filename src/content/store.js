@@ -4,7 +4,7 @@
 //   published from the T&T SDK's Studio (src/content/maps/<id>.json, shipped
 //   with the game). The career always plays these.
 // - Override: an edited copy of a district saved in this browser (the SDK's
-//   "Play in game"), in IndexedDB (content/idb.js), read into memory before
+//   "Save to Free Roam"), in IndexedDB (content/idb.js), read into memory before
 //   the game starts (initOverrides). Free roam plays it while it's on; the
 //   career never does. Reverting deletes it.
 import { districtFromDoc, migrateDoc, hasEdits, baseChanged } from './mapDoc.js';

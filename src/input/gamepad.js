@@ -46,7 +46,7 @@ export class Gamepads {
       const P = padBinds(this.settings);
       frame.throttle = Math.max(frame.throttle, b(P.throttle).value);
       frame.brake = Math.max(frame.brake, b(P.brake).value);
-      for (const a of ['handbrake', 'nitro', 'fire1', 'fire2', 'utility', 'lookBack', 'reset', 'shiftUp']) frame[a] ||= b(P[a]).pressed;
+      for (const a of ['handbrake', 'nitro', 'fire1', 'fire2', 'utility', 'lookBack', 'camera', 'reset', 'shiftUp']) frame[a] ||= b(P[a]).pressed;
       if (only === null && (pad.buttons.some((x) => x.pressed) || pad.axes.some((a) => Math.abs(a) > 0.3))) this.active = true;
     }
   }

@@ -104,6 +104,7 @@ const STEER = { max: 0.66, falloff: 16, rate: 7.5, returnRate: 10 };
 const ARCADE = {
   thrust: 3.2, // m/s^2 of extra pull at low speed...
   thrustFade: 75, // ...fading to nothing at this speed (m/s)
+  reverseThrust: 6, // m/s^2 of extra pull in reverse, up to the reverse top speed
   shiftKeep: 0.8, // share of power kept during a gear change
   latG: 1.5, // cornering the yaw assist may ask for, in g
   yawGain: 6, // how firmly the car follows the steering

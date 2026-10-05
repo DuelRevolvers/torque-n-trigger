@@ -3,7 +3,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { litMaterial, standardMaterial, glowMaterial, additiveMaterial } from './retroMaterial.js';
 import { textTexture } from './textures.js';
 import { setUvRect } from './trackView.js';
-import { box, obbBox, prism, flatPoly, drapePoly, densified, rampGeometry, tint, scaleUv } from './shapes.js';
+import { box, obbBox, prism, flatPoly, drapePoly, densified, rampGeometry, tint, scaleUv, tireGeometry } from './shapes.js';
+// (scaleUv: a barrier's concrete repeats along it, however wide it's made.)
 import { districtLayout } from '../sim/cityLayout.js';
 import { buildAuthoredStructures } from './arenaView.js';
 import { deadSignShape } from './deadSigns.js';
@@ -13,6 +14,7 @@ import { buildRoofDistrictView } from './roofView.js';
 import { underView } from './underView.js';
 import { spireView } from './spireView.js';
 import { itemDrawer } from './itemCapture.js';
+import { objectLights } from './objectLights.js';
 import { npcCar } from './npcCars.js';
 
 // A plan district (the Neon Strip on): its ground in layers (sidewalk
@@ -242,8 +244,10 @@ export function buildPlanDistrictView(map, tex, { only = null } = {}) {
   // --- Everything in the layout ---
   const speakers = [];
   const sprays = [];
-  const DRAW = makeDrawers({ B, neon, flicker, speakers, sprays, text, sign, frontOf, buildingBox, H, look });
-  const drawItem = itemDrawer(B, ...neon, texts, flicker, speakers, sprays, group, ...(kit?.buckets || []));
+  const OL = objectLights(tex); // (lights with settings of their own)
+  const jets = []; // a fountain's jets: { x, y, z, h, r, ph, still }
+  const DRAW = makeDrawers({ B, neon, flicker, speakers, sprays, text, sign, frontOf, buildingBox, H, look, OL, jets });
+  const drawItem = itemDrawer(B, ...neon, texts, flicker, speakers, sprays, jets, group, ...(kit?.buckets || []), ...OL.buckets);
   const drawOne = (it) => {
     const own = kit?.drawers[it.t];
     if (own && own(it) !== false) return;
@@ -252,6 +256,8 @@ export function buildPlanDistrictView(map, tex, { only = null } = {}) {
   // (Another district's objects placed here are drawn by its own view: districtView.js.)
   for (const it of layout.draw) if (!it.hidden && (only || !it.guest)) drawItem(it, drawOne);
   const sub = kit?.finish();
+  const lightsAnimate = OL.build(add, look.lamp);
+  const waterAnimate = fountainWater(jets, add);
 
   // --- Merge ---
   const mesh = (list, mat) => list.length && add(new THREE.Mesh(merged(list), mat));
@@ -313,6 +319,8 @@ export function buildPlanDistrictView(map, tex, { only = null } = {}) {
   group.userData.animate = (t, real = t) => {
     structures?.userData.animate(t);
     sub?.animate(t, real);
+    lightsAnimate?.(real);
+    waterAnimate?.(real);
     flickerMeshes.forEach((m, k) => {
       const f = Math.sin(real * (7 + k * 3.1)) + Math.sin(real * (13.7 + k)) * 0.8;
       m.visible = f > -0.6;
@@ -978,8 +986,49 @@ function boxUvs(g, sx, sy, sz, seed) {
 
 // The item drawers for a plan district view: one per layout item type, each
 // adding geometry to the view's buckets (ctx).
+// A fountain's water: each jet a column rising and falling, drops arcing out
+// from its top down to the basin. (still: the jets stand, no drops.)
+function fountainWater(jets, add) {
+  if (!jets.length) return null;
+  const mat = glowMaterial({ color: '#d8f4ff', intensity: 1.4 });
+  const column = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.4, 1, 1, 8).translate(0, 0.5, 0), mat, jets.length);
+  const DROPS = 10;
+  const drops = new THREE.InstancedMesh(new THREE.SphereGeometry(0.12, 5, 4), mat, jets.length * DROPS);
+  column.frustumCulled = drops.frustumCulled = false;
+  add(column);
+  add(drops);
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const P = new THREE.Vector3();
+  const S = new THREE.Vector3();
+  const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+  const update = (real) => {
+    jets.forEach((j, k) => {
+      const f = j.still ? 1 : 0.82 + 0.18 * Math.sin(real * 2.6 + j.ph * 1.3);
+      m.compose(P.set(j.x, j.y, j.z), q, S.set(j.r, j.h * f, j.r));
+      column.setMatrixAt(k, m);
+      for (let d = 0; d < DROPS; d++) {
+        if (j.still) {
+          drops.setMatrixAt(k * DROPS + d, zero);
+          continue;
+        }
+        const p = (real * 0.7 + d / DROPS + j.ph * 0.17) % 1;
+        const a = d * 2.4 + j.ph;
+        const out = j.fall * p;
+        const top = j.y + j.h * f;
+        m.compose(P.set(j.x + Math.cos(a) * out, top + 0.8 * p - (top - j.y) * p * p, j.z + Math.sin(a) * out), q, S.set(1, 1, 1));
+        drops.setMatrixAt(k * DROPS + d, m);
+      }
+    });
+    column.instanceMatrix.needsUpdate = true;
+    drops.instanceMatrix.needsUpdate = true;
+  };
+  update(0); // (where they stand from the start)
+  return update;
+}
+
 function makeDrawers(ctx) {
-  const { B, neon, flicker, speakers, sprays, text, sign, frontOf, buildingBox, H, look } = ctx;
+  const { B, neon, flicker, speakers, sprays, text, sign, frontOf, buildingBox, H, look, OL, jets } = ctx;
   const neonN = neon.length;
   const N = (k) => neon[((k % neonN) + neonN) % neonN];
   const at = (x, z) => H(x, z);
@@ -1172,6 +1221,17 @@ function makeDrawers(ctx) {
       B.gold.push(box(it.hw * 2 - 1, 0.1, it.z1 - it.z0 - 0.6, it.x, it.y - 0.05, zc));
       B.gold.push(box(it.hw * 2 + 0.3, 0.3, 0.3, it.x, it.y + 1, it.z0));
       text('THE GLOW PALACE', '#ffc850', it.x, it.y + 1.4, it.z0, 0, -1, 26);
+      B.dark.push(box(26.4, 3.8, 0.12, it.x, it.y + 1.4 + 1.75, it.z0 + 0.02)); // (a board behind the name)
+      // (A copy: columns under its corners.)
+      if (it.copy) {
+        for (const sx of [-1, 1]) {
+          for (const z of [it.z0 + 0.4, it.z1 - 0.4]) {
+            const x = it.x + sx * (it.hw - 0.4);
+            const g = at(x, z);
+            B.dark.push(box(0.5, it.y - g, 0.5, x, (it.y + g) / 2, z));
+          }
+        }
+      }
     },
     palaceFront(it) {
       text('CASINO', look.neon[0], 0, it.y + 9.5, it.top - 0.1, 0, -1, 16);
@@ -1195,10 +1255,12 @@ function makeDrawers(ctx) {
       const y = at(it.x, it.z);
       B.concrete.push(new THREE.CylinderGeometry(it.rad, it.rad + 0.4, 0.8, 24).translate(it.x, y + 0.4, it.z));
       B.screen.push(new THREE.CylinderGeometry(it.rad - 0.5, it.rad - 0.5, 0.1, 24).translate(it.x, y + 0.72, it.z));
-      B.white.push(new THREE.CylinderGeometry(0.25, 0.6, 7, 8).translate(it.x, y + 4, it.z));
+      // Its jets: rising and falling, water dropping from them (fountainWater).
+      const still = !!it.set?.still;
+      jets.push({ x: it.x, y: y + 0.75, z: it.z, h: 6.5, r: 0.6, ph: 0, fall: it.rad * 0.55, still });
       for (let q = 0; q < 6; q++) {
         const a = (q / 6) * Math.PI * 2;
-        B.white.push(new THREE.CylinderGeometry(0.1, 0.25, 3.5, 6).translate(it.x + Math.cos(a) * it.rad * 0.6, y + 2.4, it.z + Math.sin(a) * it.rad * 0.6));
+        jets.push({ x: it.x + Math.cos(a) * it.rad * 0.6, y: y + 0.75, z: it.z + Math.sin(a) * it.rad * 0.6, h: 3, r: 0.25, ph: q + 1, fall: 0.9, still });
       }
     },
     lowWall(it) {
@@ -1212,7 +1274,9 @@ function makeDrawers(ctx) {
     mast(it) {
       const y = at(it.x, it.z);
       B.steel.push(box(0.5, it.h, 0.5, it.x, y + it.h / 2 - 1, it.z));
-      B.lamp.push(box(3, 0.6, 1.2, it.x, y + it.h - 1, it.z), box(1.2, 0.6, 3, it.x, y + it.h - 1, it.z));
+      OL.head(it, B.lamp, box(3, 0.6, 1.2, it.x, y + it.h - 1, it.z), box(1.2, 0.6, 3, it.x, y + it.h - 1, it.z));
+      // (Its light on the ground round it, wider the higher it is.)
+      OL.pool(it, B.pool, Math.min(34, Math.max(12, it.h * 1.4)), (S) => new THREE.PlaneGeometry(S, S).rotateX(-Math.PI / 2).translate(it.x, y + 0.05, it.z));
     },
     booth(it) {
       const y = at(it.x, it.z);
@@ -1231,9 +1295,9 @@ function makeDrawers(ctx) {
       const o = it.obb;
       const y = at(o.x, o.z);
       B.dark.push(obbBox({ ...o, hw: o.hw - 0.2, hd: o.hd - 0.2 }, 1.1, y));
-      B.painted.push(tint(obbBox({ ...o, hw: o.hw + 0.2, hd: o.hd + 0.2 }, 0.15, y + 2.7), ['#c83a4a', '#3a8ac8', '#e0b020', '#3aa05a', '#b04dff', '#e06a2a'][it.cycle % 6]));
+      B.painted.push(tint(obbBox({ ...o, hw: o.hw + 0.2, hd: o.hd + 0.2 }, 0.15, y + 2.7), it.set?.roof || ['#c83a4a', '#3a8ac8', '#e0b020', '#3aa05a', '#b04dff', '#e06a2a'][it.cycle % 6]));
       B.steel.push(obbBox({ ...o, hw: 0.08, hd: o.hd }, 2.7, y));
-      if (it.cycle % 3 === 0) N(it.cycle).push(obbBox({ ...o, hw: o.hw + 0.22, hd: 0.06 }, 0.1, y + 2.6));
+      if (it.set?.light || it.cycle % 3 === 0) OL.colored(it.set?.light, N(it.cycle), obbBox({ ...o, hw: o.hw + 0.22, hd: 0.06 }, 0.1, y + 2.6));
     },
     foodTruck(it) {
       const o = it.obb;
@@ -1244,7 +1308,17 @@ function makeDrawers(ctx) {
     },
     lights(it) {
       // A string of bulbs across the market lane.
-      for (let q = -it.span / 2; q <= it.span / 2; q += 1.6) B.white.push(box(0.22, 0.22, 0.22, it.x - it.dz * q, it.y - Math.cos((q / it.span) * Math.PI) * 0.4, it.z + it.dx * q));
+      for (let q = -it.span / 2; q <= it.span / 2; q += 1.6) OL.head(it, B.white, box(0.22, 0.22, 0.22, it.x - it.dz * q, it.y - Math.cos((q / it.span) * Math.PI) * 0.4, it.z + it.dx * q));
+      // (Their light on the lane under them, along the string.)
+      OL.pool(it, B.pool, 7, (S) => new THREE.PlaneGeometry(it.span + 4, S).rotateX(-Math.PI / 2).rotateY(Math.atan2(-it.dx, -it.dz)).translate(it.x, at(it.x, it.z) + 0.05, it.z));
+      // (A copy: a pole at each end to hang from.)
+      if (it.copy) {
+        for (const s of [-1, 1]) {
+          const [ex, ez] = [it.x - it.dz * s * (it.span / 2), it.z + it.dx * s * (it.span / 2)];
+          const g = at(ex, ez);
+          B.steel.push(box(0.15, it.y + 0.3 - g, 0.15, ex, (it.y + 0.3 + g) / 2, ez));
+        }
+      }
     },
     marketGate(it) {
       const y = it.y;
@@ -1303,7 +1377,7 @@ function makeDrawers(ctx) {
       const shape = it.lying ? deadSignShape(it.shape, o.hw * 2, it.h - 1, o.hd * 2) : deadSignShape(it.shape, o.hw * 2, o.hd * 2, it.h - 1);
       for (const g of shape.body) B.painted.push(tint(place(g), faded));
       const tubes = shape.tube.map(place);
-      if (it.flicker) flicker.push({ geos: tubes, k: it.cycle });
+      if (it.flicker && !it.set?.still) flicker.push({ geos: tubes, k: it.cycle });
       else B.dark.push(...tubes);
     },
     bus(it) {
@@ -1316,13 +1390,14 @@ function makeDrawers(ctx) {
       const o = it.obb;
       const y = at(o.x, o.z);
       B.steel.push(obbBox({ ...o, hw: 0.4, hd: 0.4 }, it.h - 5, y));
-      B.dark.push(box(it.sign.length * 0.9 + 2, 3.4, 1, o.x, y + it.h - 2.5, o.z));
-      for (const fz of [-1, 1]) text(it.sign, look.neon[fz > 0 ? 1 : 0], o.x, y + it.h - 3.6, o.z + fz * 0.5, 0, fz, it.sign.length * 0.9);
+      const words = it.set?.text || it.sign;
+      B.dark.push(box(words.length * 0.9 + 2, 3.4, 1, o.x, y + it.h - 2.5, o.z));
+      for (const fz of [-1, 1]) text(words, it.set?.color || look.neon[fz > 0 ? 1 : 0], o.x, y + it.h - 3.6, o.z + fz * 0.5, 0, fz, words.length * 0.9);
     },
     tyres(it) {
       const o = it.obb;
       const y = at(o.x, o.z);
-      for (let k = 0; k < 4; k++) B.dark.push(new THREE.CylinderGeometry(1.2, 1.2, 0.42, 10).translate(o.x, y + 0.22 + k * 0.44, o.z));
+      for (let k = 0; k < 4; k++) B.dark.push(tireGeometry(1.2, 0.55, 0.42).translate(o.x, y + 0.22 + k * 0.44, o.z));
     },
     pole(it) {
       // A motel's pole sign: MOTEL down a tall board, a neon arrow, VACANCY under it.
@@ -1333,7 +1408,8 @@ function makeDrawers(ctx) {
       const ax = fz;
       const az = -fx;
       B.dark.push(box(1.2, 5, 5, o.x + ax * 0, y + it.h - 3, o.z, Math.atan2(fx, fz) + Math.PI / 2));
-      for (const s of [-1, 1]) text('MOTEL', look.neon[it.cycle % neonN], o.x + ax * s * 0.61, y + it.h - 4.2, o.z + az * s * 0.61, ax * s, az * s, 4.4);
+      // (On the board's two faces, which face its front and back.)
+      for (const s of [-1, 1]) text(it.set?.text || 'MOTEL', it.set?.color || look.neon[it.cycle % neonN], o.x + fx * s * 0.61, y + it.h - 4.2, o.z + fz * s * 0.61, fx * s, fz * s, 4.4);
       N(it.cycle + 1).push(box(0.3, 0.3, 4, o.x, y + it.h - 6.2, o.z, Math.atan2(ax, az)));
     },
     lamp(it) {
@@ -1341,9 +1417,8 @@ function makeDrawers(ctx) {
       const y = at(o.x, o.z);
       const [tx, tz] = it.toward;
       B.steel.push(box(0.25, 7, 0.25, o.x, y + 3.5, o.z), box(0.2, 0.2, 2.6, o.x + tx * 1.3, y + 6.9, o.z + tz * 1.3, Math.atan2(tx, tz)));
-      B.lamp.push(box(0.8, 0.18, 0.5, o.x + tx * 2.6, y + 6.75, o.z + tz * 2.6, Math.atan2(tx, tz)));
-      const pool = new THREE.PlaneGeometry(9, 9).rotateX(-Math.PI / 2).translate(o.x + tx * 4, at(o.x + tx * 4, o.z + tz * 4) + 0.05, o.z + tz * 4);
-      B.pool.push(pool);
+      OL.head(it, B.lamp, box(0.8, 0.18, 0.5, o.x + tx * 2.6, y + 6.75, o.z + tz * 2.6, Math.atan2(tx, tz)));
+      OL.pool(it, B.pool, 9, (S) => new THREE.PlaneGeometry(S, S).rotateX(-Math.PI / 2).translate(o.x + tx * 4, at(o.x + tx * 4, o.z + tz * 4) + 0.05, o.z + tz * 4));
     },
     median(it) {
       B.concrete.push(obbBox(it.obb, it.h, it.y));
@@ -1354,11 +1429,27 @@ function makeDrawers(ctx) {
       }
     },
     palm(it) {
-      // A palm on the median, a neon ring round its trunk.
-      B.trunk.push(new THREE.CylinderGeometry(0.2, 0.3, 7, 6).translate(it.x, it.y + 3.5, it.z));
-      for (let q = 0; q < 6; q++) {
-        const a = (q / 6) * Math.PI * 2;
-        B.plant.push(box(0.6, 0.2, 3.6, it.x + Math.sin(a) * 1.6, it.y + 6.9, it.z + Math.cos(a) * 1.6, a));
+      // A palm on the median: a trunk in rings, curving a little its own way,
+      // fronds rising then drooping all round, coconuts under them, a neon
+      // ring round the trunk.
+      const lean = ((((Math.round(it.x) * 7 + Math.round(it.z) * 13) % 12) + 12) % 12) * (Math.PI / 6);
+      const [lx, lz] = [Math.sin(lean), Math.cos(lean)];
+      for (let k = 0; k < 7; k++) {
+        const off = ((k + 0.5) / 7) ** 2 * 0.6;
+        B.trunk.push(new THREE.CylinderGeometry(0.27 - k * 0.012, 0.3 - k * 0.012, 0.96, 7).translate(it.x + lx * off, it.y + k + 0.5, it.z + lz * off));
+      }
+      const [tx, ty, tz] = [it.x + lx * 0.6, it.y + 7, it.z + lz * 0.6];
+      const leaf = (g) => (it.set?.leaves ? B.painted.push(tint(g, it.set.leaves)) : B.plant.push(g));
+      for (let q = 0; q < 9; q++) {
+        const a = (q / 9) * Math.PI * 2 + lean;
+        const up = 0.25 + (q % 3) * 0.1;
+        const [ex, ey] = [1.9 * Math.cos(up), 1.9 * Math.sin(up)];
+        leaf(new THREE.BoxGeometry(0.55, 0.06, 1.9).translate(0, 0, 0.95).rotateX(-up).rotateY(a).translate(tx, ty, tz));
+        leaf(new THREE.BoxGeometry(0.45, 0.06, 1.9).translate(0, 0, 0.95).rotateX(0.55).rotateY(a).translate(tx + Math.sin(a) * ex, ty + ey, tz + Math.cos(a) * ex));
+      }
+      for (let q = 0; q < 3; q++) {
+        const a = (q / 3) * Math.PI * 2 + 0.4;
+        B.trunk.push(new THREE.SphereGeometry(0.17, 6, 4).translate(tx + Math.sin(a) * 0.3, ty - 0.25, tz + Math.cos(a) * 0.3));
       }
       N(it.neon).push(new THREE.TorusGeometry(0.4, 0.07, 4, 10).rotateX(Math.PI / 2).translate(it.x, it.y + 2.6, it.z));
     },
@@ -1426,8 +1517,8 @@ function makeDrawers(ctx) {
     gate(it) {
       const o = it.obb;
       const y = at(o.x, o.z);
-      B.concrete.push(obbBox(o, 1.1, y));
-      N(0).push(obbBox({ ...o, hd: o.hd + 0.02 }, 0.12, y + 1.1));
+      B.concrete.push(scaleUv(obbBox(o, 1.1, y), Math.max(1, (Math.max(o.hw, o.hd) * 2) / 4), 1));
+      OL.colored(it.set?.top, N(0), obbBox({ ...o, hd: o.hd + 0.02 }, 0.12, y + 1.1));
     },
   };
 }

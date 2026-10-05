@@ -39,7 +39,8 @@ The owner's requirements:
 7. **Two audiences.** The owner (full tool) and players (a simpler version that
    ships with the game).
 8. **Existing districts open in the editor.**
-9. **Mouse and keyboard only** for now. Gamepad and touch come later.
+9. **Mouse and keyboard only.** (Gamepad and touch editing were built in
+   E7, then taken out: the owner's call.)
 
 Reference points: the Far Cry map editors (fly camera, terrain brushes, roads,
 object palette, instant test) and LittleBigPlanet (friendly, preset-driven,
@@ -338,9 +339,10 @@ turns it back on.
 
 - **Top bar, from the left:** Maps, district, Open, Save, Undo, Redo, Snap
   moves (and grid size), Snap turns (and step), Fog, Top view, Reset camera,
-  Orbit, Play in game, Publish (Studio), and the playtest marks button when
-  there are marks.
-- **Top bar, far right:** ▶ Test drive, Controls, then the map's name.
+  Orbit, the playtest marks button when there are marks.
+- **Top bar, far right:** Publish (Studio), Save to Free Roam (what was "Play in
+  game": free roam in this browser plays the edits), ▶ Test drive, Controls,
+  then the map's name.
 - **Left:** **Select** (always there), then tabs:
   - **Objects:** the catalogue and how to place;
   - **Terrain:** Raise / lower (or Raise and Lower), Smooth, Flatten, Paint,
@@ -379,14 +381,14 @@ turns it back on.
 | F | Focus the selection |
 | Reset camera (button) | Back to where the camera started |
 
-- **Orbit (top bar checkbox):** looking round turns the camera round the
+- **Orbit (top bar checkbox, on to start with):** looking round turns the camera round the
   selection. With nothing selected, it turns round the ground that was under
   the cursor when the right button went down; flying carries that point along.
   With Orbit off (or aiming at the sky), it turns on the spot.
 - **While flying,** every key is the flying's: Space doesn't end a road, and
   Ctrl+S doesn't save. Leaving the page asks first, because Ctrl+W closes the
   tab and a page can't stop it.
-- **Gamepad and touch** editing are in (E7).
+- **Mouse and keyboard only:** gamepad and touch editing were taken out.
 
 ### 7.3 Placing and editing objects
 
@@ -430,9 +432,53 @@ turns it back on.
   **rotation ring** round the selection and its turn buttons. The arrows
   nudge.
 - **Delete and copy:** Delete (or Backspace) deletes; Ctrl+D duplicates.
+- **Copy and paste:** Ctrl+C copies what's selected and starts placing it,
+  as if it were picked in the Objects list (it shows picked there): its ghost
+  under the cursor, a click places one, as many as you like, Space or Esc
+  stops. Ctrl+V places what was copied last, again.
+  - One object comes as it was: its style, settings, length and turn.
+  - A gadget comes with its settings.
+  - Several come together, as they stood, and turn together (the wheel or
+    Q/E); each click places them all, as one step (`session.pasteMany`).
+- **The right-click menu:** a right-click (not held to look round) opens it:
+  Copy, Paste, Duplicate and Delete. Right-clicking something that isn't
+  selected selects it first; Paste starts its ghost where the menu was opened.
 - **Snapping:** **Snap moves** (grid size) and **Snap turns** (step) are
   top-bar toggles; holding Alt turns snapping off.
-- **Placing:** one at a time, along a line, or scattered with a brush.
+- **Placing:** one at a time, along a line, or scattered with a brush. How
+  (**Place**) is on the right bar while an object is being placed, with
+  **Spacing** (how far apart) only for a line or a scatter. Placing keeps on
+  after each click, more of the same (gadgets too), until Space or Esc stops it
+  (Space is Stop placing, in Controls); one dragged in from the list is just the one.
+- **Ghosts:** whatever's being placed shows where it would go, turned as
+  it would be: an object as its box (every copy along a line, a scatter, or
+  a run's pieces); lights, drops, ramps, hazards, signs, starts and gadgets
+  in their own shape (`gadgetGhost` in `main.js`): a ramp's wedge, an oil
+  slick's or a live plate's reach, a light's post and the ground it lights,
+  a sign's board and posts, a start's car and an arrow the way it faces, a
+  moving block and how far it slides. A spawn point placed in the Arenas
+  tool faces the middle, and is red outside the arena.
+- **Fences and walls in a run** (Place: **In a run**, offered for fences,
+  walls, low walls, hedges, railings, river and sea walls, balustrades,
+  parapets, lobby and shell walls, tunnel walls, jersey barriers, and the
+  breakable fence and glass panels; `src/sdk/runs.js`):
+  - Click post after post, as a road's points: 15° steps from the last post
+    and a whole grid step long (Alt: anywhere). Click the first post to close
+    it round; Space, Enter or a double-click builds it; Backspace takes a
+    post back; Esc starts again (and again: stops placing).
+  - The run bends at each post and nowhere else. Each stretch between two
+    posts is filled with copies of the object about its own length (kept to
+    2–8 m, so a breakable panel still breaks on its own and a long wall
+    follows the ground), each made exactly its share of the stretch. A thick
+    wall's stretch reaches half its thickness past a post it turns at, so
+    its corners are closed.
+  - A copy's length is the add edit's `len` (`resized` in
+    `layoutEdits.js`): its footprint lengthened or shortened along its long
+    side, then drawn by its district's own drawer at that length (posts,
+    panels and all) and moved into place. A copy of a fence or wall shows
+    **length** in the inspector; a duplicate keeps it.
+  - The whole run is one step to undo.
+  - One at a time still places a single one, at its own length.
 - **Not built:** gizmo, box select, groups, prefabs, layers.
 
 ### 7.4 Terrain
@@ -459,7 +505,7 @@ turns it back on.
     and the brush round it moves by as much, falling off to its edge
     (`lift`). Notches in a row are one undo step, and the ground is rebuilt
     once they stop. Holding the right button, the wheel zooms. The ▲ and ▼
-    buttons, **W / S** (the Controls panel's Terrain group) and a gamepad's d-pad up / down do the same. With the toggle off, it's
+    buttons and **W / S** (the Controls panel's Terrain group) do the same. With the toggle off, it's
     separate Raise and Lower tools, held down.
   - **Smooth and Flatten** have an **Angle** (−45° to 45°):
     - Flatten makes a slope through where the stroke starts, rising the way
@@ -679,8 +725,18 @@ rain }`):
 
 ### 7.10 Test drive
 
-- **P:** drive from the cursor position, in your current garage car or a
-  chosen car.
+- **P:** drive from the cursor position, in the car made in **Customize
+  Car** or a random starter car.
+- **Customize Car** (the button left of Test drive): the test drive's car,
+  made as in the Texture Lab's showroom: the game's car model on a
+  turntable (drag turns it, the wheel zooms), a part per slot, one quality
+  (or Mixed), paint and light colours; Random, Fill all slots, Bare, Whole
+  car, Spin. Test drive in **This car** or **A random car** (a new starter
+  car each drive, as before). Kept in this browser for the game.
+- **Bots:** a free roam test drive's pause menu adds bots (ADD BOT, up to 7:
+  named drivers' cars at your car's tier, on a crossroads 35 m or more off,
+  hunting the nearest car as in an arena) and takes them all off again
+  (REMOVE BOTS).
 - **Shift+P:** test the selected event from its start, with AI.
 - **Esc:** return to the editor with the camera at the car. Changes made in
   test drive are never saved to the map.
@@ -782,6 +838,10 @@ converted to node/site ids on import. Names stay visible in the UI.
   - A start up on something puts the grid on its top: two abreast, or single
     file where that's what fits.
   - A finish up on something only counts a car that's up there (`finishY`).
+  - Whatever's placed or moved in the SDK and stands inside a race's walls is
+    solid in the race, in every district, with a top to drive on, and its ramps
+    work (`placedSolids`). A district's own things are as its race rules have
+    them (the Neon Strip's and Rustline's races only have their walls).
   - Official races have no spots and are built exactly as before.
 - **Drag races:** Place start on a street, then click the finish further
   along the same street; both can be dragged along it. Clear route works here
@@ -929,22 +989,23 @@ key can be changed. It's kept in this browser (`localStorage` `tt-sdk:keys`,
 - **Columns:** each action has a **Key** and an **Alt** key. The alts are
   only filled where they make sense; × clears one.
 - **Groups:** Flying (read only while the right button's held), Roads,
-  races and arenas (read only while placing points), Editing, View and play,
-  and Tools.
+  races, arenas and runs (read only while placing points), Editing, View and
+  play, and Tools.
   A group's keys can be the same as another group's; picking a key another
   action in the same group has swaps it over. An action's only key can't be
   taken from it.
-- **Also listed:** the fixed keys, the mouse, a gamepad and touch, in the same columns.
+- **Also listed:** the fixed keys and the mouse, in the same columns. Every
+  control the SDK has is in the panel: a new one goes in with it.
 
 | Group | Defaults |
 |---|---|
 | Flying | W A S D; Up Space (alt E); Down Ctrl (alt Q); Faster Shift. Either Shift or Ctrl works |
 | Terrain (with the Raise / lower tool) | Up a step W; Down a step S (held, a step every 150 ms); hold for 25 cm steps Alt (the wheel, W / S and the step buttons; Alt can only be bound in this group). Holding the right button, W and S fly as ever |
-| Roads, races and arenas | Stop placing points Space (an arena: close it); Road or arena: take the last point back Backspace; Road: build the street Enter (alt Num Enter; an arena: close it) |
-| Editing | Delete (alt Backspace); turn Q/E; nudge arrows; focus F; snapping on/off G; cancel/deselect Esc |
+| Roads, races, arenas and runs | Stop placing points Space (an arena: close it; a run of fence or wall: build it); Road, arena or run: take the last point back Backspace; Road: build the street Enter (alt Num Enter; an arena: close it; a run: build it) |
+| Editing | Delete (alt Backspace); turn Q/E; nudge arrows (objects, gadgets, junctions; how far: Nudge and Fine nudge, set in Controls under the keys, kept in this browser as `tt-sdk:nudge`); focus F; snapping on/off G; cancel/deselect Esc |
 | View and play | Top view Tab; Test drive P (Shift: race the event) |
 | Tools | 1–9, 0 (Select … Events); brush smaller [ and bigger ] |
-| Fixed | Undo Ctrl+Z; Redo Ctrl+Y (alt Ctrl+Shift+Z); Save Ctrl+S; Duplicate Ctrl+D; hold Alt: no snapping |
+| Fixed | Undo Ctrl+Z; Redo Ctrl+Y (alt Ctrl+Shift+Z); Save Ctrl+S; Duplicate Ctrl+D; Copy Ctrl+C; Paste Ctrl+V; the menu: right click; hold Shift: finer turns and nudges; hold Alt: no snapping; a typed slider number: Enter sets it, Esc keeps the old; Customize Car: Esc (or a click outside it) closes it, drag turns the car, wheel zooms |
 
 ## 13. Build order (milestones)
 
@@ -959,7 +1020,7 @@ Each milestone ends in something the owner can try.
 | **E4** ✓ | Roads and lots (`src/sim/planEdits.js`, `src/sdk/roads.js`): the Road tool draws a named street (lane, street or avenue; asphalt or dirt) through the points clicked, with a junction put into every street it starts, ends or crosses on (a plan's streets meet only at junctions); the district's rules trace its new blocks and fill them (buildings, lamps and all). The Lot tool sets a block's kind from those the district uses. Objects can be placed one at a time, along a line (spaced, turned to run along it) or scattered with a brush (clear of the streets). A street the plan can't build is refused and undone. **Everything already in a district can be changed or taken out:** click where there's no object to select a street (name, width, surface, delete; ring roads delete), a junction (drag or type to move it, every street through it follows; remove it), or a site (delete); in Rustline Docks (`src/sim/gridEdits.js`) a piece of street between two junctions (delete) or the row or column of streets it's on (move). Every object can be moved or deleted (for set pieces a district's moving parts run past, the SDK says what stays put: `LINKED` in `layoutEdits.js`). Renaming a street renames it everywhere it's named, events included; every street, junction, site or block change is checked against the district's events (`src/sdk/checks.js`), and one that stops any working asks whether to keep it; Publish refuses a district whose events don't all work. Rustline Docks: new streets along its grid (junction to junction, putting back pieces taken out) and block kinds. The Undercity's storm drain stays (the flash flood runs down it). Still to come: prefabs | Owner adds a new street with a junction and fills its blocks |
 | **E5** ✓ | Events (`src/sdk/events.js`; `edits.events` in the map document, applied by `applyEventEdits`): the Events tool (0) lists the district's events and boss; new sprint, circuit, drag or arena events; name, description, cars, purse, laps and start, drag length, arena mode, time and ground, rival, boss driver, modifiers; routes clicked out junction by junction (or through a site's or lot's way), drags from start to finish on a street, shortcuts from the district's ways through; the route the game builds is drawn on the map with its length (or why it can't be set up); closures, walls and jumps come from the district's own route rules. "Race it in the game" (Shift+P) and a headless AI test run (finish order and times, stuck points marked on the map, wrecks). Published, they're the career's events | Owner makes a new sprint and replaces an existing circuit in the career |
 | **E6** ✓ | Creator: the game's page runs it (`index.html?creator`, `src/boot.js`; the main menu's CREATOR), so it ships in the single-file build; Studio is `sdk.html`, the same SDK (`src/sdk/boot.js`, `page.js`; `TT_EDITION`). The Creator opens the districts the campaign has reached, has no Publish or career fields (prize money, rivals, the boss), saves to My maps (`src/content/library.js`: IndexedDB, loaded before the game starts) with export and import of `.ttmap` files, and shows first-run tips. Both editions: My maps, and a blank district (Neon Strip look: a ring road with Main Street across it, blocks to fill). In the game, the event list's "Your maps" has each map's free roam and events (no prizes, never the career); the lobby lists them, and an online host sends the map with the race's start. Blank districts come in every district's style (`src/sdk/templates.js`: Rustline's grid; the Strip's clubs; Maple Hollow's houses and lawns; Chrome Heights' rooftop; the Undercity's shacks and pillars under the deck; the Corporate Spire's monoliths; the Creator offers the styles the campaign has reached). Everything the SDK keeps is in IndexedDB (`src/content/idb.js`: maps, overrides, the last session, test drives), read into memory before the game or the SDK starts. Still to come: special assets unlocked by wins (kits are the districts reached) | A player-style run-through: make a map, make an event, race it online with a friend |
-| **E7** ✓ | Gadgets and logic (`src/sim/gadgets.js`, `src/render/gadgetView.js`; `edits.gadgets`): lift pads, gates (on a timer, or opened for a while by a linked trigger pad), trigger pads, spinning bars, moving blocks and live plates, placed from the catalogue's Gadgets, dragged, turned, set up in the inspector; they run in the arena sim (free roam and arena events), on the ground where they stand, their state in the world state (`state.triggered`), and are drawn from the sim's own heights and angles. Playtest marks: a test drive records where the car was wrecked, got stuck or was put back on the road; back in the SDK they're pins on the map (the top bar's Playtest button clears them). Gamepad editing (sticks fly, A acts at the crosshair, B/X/Y/LB/RB/d-pad/Back/Start) and touch editing (one finger as the mouse, or looking round; two to pan and pinch-zoom; a Build street button) | Owner builds a gate that a trigger pad opens and drives through it |
+| **E7** ✓ | Gadgets and logic (`src/sim/gadgets.js`, `src/render/gadgetView.js`; `edits.gadgets`): lift pads, gates (on a timer, or opened for a while by a linked trigger pad), trigger pads, spinning bars, moving blocks and live plates, placed from the catalogue's Gadgets, dragged, turned, set up in the inspector; they run in the arena sim (free roam and arena events), on the ground where they stand, their state in the world state (`state.triggered`), and are drawn from the sim's own heights and angles. Playtest marks: a test drive records where the car was wrecked, got stuck or was put back on the road; back in the SDK they're pins on the map (the top bar's Playtest button clears them). Gamepad editing and touch editing (since taken out: mouse and keyboard only) | Owner builds a gate that a trigger pad opens and drives through it |
 
 ### After E7
 
@@ -981,13 +1042,26 @@ The owner's follow-up requests, done in this order:
 | **Sidewalks at corners:** sidewalk bands over the lots, lot patches, tidy lot insets for blocks along SDK streets (official districts' lots unchanged) | `planView.js`, `src/sim/geom2d.js` (`insetPoly`), `src/sim/planMap.js` |
 | **What a road may do** (§7.5): the road tool refuses, and won't let you make, tight curves, sharp corners, narrow angles, curves across roads, roads over roads, and the rest; junction moves are checked too | `roads.js` (`roadProblem`, `nodeProblem`), `main.js` |
 | **Fly up and down on Space and Ctrl** | `main.js` |
-| **Top bar:** Test drive, Controls, then the map's name at the far right | `src/sdk/page.js` |
+| **Top bar:** Customize Car, Test drive, Controls, then the map's name at the far right | `src/sdk/page.js` |
 | **Sculpted terrain drawn in the Neon Strip and Chrome Heights** (it was only felt, not seen) | `src/render/shapes.js` (`drapePoly`), `planView.js`, `roofView.js`, `src/sim/ground.js` |
 | **Tool tabs** (Select always there; Objects, Terrain, Roads, Events); **raise and lower with the mouse wheel**, a grid step at a time (a toggle goes back to holding); **angled Smooth and Flatten**; terrain options on the right; ground surfaces painted, not in the Objects list (§7.4) | `src/sdk/page.js`, `main.js`, `src/sdk/brush.js` (`lift`, `angle`), `src/sdk/catalogue.js` |
 | **Lights and drops** (§7.9): lights with fixture, colour, height, reach, brightness, flicker and real light; health, ammo and nitro drops with amount, respawn and height; the settings on the right as sliders; an event's automatic drops can be turned off; F focuses a light, drop or gadget too | `src/sim/gadgets.js`, `src/render/lightView.js`, `src/render/pickupMesh.js`, `src/sim/event.js`, `city.js` (`cityVenue`), `cityLayout.js`, `track.js`, `raceScreen.js`, `main.js` |
 | **Ramps, hazards, signs, starts and atmosphere** (§7.9): ramps and jump kickers; oil slicks and explosive barrels; neon signs with your own words; the free roam start and arena spawn points; the Sky tab (haze, fog, darkness, rain, presets) | `src/sim/gadgets.js`, `src/render/placedView.js`, `src/render/rain.js`, `src/sim/breakables.js`, `combat.js`, `city.js` (`cityVenue`), `raceScreen.js`, `main.js` |
 | **Every district's objects in every map** (§6.3): the From filter; copies carry the object; its own district's view draws it | `src/sim/layoutEdits.js`, `src/render/districtView.js` (`guestViews`, `buildObjectsView`, `setDistrictStyles`), `planView.js`, `roofView.js`, `underView.js`, `src/sdk/main.js`, `session.js`, `catalogue.js` |
 | **Arenas drawn, redrawn and taken out** (§8.3): a path tool that snaps to blocks, sites, lots and kerbs and closes into the arena's ground; corners dragged, added and taken out; the district's own redrawn, taken out or put back; spawn points placed in it; + Arena event here. Handles are grabbed by how near they look, near or far | `src/sim/arenaEdits.js`, `city.js` (`drawnArena`), `arena.js` (`boundary`), `src/sdk/events.js` (`arenaSites`), `mapDoc.js`, `page.js`, `main.js` |
+| **Fences and walls in a run** (§7.3): Place: In a run, post to post like a road, bending only at the posts; each stretch filled with pieces made to fit (`len` on a copy, drawn at that length by its own district); closed round by clicking the first post; one step to undo; a copy's length in the inspector | `src/sdk/runs.js`, `src/sim/layoutEdits.js` (`longSide`, `resized`), `session.js`, `page.js`, `main.js` |
+| **A ghost for everything placed** (§7.3): lights, drops, ramps, hazards, signs, starts and gadgets show their shape where they'd go, as objects show their box; spawn points in the Arenas tool too | `main.js` (`gadgetGhost`, `ghostShape`) |
+| **Mouse and keyboard only; every control in the Controls panel**: gamepad and touch editing taken out; the panel lists Shift to keep placing, dragging in from the list, line and scatter placing, race route points, arena corners, typed slider numbers and the rest | `main.js`, `page.js` |
+| **Live plates: flames or sparks** (the plate's **Kind**): flames are a red-hot burner grate with tongues of fire pouring off it, sparks and smoke, and set a car alight (it burns on 2.5 s after); sparks are a live grid buzzing blue with lightning arcing across it and sparks spitting up, and shock a car (its engine down to a quarter, no nitro or weapons, for 1.2 s after; blue sparks off it). Each flame, bolt and spark goes round its own life by the clock, the same in the SDK and the game | `src/render/gadgetView.js` (`plateFire`, `plateSparks`, `flameTexture`), `src/sim/gadgets.js` (`HAZARD_KINDS`), `event.js` (`BURN_ON`, `SHOCKED_FOR`), `combat.js` (`car.shocked`), `vehicle.js`, `fx.js` (`zap`), `main.js` |
+| **Kinds of light**: the Lights list has each on its own (placed with its own height, reach, length, colour and flicker: `LIGHT_PRESETS`): lamp post, floodlight tower, wall light, bollard, string lights (a Length; a pole at each end), light bar (a neon tube; a Length), searchlight (its beam sweeping the sky), fire barrel (burning), warning beacon (its beams going round), ground light, and a light source on no fixture (only its light; the SDK marks it with a diamond). What has something to hit is solid in every event; a light changed to another fixture takes its size | `src/sim/gadgets.js` (`LIGHT_FIXTURES`, `LIGHT_PRESETS`, `lightPreset`, `lightResize`, `gadgetItems`), `src/render/lightView.js` (`lightMarkers`), `session.js` (`addGadget` settings), `main.js` |
+| **Trigger pads switch gadgets on and off**: a pad is an on/off switch: a car driving onto it (one that wasn't on it the tick before) flips it (`state.switches`); its ring is green while it's on. Its **Link a gadget** button stays lit till it's pressed again, Esc, or a gadget is clicked (that one's linked; the pad lists what it switches, × unlinks; a gadget's own Runs / Opens picks its pad too; dashed lines on the map join them). Linked, a gate is open while its pad is on; a lift pad, spinning bar or moving block runs on its own clock while it's on and stops where it is when it's off, going on from there (a bar starts the way it's turned). Unlinked, they move on their own as before | `src/sim/gadgets.js` (`LINKABLE`, `hitTriggers`, `switchLinked`), `arena.js` (`clockOf`, `gateOpen`, `switches`, `runs`), `world.js`, `gadgetView.js`, `main.js` (`startLinking`, `linkTo`, `linkLines`), `page.js` |
+| **Drive under a raised lift pad**: only its slab (0.6 m thick) and its four pillars are solid; once it's up past about 2.4 m a car drives under it. The pillars stand just off its corners (so a car drives onto it from any side) and the slab rides up and down between them | `src/sim/gadgets.js` (`liftPosts`; a lift is an `under` deck), `arena.js` (the pillars in `query`), `gadgetView.js`, `main.js` (its ghost) |
+| **The same model is one entry**: the Objects list groups an object with itself across districts (a fence, gate, street lamp, parked car, tank...) and with the same model by another name (walls: wall, low, shell, lobby, tunnel walls and parapets; sea and river walls; railings and balustrades; trees: maple, oak, palm, street, park and median; ramps: kickers, jumps, dock, pad, plaza and platform ramps): its count says how many styles; placing it, **Style** on the right picks one (each district's look and size; the one picked last is picked again). Placed ramps: one **Ramp**, its **Shape** a ramp or a jump kicker (on the right while placing, and in its inspector; a kicker from an older map is a ramp of that shape) | `src/sdk/catalogue.js` (`MODEL_OF`, `models`), `src/sim/gadgets.js` (`GADGET_SHAPES`, `shapeOf`), `main.js` (`pickStyle`, `showPlaceOpts`), `page.js` |
+| **The Objects list in sections**: what's placed and the districts' objects together, every object in a section of its own: Drops, Hazards, Starts, Gadgets, Lights, Ramps & jumps, Signs & screens, Buildings, Walls & fences, Roads & bridges, Street furniture, Trees & plants, Vehicles, Sports & play, Industrial & docks, Breakables (the spray over the Strip's seawall is an effect, not on the list) | `src/sdk/catalogue.js` (`CATEGORY`, `SECTIONS`, `GADGET_SECTION`), `main.js` (`renderCatalogue`) |
+| **Everything in Lights lights the ground**: light masts (the plan districts' and Rustline's) and hanging string lights throw their glow on the ground, as street lamps, floodlights and lamp masts did; a copy carries it (Chrome Heights' radio mast keeps its red beacons) | `src/render/planView.js` (`mast`, `lights`), `districtView.js` (`itemPoolGeos`) |
+| **Selecting several, as in Windows**: drag a box from empty ground (everything whose middle is in it: objects and gadgets, up to 1,500); Ctrl+click adds or takes one out; Ctrl+drag adds a box. Several selected: the right bar just says how many; drag any of them to move them all (snapped as one), the ring round them (or Q/E, the wheel while dragging) turns them round their middle, arrows nudge, Delete, Ctrl+D and F work on them all, each one step to undo. A click on a street or site still selects it; on empty ground, nothing | `src/sdk/session.js` (`moveMany`, `removeMany`, `duplicateMany`), `main.js` (`group`, `selection`, `boxSelect`, `groupMoves`) |
+| **A test drive start** (Objects: Starts): one per map (placing another moves it; never copied), an amber TEST arrow on the map; Test drive (P) starts there facing its arrow, else where you're looking as before. The SDK's only: the game never uses it (racing an event, Shift+P, starts on its grid) | `src/sim/gadgets.js` (`testStart`), `session.js`, `placedView.js` (`startMarkers`), `main.js` (`testDrive`) |
+| **Customize Car and bots** (§7.10): the test drive's car made part by part in the SDK (the Texture Lab's showroom: CarView on a turntable, a part per slot, quality, paint, lights), or a random starter car each drive; kept in IndexedDB (`testcar`) and built the same way by the game. A free roam test drive's pause menu adds bots (named drivers at your tier, arena AI) and takes them off | `src/sdk/carEditor.js`, `src/parts/customCar.js`, `src/main.js`, `src/screens/raceScreen.js` (`addBot`, `removeBots`), `src/ui/settingsMenu.js` |
 | **Races start and finish anywhere, really** (§8.3): off the streets and up on things, never inside them; route points anywhere; the grid fits or it's flagged; a warning where a race runs into something. **Place start works on circuits** (a panel field had the button's id) | `main.js`, `src/sim/routePoints.js`, `planRoute.js`, `city.js`, `track.js` (tops, ramps), `event.js`, `world.js`, `checks.js`, `trackView.js` |
 
 ## 14. Risks
