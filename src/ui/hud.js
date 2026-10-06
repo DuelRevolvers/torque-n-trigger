@@ -204,7 +204,7 @@ export class Hud {
     const speed = Math.round(units === 'mph' ? kmh * 0.6214 : kmh);
     const dialMax = units === 'mph' ? 250 : 400;
     const R = touchLayout ? 26 : 40;
-    const gx = touchLayout ? Math.round(W / 2) : W - R - 28;
+    const gx = touchLayout ? Math.round(W / 2) : W - R - 40;
     const gy = touchLayout ? R + 6 : H - R - 8;
     const face = this.dial(R, dialMax, !touchLayout);
     ctx.drawImage(face, gx - R - 4, gy - R - 4);
@@ -223,17 +223,17 @@ export class Hud {
     if (!touchLayout) text(units === 'mph' ? 'MPH' : 'KM/H', gx + 0.5, ry + 14, { color: AMBER[0], align: 'center', shadow: null });
 
     // Boost: a capsule of LED segments over a red reserve cell, draining while a
-    // charge burns (its top segment flickers); ticks mark each charge.
+    // charge burns (its top segment flickers), and beside it a cell per charge.
     const n = car.nitro;
     const bw = 12;
     const bh = touchLayout ? 46 : 64;
     const bx = gx + R + 8;
     const by = gy + R - bh + 2;
-    if (!touchLayout) text('BOOST', bx + bw, by - 10, { color: LABEL, align: 'right' });
+    if (!touchLayout) text('BOOST', bx + bw + 10, by - 10, { color: LABEL, align: 'right' });
     panel(bx, by, bw, bh, WELL, METAL_HI, METAL_LO, 3);
     outline(bx + 1, by + 1, bw - 2, bh - 2, METAL_LO, METAL, 2);
     const charges = params.nitro.charges;
-    const fill = n.active > 0 ? (n.charges + n.active / params.nitro.duration) / charges : (n.charges + (n.charges < charges ? n.recharge / params.nitro.rechargeTime : 0)) / charges;
+    const fill = !charges ? 0 : n.active > 0 ? (n.charges + n.active / params.nitro.duration) / charges : (n.charges + (n.charges < charges ? n.recharge / params.nitro.rechargeTime : 0)) / charges;
     const cells = Math.floor((bh - 7) / 4) + 1;
     const lit = Math.round(Math.min(1, fill) * cells);
     for (let i = 0; i < cells; i++) {
@@ -243,7 +243,27 @@ export class Hud {
       rect(bx + 3, y, bw - 6, 3, on ? (reserve ? RED[0] : '#38c8ff') : reserve ? '#3a1010' : UNLIT);
       if (on) rect(bx + 3, y, bw - 6, 1, reserve ? '#ffa090' : '#b8f0ff');
     }
-    for (let k = 1; k < charges; k++) rect(bx + bw, Math.round(by + bh - 3 - ((bh - 6) * k) / charges), 2, 1, METAL_HI);
+    // Charge cells, bottom up: lit when ready, flashing while burning, filling
+    // while recharging, dark once used.
+    if (charges > 0) {
+      const cx = bx + bw + 1;
+      const ch = charges * 9 + 2;
+      const cy = by + bh - ch;
+      well(cx, cy, 9, ch);
+      for (let k = 0; k < charges; k++) {
+        const y = cy + charges * 9 - 7 - k * 9;
+        const ready = k < n.charges;
+        const burning = n.active > 0 && k === n.charges;
+        rect(cx + 2, y, 5, 7, UNLIT);
+        if (ready || (burning && blink)) {
+          rect(cx + 2, y, 5, 7, burning ? '#ffffff' : '#38c8ff');
+          rect(cx + 2, y, 5, 1, '#b8f0ff');
+        } else if (!burning && k === n.charges) {
+          const f = Math.round(Math.min(1, n.recharge / params.nitro.rechargeTime) * 7);
+          rect(cx + 2, y + 7 - f, 5, f, '#1c6a8a');
+        }
+      }
+    }
 
     // The main panel, bottom-left (top-left on touch, clear of the steering pad):
     // health across the top; ammo with the weapon icon and heat, the secondary,
