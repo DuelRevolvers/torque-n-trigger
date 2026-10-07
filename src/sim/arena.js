@@ -18,6 +18,7 @@ import { wetAt } from './sprinklers.js';
 import { floodAt, inSurge, sumpWetAt } from './flood.js';
 import { WATER_DROP } from './ground.js';
 import { LIFT_POST } from './gadgets.js';
+import { fitsCar, onFoot } from './track.js';
 
 const WALL_DIST = 1000;
 const WATER = { drop: WATER_DROP, respawn: true }; // painted water (def.waterAt)
@@ -118,6 +119,9 @@ class Arena {
     this.switches = {}; // which trigger pads are switched on (world state)
     this.runs = {}; // the clocks of the gadgets trigger pads switch: { gadget: { acc, since } } (world state)
     if (def.gustExposure) this.gustExposure = (car) => def.gustExposure(car.pos.x, car.pos.z);
+    // The obstacles a car fits on top of (roofs, containers), over the floor under them.
+    const floor = (o) => (this.heightAt ? this.heightAt(o.x + this.cx, o.z + this.cz) - this.y0 : 0);
+    this.drivable = new Set(def.obstacles.filter((o) => fitsCar(o, () => floor(o))));
     if (def.obstacles.length > 64) {
       this.grid = new Map();
       for (const o of def.obstacles) {
@@ -404,6 +408,12 @@ class Arena {
       }
     };
     for (const o of this.nearObstacles(x, z)) {
+      if (ly !== undefined && this.drivable.has(o) && ly >= (o.y || 0) + o.h - 0.1) {
+        // Up on something a car fits on (a roof, a container): its top is the ground.
+        const top = (o.y || 0) + o.h;
+        if (top > g.h && onFoot(o, x, z)) Object.assign(g, { h: top, nx: 0, ny: 1, nz: 0, top: true, surface: 0 });
+        continue;
+      }
       if (ly !== undefined && o.h && ly > (o.y || 0) + o.h + 0.3) continue; // flying over it
       if (ly !== undefined && (o.y || 0) > ly + 2.5) continue; // driving under it (the Palace Underpass)
       if (o.poly) polyWall(o);

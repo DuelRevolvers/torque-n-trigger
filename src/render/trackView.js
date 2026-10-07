@@ -6,7 +6,7 @@ import { lockdownAt } from '../sim/lockdown.js';
 import { districtLayout } from '../sim/cityLayout.js';
 import { SIM_DT } from '../config.js';
 import * as G from '../sim/geom2d.js';
-import { onFoot } from '../sim/track.js';
+import { onFoot, END_RUN } from '../sim/track.js';
 
 const BARRIER_HEIGHT = 1.1;
 const LAMP_SPACING = 36;
@@ -55,6 +55,7 @@ export function buildTrackView(track, tex, opts = {}) {
   // (And in the Undercity: its streets, cuts, tunnel and drain are the road.)
   const suburb = !!opts.look?.suburb || opts.look?.closures === 'transporters' || !!opts.look?.under || !!opts.look?.spire;
   if (!suburb) buildRoad(group, track, mats, groundY, { wallSkip: branches.length ? inBranch : null });
+  group.add(endPens(track, mats.barrier));
   for (const br of branches) {
     if (!suburb) buildRoad(group, br.track, mats, groundY, { lift: 0.03, wallSkip: inMain, roadMat: branchMaterial(br.kind, tex, mats) });
     group.add(beacons(br.track));
@@ -1081,6 +1082,23 @@ const pointAt = (track) => (i, lateral, dy = 0) => {
 
 // One road: surface, curbs, shoulders, barriers (with optional gaps), skirts
 // down to the ground, and chevrons on its jump kickers.
+// Past each open end (a sprint's start and finish), the barriers the sim
+// has there (track.ends): on along both walls to one across the road.
+function endPens(track, material) {
+  const parts = [];
+  for (const e of track.ends || []) {
+    const yaw = Math.atan2(e.ox, e.oz);
+    const y = e.y + BARRIER_HEIGHT / 2;
+    parts.push(new THREE.BoxGeometry(2 * e.wall + 0.6, BARRIER_HEIGHT, 0.6).rotateY(yaw).translate(e.x, y, e.z));
+    for (const side of [-1, 1]) {
+      const x = track.x[e.k] + e.ox * (END_RUN / 2) + track.rx[e.k] * side * e.wall;
+      const z = track.z[e.k] + e.oz * (END_RUN / 2) + track.rz[e.k] * side * e.wall;
+      parts.push(new THREE.BoxGeometry(0.6, BARRIER_HEIGHT, END_RUN).rotateY(yaw).translate(x, y, z));
+    }
+  }
+  return parts.length ? new THREE.Mesh(mergeGeometries(parts), material) : new THREE.Group();
+}
+
 function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roadMat = null } = {}) {
   const hw = track.halfWidth;
   const curbOuter = hw + track.curbWidth;
