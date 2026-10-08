@@ -20,8 +20,11 @@ export const PAD = buildTrack({
   points: [[0, 0, 100], [0, 0, -1000], [0, 0, -2500], [0, 0, -4000]],
 });
 
+// On an open track (the strips above, both running -Z) the car starts 10 m in
+// from the start: the grid sits by the finish, where the end barrier stops it.
 export function makeWorld(track = STRAIGHT, params = TEST_CAR) {
-  return createWorld({ track, cars: [{ params }] });
+  const poses = track.closed ? null : [{ pos: { x: track.x[0], y: track.y[0] + 0.9, z: track.z[0] - 10 }, yaw: 0 }];
+  return createWorld({ track, cars: [{ params }], poses });
 }
 
 export function run(world, seconds, inputFn) {
