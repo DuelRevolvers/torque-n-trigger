@@ -74,10 +74,15 @@ test('circuit: 3 laps complete; the pit zone heals', () => {
 
 test('drag: manual shifting, launch boost, false starts, rear weapons only', () => {
   const { world } = setup('quarter-mile', { count: 2 });
-  run(world, 40);
   const ev = world.state.event;
+  // (The top gear each reached: past the line, the barrier at the strip's end stops them.)
+  const top = [0, 0];
+  for (let t = 0; t < 40; t += 0.25) {
+    run(world, 0.25);
+    world.state.cars.forEach((c, i) => (top[i] = Math.max(top[i], c.gear)));
+  }
   assert.equal(ev.finished.length, 2);
-  assert.ok(world.state.cars.every((c) => c.gear >= 3), 'AI shifted up');
+  assert.ok(top.every((g) => g >= 3), `AI shifted up (top gears ${top})`);
   assert.ok(world.state.projectiles.length === 0);
 
   // Car 0 jumps the start: locked for a second after GO.
