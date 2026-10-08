@@ -16,7 +16,7 @@ import { DRIVERS, buildDriver, tierForPr } from '../parts/drivers.js';
 import { partType, partName } from '../parts/catalog.js';
 import { saveCareer, recordResult, recordText } from '../career/career.js';
 import { DISTRICTS } from '../career/districts.js';
-import { EVENTS, computeRewards, rollSalvage, ordinal } from '../career/events.js';
+import { EVENTS, computeRewards, rollSalvage, ordinal, BONUS, tierScale } from '../career/events.js';
 import { PALETTE } from '../render/textures.js';
 import { buildTrackView } from '../render/trackView.js';
 import { buildCityView } from '../render/cityView.js';
@@ -313,6 +313,7 @@ export class RaceScreen {
     this.setupNet();
     this.prevPoses = this.capturePoses();
     this.victims = new Set();
+    this.slamShown = {}; // 'player:car' -> when SLAM! last showed
     this.pickupMeshes = this.world.state.event.pickups.map((pk) => {
       const m = makePickupMesh(pk.type);
       m.position.set(pk.x, pk.y, pk.z);
@@ -668,10 +669,25 @@ export class RaceScreen {
       for (let p = 0; p < this.humans; p++) {
         if ((e.type === 'hit' && e.car === p) || (e.type === 'crash' && (e.a === p || e.b === p))) this.shakes[p] = Math.min(0.5, this.shakes[p] + 0.15);
         if (e.type === 'wreck' || e.type === 'explosion') this.shakes[p] = Math.min(0.6, this.shakes[p] + 0.25);
-        if (e.type === 'wreck' && e.by === p && e.car !== p) {
-          if (!this.mp) this.victims.add(e.car);
-          this.popup(`TAKEDOWN! ${this.names[e.car]}`, PALETTE.pink, p);
+        // Takedowns (by guns or physical, once credited), and the bonuses on top.
+        if (e.type === 'takedown' && e.car === p && e.victim !== p) {
+          if (!this.mp) this.victims.add(e.victim);
+          if (e.signature) this.popup(`SIGNATURE: ${e.signature.toUpperCase()}`, PALETTE.amber, p);
+          else this.popup(`${e.psych ? 'PSYCH OUT' : 'TAKEDOWN'}! ${this.names[e.victim]}`, PALETTE.pink, p);
+          if (e.revenge) this.popup('REVENGE!', PALETTE.pink, p);
+          if (e.double) this.popup('DOUBLE TAKEDOWN!', PALETTE.amber, p);
         }
+        if (e.type === 'takedown' && e.victim === p && e.car !== p) this.popup(`WRECKED BY ${this.names[e.car]}`, PALETTE.pink, p);
+        // A side slam or T-bone dealt (once per 1.5 s per car hit, so trading paint doesn't fill the stack).
+        if (e.type === 'contact' && e.attacker === p && (e.label === 'slam' || e.label === 'huge') && e.geo !== 'shunt' && e.geo !== 'headOn') {
+          const key = `${p}:${e.victim}`;
+          if (!(this.time - (this.slamShown[key] ?? -9) < 1.5)) {
+            this.slamShown[key] = this.time;
+            this.popup(e.geo === 'tbone' ? 'T-BONE!' : 'SLAM!', PALETTE.cyan, p);
+          }
+        }
+        if (e.type === 'lucky' && e.car === p) this.popup(`LUCKY! +$${Math.round(BONUS.lucky * tierScale(this.tier || 0))}`, PALETTE.green, p);
+        if (e.type === 'lucky' && e.by === p) this.popup('DENIED', PALETTE.cyan, p);
         if (e.car === p) {
           if (e.type === 'style') this.popup(`${e.kind} +$${e.amount}`, PALETTE.amber, p);
           if (e.type === 'launch') this.popup('PERFECT LAUNCH!', PALETTE.green, p);
@@ -783,6 +799,7 @@ export class RaceScreen {
     const salvage = rollSalvage(victims.filter((i) => i !== this.specialIndex).map((i) => this.builds[i]), this.seed ^ 0xa5a5);
     let bossBeaten = false;
     let unlocked = null;
+    const newSpots = [];
     if (this.def.boss && career && this.careerCar) {
       const bossRank = order.findIndex((r) => r.id === this.specialIndex);
       bossBeaten = place - 1 < bossRank;
@@ -808,7 +825,18 @@ export class RaceScreen {
       if (this.def.type !== 'free' && this.def.district && !this.def.custom) {
         const second = order[1];
         const margin = ev.type !== 'arena' && place === 1 ? (second?.finished ? second.time - order[0].time : 30) : 0;
-        recordFeats(career, { type: this.def.type, district: this.def.district, place, takedowns: player.takedowns || 0, wrecks: player.wrecks || 0, margin });
+        recordFeats(career, { type: this.def.type, district: this.def.district, place, takedowns: player.takedowns || 0, wrecks: player.wrecks || 0, margin, revenges: player.contact.revenges, signatures: player.contact.signatures.length, rams: player.contact.rams });
+      }
+      // Signature spots: each one counts once per career (B3's collectibles).
+      if (this.def.type !== 'free') {
+        const at = this.def.id ?? this.def.key ?? this.def.name;
+        career.signatures ??= [];
+        for (const name of new Set(player.contact.signatures)) {
+          const key = `${at}|${name}`;
+          if (career.signatures.includes(key)) continue;
+          career.signatures.push(key);
+          newSpots.push(name);
+        }
       }
       career.completed ??= [];
       // Best result per event, shown on its card afterwards.
@@ -840,6 +868,7 @@ export class RaceScreen {
       <h1>${esc(this.def.name)}</h1>
       <h2>${ordinal(place)} place</h2>
       ${banner}
+      ${newSpots.length ? `<div class="boss-banner">SIGNATURE SPOT${newSpots.length > 1 ? 'S' : ''} FOUND: ${newSpots.map((n) => esc(n.toUpperCase())).join(', ')} (${career.signatures.length} found)</div>` : ''}
       ${fresh.length ? `<div class="boss-banner">NEW IN THE CREATOR: ${fresh.map((s) => esc(s.name)).join(', ')}</div>` : ''}
       <table class="standings">${rows}</table>
       <h3>Winnings</h3>${lines}<div class="reward-line total"><span>Total</span><b>$${rewards.total}</b></div>

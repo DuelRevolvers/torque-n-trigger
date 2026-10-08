@@ -41,10 +41,11 @@ export const SPECIALS = [
   { id: 'spire', name: 'The Spire', types: ['spire'], unlock: { boss: 'spire' } },
 ];
 
-const METRICS = ['wins', 'podiums', 'takedowns', 'clean'];
+const METRICS = ['wins', 'podiums', 'takedowns', 'clean', 'revenges', 'signatures', 'rams'];
 
 // A race's result, into the career's tally. r: { type, district, place,
-// takedowns, wrecks, margin (seconds ahead of second, on a win) }.
+// takedowns, wrecks, margin (seconds ahead of second, on a win), revenges,
+// signatures (signature takedowns), rams (takedowns by wall, car hit or tip-over) }.
 export function recordFeats(career, r) {
   const T = (career.tally ||= {});
   const keys = (metric) => [r.type, ''].flatMap((t) => [r.district, ''].map((d) => `${metric}|${t}|${d}`));
@@ -56,6 +57,9 @@ export function recordFeats(career, r) {
   add('podiums', r.place > 0 && r.place <= 3 ? 1 : 0);
   add('takedowns', r.takedowns || 0);
   add('clean', win && !r.wrecks ? 1 : 0);
+  add('revenges', r.revenges || 0);
+  add('signatures', r.signatures || 0);
+  add('rams', r.rams || 0);
   if (win && r.margin > 0) for (const k of keys('margin')) T[k] = Math.max(T[k] || 0, r.margin);
 }
 
@@ -81,6 +85,9 @@ export function triggerText(u) {
   if (u.wins !== undefined) return `Win ${u.wins === 1 ? (u.type ? `a ${TYPE_NAMES[u.type]}` : 'a race') : `${u.wins} ${kind(u.wins)}`}${where}`;
   if (u.podiums !== undefined) return `Finish in the top three ${u.podiums} time${u.podiums === 1 ? '' : 's'}${u.type ? ` in ${kind(2)}` : ''}${where}`;
   if (u.takedowns !== undefined) return `Take down ${u.takedowns} cars${u.type ? ` in ${kind(2)}` : ''}${where}`;
+  if (u.revenges !== undefined) return `Get revenge ${u.revenges} time${u.revenges === 1 ? '' : 's'}${u.type ? ` in ${kind(2)}` : ''}${where}`;
+  if (u.signatures !== undefined) return `Make ${u.signatures} signature takedown${u.signatures === 1 ? '' : 's'}${u.type ? ` in ${kind(2)}` : ''}${where}`;
+  if (u.rams !== undefined) return `Ram ${u.rams} cars to a wreck${u.type ? ` in ${kind(2)}` : ''}${where}`;
   if (u.clean !== undefined) return `Win ${u.clean === 1 ? (u.type ? `a ${TYPE_NAMES[u.type]}` : 'a race') : `${u.clean} ${kind(u.clean)}`}${where} without being wrecked`;
   return '';
 }

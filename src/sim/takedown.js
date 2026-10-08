@@ -63,7 +63,8 @@ function candidates(world, v) {
 export function queueCredit(world, v, cause) {
   const cands = candidates(world, v);
   if (!cands.length) return;
-  (world.state.credits ||= []).push({ victim: v, tick: world.state.tick, cause, cands });
+  // (s: where it crashed along the route, for signature spots.)
+  (world.state.credits ||= []).push({ victim: v, tick: world.state.tick, cause, cands, s: world.state.cars[v].trackS });
 }
 
 // The car to credit for a ring-out: whoever slammed it in the last 2 s, else
@@ -75,11 +76,25 @@ export function ringOutCredit(world, v) {
   return cars[v].lastHitBy >= 0 && within(tick, cars[v].lastHitTick ?? -1, CREDIT.weaponWindow) ? cars[v].lastHitBy : -1;
 }
 
-// Pays a takedown of v to x: the count, revenge, and a 'takedown' event.
-export function award(world, x, v, cause, psych = false) {
+const RAMS = new Set(['wall', 'car', 'tipOver']); // physical takedowns
+
+// The signature spot (a named stretch of the route) at track position s, or null.
+// A spot whose start is past its end runs over the lap line.
+export function signatureAt(ev, s) {
+  return (ev?.signatures || []).find((sp) => (sp.s0 <= sp.s1 ? s >= sp.s0 && s <= sp.s1 : s >= sp.s0 || s <= sp.s1)) || null;
+}
+
+// Pays a takedown of v to x: the count, revenge, doubles, a signature spot (a
+// wall crash inside one, s: where along the route), and a 'takedown' event.
+export function award(world, x, v, cause, psych = false, s = world.state.cars[v].trackS) {
   const { cars, tick } = world.state;
   const X = cars[x].contact;
   cars[x].takedowns++;
+  const double = within(tick, X.lastVictimTick, CREDIT.doubleWindow);
+  if (double) X.doubles++;
+  if (RAMS.has(cause)) X.rams++;
+  const spot = cause === 'wall' && s !== undefined ? signatureAt(world.state.event, s) : null;
+  if (spot) X.signatures.push(spot.name);
   const revenge = !!X.grudge[v];
   if (revenge) {
     delete X.grudge[v];
@@ -88,7 +103,7 @@ export function award(world, x, v, cause, psych = false) {
   X.lastVictim = v;
   X.lastVictimTick = tick;
   cars[v].contact.takedownCause = cause;
-  world.events.push({ type: 'takedown', car: x, victim: v, cause, psych, revenge });
+  world.events.push({ type: 'takedown', car: x, victim: v, cause, psych, revenge, double, signature: spot?.name ?? null });
 }
 
 // Tailgating: a car close behind another, inside a narrow cone, for long enough psychs it out.
@@ -146,7 +161,7 @@ export function updateTakedowns(world, wreckPhysical) {
   state.credits = state.credits.filter((p) => {
     if (!all && state.tick - p.tick < CREDIT.confirm * SIM_HZ) return true;
     const ok = p.cands.find((o) => !state.cars[o.by].wrecked && !((state.cars[o.by].wreckTick ?? -1) >= p.tick));
-    if (ok) award(world, ok.by, p.victim, p.cause, ok.psych);
+    if (ok) award(world, ok.by, p.victim, p.cause, ok.psych, p.s);
     return false;
   });
 }

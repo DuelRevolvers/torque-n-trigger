@@ -19,6 +19,7 @@ export const newContact = () => ({
   lastVictim: -1, lastVictimTick: -1,
   tailgate: -1, tailgateSecs: 0, psychedBy: -1, psychTick: -1,
   takedownCause: null, revenges: 0, lucky: 0, denied: 0, luckyTick: -1,
+  doubles: 0, rams: 0, signatures: [], // (this event's takedown bonuses: doubles, physical takedowns, signature spot names)
 });
 
 const flat = (v) => {

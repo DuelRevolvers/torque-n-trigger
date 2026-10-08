@@ -35,13 +35,22 @@ export const EVENTS = [
 // Share of the purse by finishing place.
 const PLACE_SHARE = [0.5, 0.25, 0.12, 0.07, 0.04, 0.02, 0, 0];
 const TAKEDOWN_BONUS = 150;
+// Takedown bonuses on top (B3's rewards, scaled to T&T's cash; GUESS values).
+export const BONUS = { signature: 350, revenge: 100, double: 100, lucky: 25 };
+export const tierScale = (tier) => 1 + tier * 0.5;
 
 export function computeRewards(event, place, playerCar, tier) {
-  const scale = 1 + tier * 0.5;
+  const scale = tierScale(tier);
   const lines = [];
   const placeCash = Math.round(event.purse * scale * (PLACE_SHARE[place - 1] || 0));
   lines.push([`${ordinal(place)} place`, placeCash]);
   if (playerCar.takedowns) lines.push([`Takedowns x${playerCar.takedowns}`, Math.round(playerCar.takedowns * TAKEDOWN_BONUS * scale)]);
+  const c = playerCar.contact || {};
+  const bonus = (label, n, cash) => n && lines.push([`${label} x${n}`, Math.round(n * cash * scale)]);
+  bonus('Signature takedowns', c.signatures?.length || 0, BONUS.signature);
+  bonus('Revenge', c.revenges, BONUS.revenge);
+  bonus('Double takedowns', c.doubles, BONUS.double);
+  bonus('Lucky escapes', c.lucky, BONUS.lucky);
   if (playerCar.style?.cash) lines.push(['Style (drifts, air, near misses)', playerCar.style.cash]);
   return { lines, total: lines.reduce((s, [, v]) => s + v, 0) };
 }

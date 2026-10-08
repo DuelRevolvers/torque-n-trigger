@@ -29,6 +29,7 @@ export function createEventState(def, track) {
     laps: def.laps || 0,
     timeLimit: def.timeLimit || 0,
     pit: def.pit ? resolvePit(def.pit, track) : null,
+    signatures: track.isArena ? [] : (def.signatures || []).map((sp) => resolveSpot(sp, track)),
     finishS: def.finishS ?? track.finishS ?? (track.isArena ? 0 : track.length - 25),
     finishY: track.finishY ?? null, // (a finish up on something: only a car up there finishes)
     weapons: def.type === 'drag' ? 'rear' : 'all',
@@ -64,6 +65,16 @@ export function initEventCar(car, ev) {
 export function resolvePit(pit, track) {
   const at = (s) => (s < 0 ? track.length + s : s);
   return { ...pit, s0: at(pit.s0), s1: at(pit.s1) };
+}
+
+// A signature takedown spot: a named stretch of the route, given as track
+// progress (s0, s1; negative from the end of the lap) or as the two points
+// clicked in the T&T SDK (from, to: [x, z]), in the race's direction.
+export function resolveSpot(sp, track) {
+  const at = ([x, z]) => track.query(x, z, -1).s;
+  let { s0, s1 } = sp.from ? { s0: at(sp.from), s1: at(sp.to) } : resolvePit(sp, track);
+  if (!track.closed && s0 > s1) [s0, s1] = [s1, s0];
+  return { name: sp.name, s0, s1 };
 }
 
 // Grid positions per event type.

@@ -1752,7 +1752,10 @@ function renderEvents() {
         <div class="row"><button id="ev-reverse" title="Race it the other way round"${r.path.length < 2 ? ' disabled' : ''}>⇄ Swap direction</button><button id="ev-clear">Clear route</button></div>
         <h4>Shortcuts</h4>
         <div class="row"><button id="ev-cut" class="${evStage === 'cut' ? 'on' : ''}" title="Click on the route where it leaves, then where it goes, then back on the route further on"${r.path.length < 2 ? ' disabled' : ''}>✂ Draw shortcut</button></div>
-        <div class="chips">${(r.shortcuts || []).map((c, k) => `<span class="chip">${esc(typeof c === 'string' ? `Shortcut: ${c}` : `Shortcut ${k + 1}`)}<b data-cut-drop="${k}" title="Take it out">×</b></span>`).join('') || '<span class="note">None.</span>'}</div>` : ''}
+        <div class="chips">${(r.shortcuts || []).map((c, k) => `<span class="chip">${esc(typeof c === 'string' ? `Shortcut: ${c}` : `Shortcut ${k + 1}`)}<b data-cut-drop="${k}" title="Take it out">×</b></span>`).join('') || '<span class="note">None.</span>'}</div>
+        <h4>Signature spots</h4>
+        <div class="row"><button id="ev-sig" class="${evStage === 'sig' ? 'on' : ''}" title="A stretch of the route: a car wrecked into a wall there is a signature takedown. Click where it starts on the route, then where it ends"${r.path.length < 2 ? ' disabled' : ''}>★ Mark signature spot</button></div>
+        ${(d.signatures || []).map((sp, k) => `<div class="row"><input data-sig-name="${k}" type="text" maxlength="24" value="${esc(sp.name)}" title="Its name, shown when someone is taken down there" /><button data-sig-drop="${k}" title="Take it out">×</button></div>`).join('') || '<p class="note">None.</p>'}` : ''}
       ${r.kind === 'drag' ? `<div class="row"><button id="ev-start" class="${evStage === 'start' ? 'on' : ''}" title="Then click the start on a street">⚑ Place start</button><button id="ev-reverse" title="Race it the other way down the street"${r.along && r.to !== null && r.to !== undefined ? '' : ' disabled'}>⇄ Swap direction</button><button id="ev-clear">Clear route</button></div>
         <p class="note">${r.along ? `Along ${esc(r.along)}. ` : ''}${routeStageText(r)}</p>` : ''}
       <div id="ev-preview">${previewText()}</div>
@@ -1869,6 +1872,26 @@ function bindEvents() {
     hint();
     drawEventMarks();
   });
+  $('ev-sig')?.addEventListener('click', () => {
+    if (evStage === 'sig') return stopCut();
+    if (!evPreview?.pts) return toast('The route has to be set up first.');
+    evStage = 'sig';
+    evCut = [];
+    evSel = null;
+    renderEvents();
+    hint();
+    drawEventMarks();
+  });
+  panel.querySelectorAll('[data-sig-name]').forEach((el) =>
+    el.addEventListener('input', () => {
+      evDraft.signatures[Number(el.dataset.sigName)].name = el.value.trim() || `Spot ${Number(el.dataset.sigName) + 1}`;
+    }));
+  panel.querySelectorAll('[data-sig-drop]').forEach((el) =>
+    el.addEventListener('click', () => {
+      evDraft.signatures.splice(Number(el.dataset.sigDrop), 1);
+      if (!evDraft.signatures.length) delete evDraft.signatures;
+      renderEvents();
+    }));
   $('ev-start')?.addEventListener('click', () => {
     evStage = 'start';
     evSel = null;
@@ -3201,6 +3224,7 @@ canvas.addEventListener('mousedown', (e) => {
     if (!g) return;
     const r = evDraft?.route;
     if (evStage === 'cut' && r?.path) return cutClick(g);
+    if (evStage === 'sig' && r?.path) return sigClick(g);
     if ((r?.path || r?.kind === 'drag') && evStage !== 'start') {
       const at = routePointAt(g);
       // (Ctrl+click a point: taken out.)
@@ -3684,8 +3708,8 @@ window.addEventListener('keydown', (e) => {
   }
   // Placing a race: stopping, the last point is the finish; Delete takes out the selected point.
   if (racePlacing) {
-    // Drawing a shortcut: take back a point, or stop (what's drawn so far is dropped).
-    if (evStage === 'cut' && (place === 'backPoint' || place === 'endPlacing' || act === 'cancel')) {
+    // Drawing a shortcut or marking a signature spot: take back a point, or stop (what's drawn so far is dropped).
+    if ((evStage === 'cut' || evStage === 'sig') && (place === 'backPoint' || place === 'endPlacing' || act === 'cancel')) {
       e.preventDefault();
       if (place === 'backPoint' && evCut?.length) {
         evCut.pop();
@@ -4826,7 +4850,7 @@ const MOUSE = [
   ['Look around, and fly with the keys', 'Hold right'], ['Pan', 'Middle drag'], ['Zoom', 'Wheel'], ['Turn while moving or placing (Shift: 1°)', 'Wheel'],
   ['Raise / lower: a grid step up or down', 'Wheel'], ['Raise / lower: a 25 cm step up or down', '{fine} + wheel'], ['Raise / lower: zoom', 'Hold right + wheel'], ['Placing or dragging: zoom instead of turning', 'Hold right + wheel'],
   ['Road: curve a stretch, or move a point', 'Drag a handle'], ['Road: stop placing points, or straighten a curve', 'Double-click'],
-  ['Race: move a point (the start and finish too)', 'Drag it'], ['Race: add a point', 'Click the route'], ['Race: select a point', 'Click it'], ['Race: take out a point', 'Ctrl+click it'], ['Race: draw a shortcut', '✂ Draw shortcut, then click on the route, round, and back on it'], ['Bridge: draw one (Roads tab: Bridge)', 'Click along its path, double-click to build'], ['Bridge: select one', 'Click it'],
+  ['Race: move a point (the start and finish too)', 'Drag it'], ['Race: add a point', 'Click the route'], ['Race: select a point', 'Click it'], ['Race: take out a point', 'Ctrl+click it'], ['Race: draw a shortcut', '✂ Draw shortcut, then click on the route, round, and back on it'], ['Race: mark a signature spot', '★ Mark signature spot, then click the route where it starts and where it ends'], ['Bridge: draw one (Roads tab: Bridge)', 'Click along its path, double-click to build'], ['Bridge: select one', 'Click it'],
   ['Arena: move a corner, or add one at a midpoint', 'Drag a handle'], ['Arena: select a corner', 'Click it'],
   ['Arena: close the outline', 'Click its first point'], ['Arena: close the outline', 'Double-click'],
   ['Trigger pad: link a gadget to it (after Link a gadget)', 'Click the gadget'],
@@ -5047,8 +5071,8 @@ function drawRing() {
 // points, a start gate (green) and a finish gate (chequered), where the game
 // puts them.
 
-let evStage = null; // null, 'start', 'placing', 'editing', 'cut' (drawing a shortcut)
-let evCut = null; // the shortcut being drawn: its points ([x, z])
+let evStage = null; // null, 'start', 'placing', 'editing', 'cut' (drawing a shortcut), 'sig' (marking a signature spot)
+let evCut = null; // the shortcut (or signature spot) being drawn: its points ([x, z])
 
 // How far (m) a ground point is from the race's line (the preview's), or Infinity.
 function offRoute(g) {
@@ -5086,6 +5110,21 @@ function cutClick(g) {
   previewEvent();
 }
 
+// Marking a signature spot: two clicks on the route, where it starts and where
+// it ends (the game finds them along the route: sim/event.js resolveSpot).
+function sigClick(g) {
+  if (offRoute(g) >= 10) return toast("Click on the race's route.");
+  const p = [Math.round(g.x * 10) / 10, Math.round(g.z * 10) / 10];
+  if (!evCut.length) {
+    evCut.push(p);
+    return drawEventMarks();
+  }
+  if (Math.hypot(p[0] - evCut[0][0], p[1] - evCut[0][1]) < 10) return toast('Make the spot 10 m long or more.');
+  const list = (evDraft.signatures ||= []);
+  list.push({ name: `Spot ${list.length + 1}`, from: evCut[0], to: p });
+  stopCut();
+}
+
 function stopCut() {
   evStage = 'editing';
   evCut = null;
@@ -5104,6 +5143,7 @@ function routeStageText(r) {
     if (r.along && r.to !== null && r.to !== undefined) return 'Drag the start or the finish along the street to move it.';
     return 'Press Place start, then click the start on a street.';
   }
+  if (evStage === 'sig') return `Marking a signature spot: click on the route where it starts, then where it ends, in the race's direction. A car wrecked into a wall there is a signature takedown. ${keyName(binding.backPoint?.[0] || 'Backspace')}: take back the first click; Esc: stop.`;
   if (evStage === 'cut') return `Drawing a shortcut: click on the route where it leaves, then where it goes (anywhere), then back on the route further on: that's it added. ${keyName(binding.backPoint?.[0] || 'Backspace')}: take back a point; Esc: stop.`;
   if (evStage === 'start') return 'Click the start anywhere: on a street, off the streets, or up on top of something (not inside it).';
   if (evStage === 'placing') return `Click where the race goes: a junction, a way through a site or lot, or anywhere (off the streets it goes straight there, and up onto things). Space (or Finish here): ${r.kind === 'circuit' ? 'it comes back round to the start' : 'the last point is the finish'}.`;
@@ -5342,7 +5382,7 @@ function drawEventMarks() {
     eventMarks.add(l);
   };
   if (!evPreview?.error) for (const c of evPreview?.cuts || []) cutLine(c);
-  if (evStage === 'cut' && evCut) {
+  if ((evStage === 'cut' || evStage === 'sig') && evCut) {
     cutLine(evCut);
     for (const [x, z] of evCut) {
       const m = new THREE.Mesh(new THREE.OctahedronGeometry(size * 0.7), basic(0xb967ff));

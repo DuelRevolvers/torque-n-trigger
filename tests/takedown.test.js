@@ -4,7 +4,8 @@ import { PAD } from './helpers.js';
 import { createWorld, stepWorld, snapshotWorld, restoreWorld } from '../src/sim/world.js';
 import { collideCars, wreckPhysical } from '../src/sim/combat.js';
 import { reactInput } from '../src/sim/contact.js';
-import { tolerance, crashes, award, updateTakedowns } from '../src/sim/takedown.js';
+import { tolerance, crashes, award, updateTakedowns, signatureAt } from '../src/sim/takedown.js';
+import { resolveSpot } from '../src/sim/event.js';
 import { neutralInput } from '../src/sim/input.js';
 import { TEST_CAR } from '../src/sim/carParams.js';
 import { quatFromYaw, yawFromDirection } from '../src/sim/math.js';
@@ -217,4 +218,37 @@ test('pending credit is paid when the event ends, and survives snapshots', () =>
   w2.state.event = { done: true };
   updateTakedowns(w2, wreckPhysical);
   assert.deepEqual(takedowns(w2), [0, 1]);
+});
+
+test('two takedowns within 1 s make a double; physical ones count as rams', () => {
+  const w = worldN(3);
+  w.events = [];
+  award(w, 0, 1, 'wall');
+  step(w, 30); // 0.5 s
+  award(w, 0, 2, 'hp');
+  const [first, second] = w.events.filter((e) => e.type === 'takedown');
+  assert.equal(first.double, false);
+  assert.equal(second.double, true);
+  assert.deepEqual([w.state.cars[0].contact.doubles, w.state.cars[0].contact.rams], [1, 1]);
+});
+
+test('a wall takedown inside a signature spot is a signature takedown; other causes and places are not', () => {
+  const w = worldN(4);
+  w.state.event = { signatures: [{ name: 'Gas Station', s0: 40, s1: 60 }] };
+  w.events = [];
+  award(w, 0, 1, 'wall', false, 50);
+  award(w, 0, 2, 'car', false, 50);
+  award(w, 0, 3, 'wall', false, 70);
+  assert.deepEqual(w.events.map((e) => e.signature), ['Gas Station', null, null]);
+  assert.deepEqual(w.state.cars[0].contact.signatures, ['Gas Station']);
+  // (A spot over a circuit's lap line.)
+  const ev = { signatures: [{ name: 'Line', s0: 90, s1: 10 }] };
+  assert.deepEqual([95, 5, 50].map((s) => signatureAt(ev, s)?.name ?? null), ['Line', 'Line', null]);
+});
+
+test('signature spots resolve from SDK clicks or track progress', () => {
+  const track = (closed) => ({ length: 100, closed, query: (x) => ({ s: x }) });
+  assert.deepEqual(resolveSpot({ name: 'A', from: [60, 0], to: [20, 0] }, track(false)), { name: 'A', s0: 20, s1: 60 });
+  assert.deepEqual(resolveSpot({ name: 'A', from: [60, 0], to: [20, 0] }, track(true)), { name: 'A', s0: 60, s1: 20 });
+  assert.deepEqual(resolveSpot({ name: 'B', s0: -10, s1: 5 }, track(true)), { name: 'B', s0: 90, s1: 5 });
 });

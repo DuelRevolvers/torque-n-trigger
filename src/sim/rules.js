@@ -53,4 +53,5 @@ export const CREDIT = {
   tailgateDist: 7, tailgateConeDeg: 15, tailgateTime: 0.5, // psych-out (B3 values, GUESS)
   luckyImpact: 12, // m/s wall hit (the wall-damage threshold) that counts as an escape
   luckyWindow: 2, // s after being slammed
+  doubleWindow: 1, // s between two takedowns that make a double (B3, CONFIRMED)
 };
