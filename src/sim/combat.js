@@ -5,6 +5,7 @@
 import { v3, add, sub, scale, dot, cross, length, normalize, quatRotate, quatRotateInv } from './math.js';
 import { conditionFactor } from '../parts/build.js';
 import { onOil, rainGrip } from './gadgets.js';
+import { newContact, touchContact, noteContact } from './contact.js';
 
 const DEFAULT_COMBAT = {
   hp: 500, armor: 0, heatCapacity: 70, dissipation: 0.7, heatRate: 1, powerDeficit: 0,
@@ -58,6 +59,7 @@ export function initCombat(car, params, conditions = {}) {
   car.wreckTimer = 0;
   car.takedowns = 0;
   car.lastHitBy = -1;
+  car.contact = newContact(); // (car-to-car hit classification; see contact.js)
   car.impact = 0;
   car.nextRocketSide = 1;
   car.mods = { torque: 1, grip: 1, brake: 1 };
@@ -413,6 +415,7 @@ export function collideCars(world) {
         }
       }
       if (!best) continue;
+      touchContact(world, a, b);
       const pa = params[a];
       const pb = params[b];
       const invA = 1 / pa.mass;
@@ -427,6 +430,7 @@ export function collideCars(world) {
       const vB = add(B.vel, cross(B.angVel, rB));
       const vn = dot(sub(vB, vA), n);
       if (vn >= 0) continue;
+      noteContact(world, a, b, n, -vn, point); // (classified on the pre-bounce velocities)
       const k = invA + invB +
         dot(cross(invInertiaWorld(A, pa, cross(rA, n)), rA), n) +
         dot(cross(invInertiaWorld(B, pb, cross(rB, n)), rB), n);
