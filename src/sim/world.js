@@ -11,7 +11,9 @@ import { hitByRv } from './rv.js';
 import { hitBreakables } from './breakables.js';
 import { applyGusts } from './gusts.js';
 import { applyFlood } from './flood.js';
-import { initCombat, initCombatWorld, updateMods, updateCombat, collideCars, ringOut } from './combat.js';
+import { initCombat, initCombatWorld, updateMods, updateCombat, collideCars, ringOut, wreckPhysical } from './combat.js';
+import { reactInput } from './contact.js';
+import { updateTakedowns } from './takedown.js';
 import { neutralInput } from './input.js';
 import { initEventCar, eventInput, updateEvent } from './event.js';
 
@@ -52,7 +54,7 @@ export function stepWorld(world, inputs) {
   const effective = state.cars.map((c, i) => {
     if (c.wrecked) return NEUTRAL;
     const raw = inputs[i] || NEUTRAL;
-    return state.event ? eventInput(world, i, raw) : raw;
+    return reactInput(c, state.event ? eventInput(world, i, raw) : raw); // (a slammed car steers away)
   });
   for (let i = 0; i < state.cars.length; i++) {
     const car = state.cars[i];
@@ -73,6 +75,7 @@ export function stepWorld(world, inputs) {
   if (track.flood) applyFlood(world);
   updateCombat(world, effective, SIM_DT, respawnCar);
   if (state.event) updateEvent(world, SIM_DT);
+  updateTakedowns(world, wreckPhysical);
   state.tick++;
 }
 

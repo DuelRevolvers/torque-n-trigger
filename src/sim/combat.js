@@ -5,7 +5,8 @@
 import { v3, add, sub, scale, dot, cross, length, normalize, quatRotate, quatRotateInv } from './math.js';
 import { conditionFactor } from '../parts/build.js';
 import { onOil, rainGrip } from './gadgets.js';
-import { newContact, touchContact, noteContact } from './contact.js';
+import { newContact, touchContact, noteContact, damageMul } from './contact.js';
+import { crashes, queueCredit, ringOutCredit, award, checkLucky } from './takedown.js';
 
 const DEFAULT_COMBAT = {
   hp: 500, armor: 0, heatCapacity: 70, dissipation: 0.7, heatRate: 1, powerDeficit: 0,
@@ -132,7 +133,11 @@ export function applyDamage(world, j, amount, point, source, silent = false) {
   const local = quatRotateInv(car.quat, sub(point, car.pos));
   wearParts(world, j, local, amount);
   if (!silent) world.events.push({ type: 'hit', car: j, point, local, amount });
-  if (car.hp <= 0) wreck(world, j, source >= 0 ? source : car.lastHitBy);
+  if (car.hp > 0) return;
+  // Killed by a car's guns or bumper: theirs now. Anything else (a wall, a fire)
+  // goes to the takedown credit rules.
+  if (source >= 0 && source !== j) wreck(world, j, source);
+  else wreckPhysical(world, j, 'damage');
 }
 
 function wearParts(world, j, local, amount) {
@@ -157,11 +162,11 @@ function wearParts(world, j, local, amount) {
 
 // Knocked into a pit (the dry dock): a wreck, and a takedown for whoever hit
 // the car last, if they did in the last eight seconds.
-const RING_OUT_CREDIT = 8; // seconds
 export function ringOut(world, j, hz) {
   const car = world.state.cars[j];
   if (car.wrecked) return;
-  const recent = car.lastHitBy >= 0 && world.state.tick - (car.lastHitTick ?? -Infinity) < RING_OUT_CREDIT * hz ? car.lastHitBy : -1;
+  // (Also a slam partner from the last 2 s: takedown.js.)
+  const recent = ringOutCredit(world, j);
   wreck(world, j, recent);
   world.events.push({ type: 'ringout', car: j, by: recent });
 }
@@ -176,10 +181,20 @@ function wreck(world, j, source) {
   car.burning = 0;
   car.shocked = 0;
   car.shield = 0;
+  car.wreckTick = world.state.tick;
+  car.contact.react = null;
   car.vel = add(car.vel, v3(0, 5, 0));
   car.angVel = add(car.angVel, quatRotate(car.quat, v3(0, 0, 1.5)));
-  if (source >= 0 && source !== j) world.state.cars[source].takedowns++;
+  if (source >= 0 && source !== j) award(world, source, j, 'hp');
   world.events.push({ type: 'wreck', car: j, pos: { ...car.pos }, by: source });
+}
+
+// A physical wreck (a wall, a huge hit, a tip-over, or HP lost to no one):
+// credit is queued and confirmed later by takedown.js.
+export function wreckPhysical(world, j, cause) {
+  if (world.state.cars[j].wrecked) return;
+  queueCredit(world, j, cause);
+  wreck(world, j, -1);
 }
 
 // Picks the best target inside the aim cone and range, or null.
@@ -430,7 +445,7 @@ export function collideCars(world) {
       const vB = add(B.vel, cross(B.angVel, rB));
       const vn = dot(sub(vB, vA), n);
       if (vn >= 0) continue;
-      noteContact(world, a, b, n, -vn, point); // (classified on the pre-bounce velocities)
+      const hit = noteContact(world, a, b, n, -vn, point); // (classified on the pre-bounce velocities)
       const k = invA + invB +
         dot(cross(invInertiaWorld(A, pa, cross(rA, n)), rA), n) +
         dot(cross(invInertiaWorld(B, pb, cross(rB, n)), rB), n);
@@ -450,8 +465,10 @@ export function collideCars(world) {
       const front = (car, p) => quatRotateInv(car.quat, sub(point, car.pos)).z < -p.body.length * 0.25;
       const dmgA = (base * (2 * pb.mass) / (pa.mass + pb.mass) * (1 - ca.rollCage * 0.4)) / ca.ramResist + (front(B, pb) ? (cb.ramDamage * impact) / 15 : 0);
       const dmgB = (base * (2 * pa.mass) / (pa.mass + pb.mass) * (1 - cb.rollCage * 0.4)) / cb.ramResist + (front(A, pa) ? (ca.ramDamage * impact) / 15 : 0);
-      applyDamage(world, a, dmgA, point, b);
-      applyDamage(world, b, dmgB, point, a);
+      applyDamage(world, a, dmgA * damageMul(hit, a), point, b);
+      applyDamage(world, b, dmgB * damageMul(hit, b), point, a);
+      if (crashes(world, a, 'car', impact, b)) wreckPhysical(world, a, 'car');
+      if (crashes(world, b, 'car', impact, a)) wreckPhysical(world, b, 'car');
     }
   }
 }
@@ -504,11 +521,15 @@ export function updateCombat(world, inputs, dt, respawn) {
     if (car.shocked > 0) car.shocked = Math.max(0, car.shocked - dt);
     if (car.burning > 0) {
       car.burning = Math.max(0, car.burning - dt);
-      applyDamage(world, i, 6 * dt, car.pos, car.lastHitBy, true);
+      applyDamage(world, i, 6 * dt, car.pos, -1, true); // (credit: whoever hit it in the last 8 s)
     }
     // Wall hits: only a hard slam hurts, and gently (roll cages soften it further).
     if (car.impact > 12) {
       applyDamage(world, i, (car.impact - 12) * 2 * (1 - c.rollCage * 0.4), toWorld(car, v3(0, 0, -p.body.length / 2)), -1);
+    }
+    if (car.impact > 0) {
+      if (crashes(world, i, 'wall', car.impact)) wreckPhysical(world, i, 'wall');
+      else checkLucky(world, i, car.impact);
     }
     car.impact = 0;
   });

@@ -22,11 +22,14 @@ test('AI race contact soak (diagnostic)', (t) => {
   const geos = {};
   let maxImpact = 0;
   const sideHist = [0, 0, 0, 0, 0]; // side-type hits by impact: <2, 2-4, 4-6, 6-8.9, 8.9+ m/s
+  const outcomes = { wreck: 0, lucky: 0 }; // plus takedowns by cause
   const seconds = 150;
   for (let tk = 0; tk < seconds * 60; tk++) {
     world.events = [];
     stepWorld(world, world.state.cars.map((_, i) => aiInput(world, i, SIM_DT)));
     for (const e of world.events) {
+      if (e.type === 'wreck' || e.type === 'lucky') outcomes[e.type]++;
+      if (e.type === 'takedown') outcomes[`takedown/${e.cause}`] = (outcomes[`takedown/${e.cause}`] || 0) + 1;
       if (e.type !== 'contact') continue;
       assert.ok(LABELS.includes(e.label), e.label);
       assert.ok(GEOS.includes(e.geo), e.geo);
@@ -40,5 +43,6 @@ test('AI race contact soak (diagnostic)', (t) => {
   const total = Object.values(labels).reduce((s, n) => s + n, 0);
   t.diagnostic(`contacts in ${seconds}s, 6 AI cars: ${total} ${JSON.stringify(labels)}`);
   t.diagnostic(`by geometry: ${JSON.stringify(geos)}; max impact ${maxImpact.toFixed(1)} m/s`);
+  t.diagnostic(`wrecks and takedowns: ${JSON.stringify(outcomes)}`);
   t.diagnostic(`side-type hits by impact (<2, 2-4, 4-6, 6-8.9, 8.9+ m/s): ${sideHist.join(', ')}`);
 });

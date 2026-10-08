@@ -5,7 +5,7 @@
 
 import { sub, quatRotate, quatRotateInv } from './math.js';
 import { SIM_HZ, SIM_DT } from '../config.js';
-import { CONTACT as C } from './rules.js';
+import { CONTACT as C, SLAM_REACTION as SR, SLAM_DAMAGE } from './rules.js';
 
 const FWD = { x: 0, y: 0, z: -1 };
 const SLAMS = new Set(['slam', 'shunt', 'huge']); // hits that count as a slam on the victim
@@ -14,6 +14,11 @@ export const newContact = () => ({
   lastSlamBy: -1, lastSlamTick: -1, lastSlamKind: null, lastSlamGeo: null, hitSide: null,
   lastPartner: -1, lastPartnerTick: -1,
   touching: {}, // other car index -> { secs, tick }: continuous contact time (for grinding)
+  react: null, // slam reaction: { dir, t, hold, blend, str }
+  grudge: {}, // other car index -> 1: they took this car down (revenge is due)
+  lastVictim: -1, lastVictimTick: -1,
+  tailgate: -1, tailgateSecs: 0, psychedBy: -1, psychTick: -1,
+  takedownCause: null, revenges: 0, lucky: 0, denied: 0, luckyTick: -1,
 });
 
 const flat = (v) => {
@@ -111,7 +116,42 @@ export function noteContact(world, a, b, n, impact, point) {
     v.lastSlamKind = r.label;
     v.lastSlamGeo = r.geo;
     v.hitSide = hitSide(world, vic, point);
+    if (r.geo !== 'shunt' && r.geo !== 'headOn') startReaction(world, atk, vic, point);
   }
   world.events.push({ type: 'contact', a, b, attacker: atk, victim: vic, label: r.label, geo: r.geo, angle: r.angle, impact, point });
-  return r;
+  return { label: r.label, geo: r.geo, atk, vic };
+}
+
+// Damage multiplier for car i from a hit noteContact returned.
+export function damageMul(hit, i) {
+  if (!SLAMS.has(hit.label)) return 1;
+  if (i !== hit.vic) return SLAM_DAMAGE.attacker;
+  return hit.geo === 'tbone' ? SLAM_DAMAGE.tbone : hit.label === 'shunt' ? SLAM_DAMAGE.shunt : SLAM_DAMAGE.slam;
+}
+
+// Slam reaction: the victim steers away from the side it was hit on, harder and
+// longer the heavier the attacker; less for ram-resistant, armored and player cars.
+function startReaction(world, atk, vic, point) {
+  const car = world.state.cars[vic];
+  const pv = world.params[vic];
+  const cv = pv.combat || {};
+  const local = quatRotateInv(car.quat, sub(point, car.pos));
+  let k = (world.params[atk].mass / pv.mass) / (cv.ramResist || 1) * (1 - SR.armor * (cv.armor || 0));
+  k = Math.max(SR.minScale, Math.min(SR.maxScale, k)) * (car.ai ? 1 : SR.player);
+  car.contact.react = { dir: local.x > 0 ? -1 : 1, t: 0, hold: SR.hold * k, blend: SR.blend * k, str: Math.min(1, k) };
+}
+
+// The input with any slam reaction applied (a copy; the input is not changed).
+export function reactInput(car, input) {
+  const r = car.contact?.react;
+  if (!r) return input;
+  const forced = r.dir * r.str;
+  const f = r.t < r.hold ? 1 : 1 - (r.t - r.hold) / r.blend;
+  return { ...input, steer: forced * f + (input.steer || 0) * (1 - f) };
+}
+
+// Advances the slam reaction timer.
+export function updateReaction(car, dt) {
+  const r = car.contact?.react;
+  if (r && (r.t += dt) >= r.hold + r.blend) car.contact.react = null;
 }
