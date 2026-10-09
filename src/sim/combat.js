@@ -500,7 +500,7 @@ export function updateCombat(world, inputs, dt, respawn) {
     if (car.wrecked) {
       car.firing.primary = car.firing.secondary = false;
       car.wreckTimer -= dt;
-      if (car.wreckTimer <= 0 && world.respawnOnWreck) {
+      if (car.wreckTimer <= 0 && world.respawnOnWreck && !car.out) { // (Rampage: out is totaled, or a rival not back yet)
         respawn(world, i, { back: 0, index: car.wreckIndex }); // right where it was wrecked
         car.wrecked = false;
         car.hp = car.maxHp;

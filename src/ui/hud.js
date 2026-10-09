@@ -195,8 +195,15 @@ export class Hud {
       text(title, W - 6, ty, { scale: 2, color: '#ffffff', align: 'right' });
       ty += 18;
     }
-    text(formatTime(eventInfo ? eventInfo.timeTicks : current), W - 6, ty, { color: '#ffffff', align: 'right' });
+    const warn = eventInfo?.clockWarn && Math.floor(performance.now() / 350) % 2 === 0; // (Rampage: the last 10 s)
+    text(formatTime(eventInfo ? eventInfo.timeTicks : current), W - 6, ty, { color: warn ? PALETTE.pink : '#ffffff', align: 'right' });
     text(eventInfo?.sub ?? `BEST ${formatTime(r.bestLap)}`, W - 6, ty + 10, { color: PALETTE.amber, align: 'right' });
+    if (eventInfo?.chassis != null) {
+      // Rampage: the chassis meter (red once a wreck would total the car).
+      text('CHASSIS', W - 6, ty + 20, { color: LABEL, align: 'right' });
+      rect(W - 66, ty + 30, 60, 3, 'rgba(0, 0, 0, 0.5)');
+      rect(W - 66, ty + 30, Math.round(60 * eventInfo.chassis), 3, eventInfo.chassisLow ? PALETTE.pink : PALETTE.cyan);
+    }
 
     // Speedometer: chrome ring, red zone, needle and an LED readout, with the
     // boost meter beside it. Bottom-right on desktop, top-centre on touch.
@@ -410,7 +417,7 @@ export class Hud {
       // (While Death Rolling, up out of the way: the wreck is in the middle.)
       const y = dr ? Math.round(H * 0.14) : H / 2 - 20;
       text('WRECKED', W / 2, y, { color: PALETTE.pink, align: 'center', scale: dr ? 2 : 3 });
-      text(`RESPAWN IN ${Math.max(0, Math.ceil(car.wreckTimer))}`, W / 2, y + (dr ? 18 : 26), { color: '#ffffff', align: 'center' });
+      text(eventInfo?.totaled ? 'TOTALED' : `RESPAWN IN ${Math.max(0, Math.ceil(car.wreckTimer))}`, W / 2, y + (dr ? 18 : 26), { color: '#ffffff', align: 'center' });
       if (dr) {
         // Death Roll: the prompt, and a bar for the time left to aim the wreck.
         text('DEATH ROLL', W / 2, y + 32, { color: PALETTE.amber, align: 'center', scale: 2 });

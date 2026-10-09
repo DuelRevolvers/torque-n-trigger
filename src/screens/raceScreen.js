@@ -5,7 +5,8 @@ import { getVenue } from '../sim/tracks/venues.js';
 import { createWorld, stepWorld } from '../sim/world.js';
 import { slowMotion, deathRollLeft, canDetonate } from '../sim/deathRoll.js';
 import { keyBinds, padBinds, keyName, padName } from '../input/bindings.js';
-import { DEATH_ROLL } from '../sim/rules.js';
+import { DEATH_ROLL, RAMPAGE } from '../sim/rules.js';
+import { GRADES, gradeOf, gradePlace } from '../sim/rampage.js';
 import { createEventState, gridPoses, standings, resolvePit, initEventCar } from '../sim/event.js';
 import { districtMap } from '../sim/city.js';
 import { InputQueue, neutralInput, sanitizeInput } from '../sim/input.js';
@@ -655,7 +656,8 @@ export class RaceScreen {
     const ev = state.event;
     const car = state.cars[p];
     const alive = state.cars.filter((c) => !c.wrecked).length;
-    const title = {
+    const rampage = ev.mode === 'rampage';
+    const title = rampage ? 'RAMPAGE' : {
       free: `LAP ${Math.max(1, car.race.lap)}`,
       circuit: `LAP ${Math.min(Math.max(1, car.race.lap), ev.laps)}/${ev.laps}`,
       sprint: 'SPRINT',
@@ -670,18 +672,29 @@ export class RaceScreen {
     } else if (ev.type !== 'circuit' && ev.type !== 'free') {
       sub = `${Math.min(100, Math.round((car.trackS / ev.finishS) * 100))}% DONE`;
     }
+    if (rampage) {
+      // The next target: "SILVER AT 4".
+      const n = car.takedowns || 0;
+      const next = ev.targets.find((t) => t > n);
+      sub = next ? `${GRADES[gradeOf(ev.targets, n) + 1]} AT ${next}` : 'GOLD!';
+    }
     const place = ev.finished.indexOf(p) + 1;
     return {
       title,
       sub: sub || undefined,
-      timeTicks: ev.type === 'free'
+      timeTicks: rampage ? Math.round(Math.max(0, ev.timeLimit - ev.time) * 60) : ev.type === 'free'
         ? (car.race.lapStart >= 0 ? state.tick - car.race.lapStart : -1)
         : ev.phase === 'racing' ? Math.round(ev.time * 60) : 0,
       countdown: ev.phase === 'countdown' ? Math.ceil(ev.timer) : null,
       go: ev.phase === 'racing' && ev.time < 0.8,
       manual: car.manual,
-      finishedText: place ? `FINISHED ${ordinal(place)}` : car.wrecked && ev.mode === 'lastStanding' ? 'ELIMINATED' : null,
+      finishedText: place ? `FINISHED ${ordinal(place)}` : car.wrecked && ev.mode === 'lastStanding' ? 'ELIMINATED' : rampage && car.out ? 'TOTALED' : rampage && ev.done ? 'TIME UP' : null,
       inPit: car.inPit,
+      // Rampage: the chassis meter, red under the totaled line; the clock blinks for its last 10 s.
+      chassis: rampage ? car.chassis : null,
+      chassisLow: rampage && car.chassis < RAMPAGE.totaled,
+      clockWarn: rampage && ev.phase === 'racing' && ev.timeLimit - ev.time < 10,
+      totaled: rampage && car.out,
       wrongWay: this.wrongWays[p] > 1,
       popups: this.popupsBy[p],
       deathRoll: deathRollLeft(this.world, p) > 0
@@ -736,6 +749,8 @@ export class RaceScreen {
           if (e.double) this.popup('DOUBLE TAKEDOWN!', PALETTE.amber, p);
         }
         if (e.type === 'takedown' && e.victim === p && e.car !== p) this.popup(`WRECKED BY ${this.names[e.car]}`, PALETTE.pink, p);
+        if (e.type === 'grade' && e.car === p) this.popup(`${GRADES[e.grade]}!`, PALETTE.amber, p); // (Rampage targets)
+        if (e.type === 'totaled' && e.car === p) this.popup('TOTALED!', PALETTE.pink, p);
         // A side slam or T-bone dealt (once per 1.5 s per car hit, so trading paint doesn't fill the stack).
         if (e.type === 'contact' && e.attacker === p && (e.label === 'slam' || e.label === 'huge') && e.geo !== 'shunt' && e.geo !== 'headOn') {
           const key = `${p}:${e.victim}`;
@@ -814,7 +829,7 @@ export class RaceScreen {
     if (this.track?.ceilingAt) this.hemi.intensity += ((covered ? this.hemiBase * 0.45 : this.hemiBase) - this.hemi.intensity) * Math.min(1, dt * 3);
 
     // Results a moment after the player finishes, is eliminated, or the event ends.
-    const done = (p) => ev.finishTime[p] !== undefined || (ev.mode === 'lastStanding' && state.cars[p].wrecked);
+    const done = (p) => ev.finishTime[p] !== undefined || (ev.mode === 'lastStanding' && state.cars[p].wrecked) || (ev.mode === 'rampage' && state.cars[p].out);
     const playerDone = ev.done || this.viewers.every(done);
     if (playerDone && this.resultsAt === null) this.resultsAt = this.time + 2.5;
     if (this.resultsAt !== null && this.time >= this.resultsAt && !this.resultsShown) this.showResults();
@@ -858,8 +873,10 @@ export class RaceScreen {
     const { state } = this.world;
     const ev = state.event;
     const order = standings(this.world);
-    const place = order.findIndex((r) => r.id === 0) + 1;
     const player = state.cars[0];
+    // (Rampage: the targets reached set the place: gold 1st, silver 2nd, bronze 3rd.)
+    const grade = ev.mode === 'rampage' ? gradeOf(ev.targets, player.takedowns || 0) : 0;
+    const place = ev.mode === 'rampage' ? gradePlace(grade, order.length) : order.findIndex((r) => r.id === 0) + 1;
     const rewards = computeRewards(this.def, place, player, this.tier);
     const career = this.app.career;
     const unlockedBefore = career ? unlockedIds(career) : null;
@@ -894,8 +911,8 @@ export class RaceScreen {
       // in a district counts, not the players' own maps.
       if (this.def.type !== 'free' && this.def.district && !this.def.custom) {
         const second = order[1];
-        const margin = ev.type !== 'arena' && place === 1 ? (second?.finished ? second.time - order[0].time : 30) : 0;
-        recordFeats(career, { type: this.def.type, district: this.def.district, place, takedowns: player.takedowns || 0, wrecks: player.wrecks || 0, margin, revenges: player.contact.revenges, signatures: player.contact.signatures.length, rams: player.contact.rams, deathRolls: player.contact.deathRolls || 0 });
+        const margin = ev.type !== 'arena' && ev.mode !== 'rampage' && place === 1 ? (second?.finished ? second.time - order[0].time : 30) : 0;
+        recordFeats(career, { type: ev.mode === 'rampage' ? 'rampage' : this.def.type, district: this.def.district, place, takedowns: player.takedowns || 0, wrecks: player.wrecks || 0, margin, revenges: player.contact.revenges, signatures: player.contact.signatures.length, rams: player.contact.rams, deathRolls: player.contact.deathRolls || 0 });
       }
       // Signature spots: each one counts once per career (B3's collectibles).
       if (this.def.type !== 'free') {
@@ -926,7 +943,7 @@ export class RaceScreen {
 
     const rows = order.map((r, k) => {
       let result;
-      if (ev.type === 'arena') result = `KO ${r.takedowns}${ev.mode === 'lastStanding' ? (r.eliminated === -1 ? ' &middot; SURVIVED' : ' &middot; OUT') : ''}`;
+      if (ev.type === 'arena' || ev.mode === 'rampage') result = `KO ${r.takedowns}${ev.mode === 'lastStanding' ? (r.eliminated === -1 ? ' &middot; SURVIVED' : ' &middot; OUT') : ''}`;
       else result = r.finished ? formatTime(Math.round(r.time * 60)) : 'DNF';
       return `<tr class="${r.id === 0 ? 'me' : ''}"><td>${k + 1}</td><td>${esc(this.names[r.id])}</td><td>${result}</td></tr>`;
     }).join('');
@@ -936,7 +953,8 @@ export class RaceScreen {
       : '<div class="hint">No salvage this time.</div>';
     this.app.ui.innerHTML = `<div class="screen results"><div class="results-panel">
       <h1>${esc(this.def.name)}</h1>
-      <h2>${ordinal(place)} place</h2>
+      <h2>${ev.mode === 'rampage' ? GRADES[grade] || 'NO TARGET' : `${ordinal(place)} place`}</h2>
+      ${ev.mode === 'rampage' ? `<div class="boss-banner">RAMPAGE: ${player.takedowns || 0} TAKEDOWNS &middot; ${grade ? `${GRADES[grade]} (${ev.targets[grade - 1]})` : `BRONZE NEEDED ${ev.targets[0]}`} &middot; ${player.out ? 'TOTALED' : 'TIME UP'}</div>` : ''}
       ${banner}
       ${newSpots.length ? `<div class="boss-banner">SIGNATURE SPOT${newSpots.length > 1 ? 'S' : ''} FOUND: ${newSpots.map((n) => esc(n.toUpperCase())).join(', ')} (${career.signatures.length} found)</div>` : ''}
       ${fresh.length ? `<div class="boss-banner">NEW IN THE CREATOR: ${fresh.map((s) => esc(s.name)).join(', ')}</div>` : ''}

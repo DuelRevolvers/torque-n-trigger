@@ -3,7 +3,7 @@
 // syncs with the rest of the state. See rules.js AI_FIGHT for the numbers.
 
 import { clamp, quatRotate } from './math.js';
-import { AI_FIGHT as F, TRAFFIC } from './rules.js';
+import { AI_FIGHT as F, TRAFFIC, RAMPAGE } from './rules.js';
 import { trafficAhead } from './traffic.js';
 
 const SLAM_STRENGTH = { slam: 1, huge: 1.5, shunt: 0.5 };
@@ -101,6 +101,7 @@ export function pickVictim(world, i) {
   for (const [j, v] of Object.entries(ai.hurt)) if (v > most) [most, grudge] = [v, +j];
   let best = -1;
   let bestScore = Infinity;
+  const rampage = state.event?.mode === 'rampage';
   state.cars.forEach((c, j) => {
     if (j === i || c.wrecked) return;
     const gap = trackGap(track, car, c);
@@ -109,6 +110,7 @@ export function pickVictim(world, i) {
     let score = Math.abs(gap);
     if (j === grudge) score *= F.grudgeScore;
     else if (ai.target === 'leader' && j === leader) score *= 0.5;
+    if (rampage && j < (world.humans || 0)) score *= RAMPAGE.humansFirst; // (Rampage: humans first)
     if (score < bestScore) [bestScore, best] = [score, j];
   });
   return best;

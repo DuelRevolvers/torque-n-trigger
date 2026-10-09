@@ -133,6 +133,6 @@ test('undercity: fifth in the campaign, Vixen the rival, Hammer the boss', () =>
   assert.equal(DISTRICTS.indexOf(under), 4);
   assert.equal(event('Low Road').rivalDriver, 'vixen');
   assert.equal(event('Hammer').driver, 'hammer');
-  assert.equal(districtEvents(under).length, 6);
+  assert.equal(districtEvents(under).length, 7); // (with its Rampage, phase 7a)
   assert.deepEqual(event('Blackout').modifiers, ['blackout']);
 });
