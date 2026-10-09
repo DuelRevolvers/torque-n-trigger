@@ -47,3 +47,22 @@ test('race routes: every sprint and circuit runs on clear road, and what stands 
     }
   }
 });
+
+test('race routes: no closed side street stack stands inside the walls, unless it is solid', () => {
+  for (const d of DISTRICTS) {
+    for (const e of districtEvents(d).filter((x) => x.type === 'sprint' || x.type === 'circuit')) {
+      const def = getVenue(e.venue, e).def;
+      const t = buildTrack(def);
+      const tracks = [t, ...(t.branches || []).map((b) => b.track)];
+      const solid = new Set(def.obstacles.map(keyOf));
+      for (const c of def.closures || []) {
+        if (solid.has(keyOf(c))) continue;
+        const inside = tracks.some((tr) => {
+          const q = tr.queryMain(c.x, c.z);
+          return q.overrun <= 0.5 && Math.abs(q.trueLateral ?? q.lateral) < (tr.sections || tr.narrows ? tr.localWall(q.s) : tr.wallDist) + 1.2;
+        });
+        assert.ok(!inside, `${e.name}: a closure at ${c.x.toFixed(0)}, ${c.z.toFixed(0)} stands inside the walls`);
+      }
+    }
+  }
+});

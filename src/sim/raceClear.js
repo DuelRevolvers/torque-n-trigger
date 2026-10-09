@@ -154,5 +154,44 @@ export function clearRoute(map, def) {
   }
   def.obstacles = obstacles;
   def.cleared = gone;
+  def.closures = clearClosures(def.closures, tracks, obstacles);
   return def;
+}
+
+// A closed side street's stack (drawn, not solid) that pokes inside the walls
+// moves back out along its street; one across the route itself goes. (A solid
+// one, an obstacle too, is what you hit: it stays where it is.)
+const PUSH = 8; // metres a closure may move back along its street
+function clearClosures(closures, tracks, obstacles) {
+  if (!closures?.length) return closures;
+  const solid = new Set(obstacles.map((o) => `${Math.round(o.x * 10)},${Math.round(o.z * 10)}`));
+  // How far past the nearest wall a point is (negative: inside).
+  const past = (x, z) => Math.min(...tracks.map((t) => {
+    const q = t.queryMain(x, z);
+    if (q.overrun > 0.5) return Infinity;
+    return Math.abs(q.trueLateral ?? q.lateral) - (t.sections || t.narrows ? t.localWall(q.s) : t.wallDist);
+  }));
+  const CLEAR = 1.3; // its half-depth: its near face on the wall line
+  const out = [];
+  for (const c of closures) {
+    if (solid.has(`${Math.round(c.x * 10)},${Math.round(c.z * 10)}`) || past(c.x, c.z) >= CLEAR) {
+      out.push(c);
+      continue;
+    }
+    const dx = Math.sin(c.yaw);
+    const dz = Math.cos(c.yaw);
+    let moved = null;
+    for (let d = 0.5; d <= PUSH && !moved; d += 0.5) {
+      for (const s of [1, -1]) {
+        const x = c.x + s * d * dx;
+        const z = c.z + s * d * dz;
+        if (past(x, z) >= CLEAR) {
+          moved = { ...c, x, z };
+          break;
+        }
+      }
+    }
+    if (moved) out.push(moved);
+  }
+  return out;
 }
