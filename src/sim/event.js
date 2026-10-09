@@ -8,7 +8,8 @@ import { gridLateral } from './world.js';
 import { quatRotate } from './math.js';
 import { applyDamage } from './combat.js';
 import { pickupSpots } from './trackgen.js';
-import { NITRO, TRAFFIC } from './rules.js';
+import { NITRO, TRAFFIC, RAMPAGE } from './rules.js';
+import { initRampageCar } from './rampage.js';
 import { SIM_HZ } from '../config.js';
 import { earnNitro } from './nitro.js';
 import { trafficConfig, racerBox, footGap, boxOf } from './traffic.js';
@@ -25,13 +26,15 @@ const HOLD = { ...neutralInput(), handbrake: true };
 const COUNTDOWN = 3;
 const STYLE = { driftPerSecond: 25, airPerSecond: 60, nearMiss: 40, oncomingPerMetre: 0.25 }; // (oncoming: GUESS)
 
-// def: { type: 'sprint'|'circuit'|'arena'|'drag', laps?, mode?, timeLimit?, pit?, startS?, finishS?, rubberBand? }
+// def: { type: 'sprint'|'circuit'|'arena'|'drag', laps?, mode?, timeLimit?, targets?, pit?, startS?, finishS?, rubberBand? }
+// (mode 'rampage' on a circuit: no laps or finish, a clock and takedown targets; sim/rampage.js.)
 export function createEventState(def, track) {
   return {
     type: def.type,
     mode: def.mode || null,
     laps: def.laps || 0,
-    timeLimit: def.timeLimit || 0,
+    timeLimit: def.timeLimit || (def.mode === 'rampage' ? RAMPAGE.time : 0),
+    targets: def.mode === 'rampage' ? def.targets || RAMPAGE.targets : null, // Rampage: bronze, silver, gold takedowns
     pit: def.pit ? resolvePit(def.pit, track) : null,
     signatures: track.isArena ? [] : (def.signatures || []).map((sp) => resolveSpot(sp, track)),
     finishS: def.finishS ?? track.finishS ?? (track.isArena ? 0 : track.length - 25),
@@ -66,6 +69,7 @@ export function initEventCar(car, ev) {
   car.style = { drift: 0, air: 0, cash: 0, nm: {} };
   car.race.penalty = 0;
   if (ev.modifiers.includes('oneHit')) car.maxHp = car.hp = 1;
+  if (ev.mode === 'rampage') initRampageCar(car);
 }
 
 // Pit zone positions may be given from the end of the lap (negative s).
@@ -171,7 +175,7 @@ export function updateEvent(world, dt) {
   // Leader's share of the event, for "weapons in the second half only".
   const L = track.length;
   const frac = Math.max(...state.cars.map((c) => {
-    if (ev.type === 'arena' || ev.type === 'free') return ev.timeLimit ? ev.time / ev.timeLimit : 1;
+    if (ev.type === 'arena' || ev.type === 'free' || ev.mode === 'rampage') return ev.timeLimit ? ev.time / ev.timeLimit : 1;
     if (ev.type === 'circuit') return (Math.max(0, c.race.lap - 1) + c.trackS / L) / ev.laps;
     return c.trackS / ev.finishS;
   }));
@@ -194,7 +198,7 @@ export function updateEvent(world, dt) {
     // Finishing.
     if (ev.type === 'sprint' || ev.type === 'drag') {
       if (car.trackS >= ev.finishS && (ev.finishY === null || ev.finishY === undefined || car.pos.y > ev.finishY - 1)) finish(world, i);
-    } else if (ev.type === 'circuit') {
+    } else if (ev.type === 'circuit' && ev.mode !== 'rampage') {
       if (car.race.lap > ev.laps) finish(world, i);
     }
 
@@ -225,6 +229,10 @@ export function updateEvent(world, dt) {
   if (ev.type === 'arena') {
     const alive = state.cars.filter((c) => !c.wrecked).length;
     if ((ev.mode === 'lastStanding' && alive <= 1) || (ev.timeLimit && ev.time >= ev.timeLimit)) ev.done = true;
+  } else if (ev.mode === 'rampage') {
+    // (Rampage: the clock, or every human totaled.)
+    const humans = state.cars.slice(0, world.humans || 0);
+    if (ev.time >= ev.timeLimit || (humans.length && humans.every((c) => c.out))) ev.done = true;
   } else if (ev.finished.length === n || (ev.timeLimit && ev.time >= ev.timeLimit)) {
     ev.done = true;
   }
@@ -371,6 +379,11 @@ export function standings(world) {
   }));
   if (ev.type === 'arena' && ev.mode === 'lastStanding') {
     return rows.sort((a, b) => (b.eliminated === -1) - (a.eliminated === -1) || b.eliminated - a.eliminated || b.hp - a.hp);
+  }
+  if (ev.mode === 'rampage') {
+    // (Humans first, by takedowns: their targets grade them.)
+    const H = world.humans || 0;
+    return rows.sort((a, b) => (a.id >= H) - (b.id >= H) || (b.takedowns || 0) - (a.takedowns || 0) || b.hp - a.hp);
   }
   if (ev.type === 'arena') return rows.sort((a, b) => b.takedowns - a.takedowns || b.hp - a.hp);
   return rows.sort((a, b) => (b.finished - a.finished) || (a.finished ? a.time - b.time : b.progress - a.progress));

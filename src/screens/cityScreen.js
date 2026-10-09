@@ -13,8 +13,9 @@ import { listMaps, customEvents } from '../content/library.js';
 
 const MAP_W = 400;
 const MAP_H = 300;
-const TYPE_COLOR = { free: '#ffffff', circuit: '#05d9e8', sprint: '#ff2a6d', arena: '#ffb000', drag: '#39ff14' };
-const TYPE_LABEL = { free: 'FREE DRIVE', sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG' };
+const TYPE_COLOR = { free: '#ffffff', circuit: '#05d9e8', sprint: '#ff2a6d', arena: '#ffb000', drag: '#39ff14', rampage: '#ff3c3c' };
+const TYPE_LABEL = { free: 'FREE DRIVE', sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG', rampage: 'RAMPAGE' };
+const kindOf = (e) => (e.mode === 'rampage' ? 'rampage' : e.type); // (a Rampage is a circuit mode)
 const HOME = { x: 19.5, y: 50 }; // map coords (0-100)
 // On the map but not raced yet (designs in docs/districts). Lobed like its cul-de-sacs.
 const UPCOMING = []; // districts on the map but not in the game yet
@@ -144,6 +145,7 @@ export class CityScreen {
       e.cars > 1 ? `${e.cars} cars` : 'Solo',
       e.laps ? `${e.laps} laps` : '',
       e.timeLimit ? `${Math.round(e.timeLimit / 60)} min` : '',
+      e.targets ? `targets ${e.targets.join('/')}` : '',
       e.purse ? `Purse <b>$${e.purse}</b>` : 'No prizes',
       `Entry ${e.entryFee ? `$${e.entryFee}` : 'free'}`,
     ].filter(Boolean).join(' &middot; ');
@@ -151,7 +153,7 @@ export class CityScreen {
     const done = career.results?.[e.id];
     const ord = (n) => n + (n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th');
     return `<button class="event-card${done ? ' done' : ''}" data-event="${e.id}" ${disabled ? 'disabled' : ''}>
-      <span>${n ? `<span class="num" style="background:${TYPE_COLOR[e.type]}">${n}</span>` : ''}<span class="tag">${TYPE_LABEL[e.type]}</span> ${badges}</span>
+      <span>${n ? `<span class="num" style="background:${TYPE_COLOR[kindOf(e)]}">${n}</span>` : ''}<span class="tag">${TYPE_LABEL[kindOf(e)]}</span> ${badges}</span>
       <b>${esc(e.name)}</b>
       ${e.desc ? `<span class="event-desc">${esc(e.desc)}</span>` : ''}
       ${mods ? `<span class="mods">${mods}</span>` : ''}
@@ -468,7 +470,7 @@ export class CityScreen {
             line([[cx - sizeX / 2, cz - sizeZ / 2], [cx + sizeX / 2, cz - sizeZ / 2], [cx + sizeX / 2, cz + sizeZ / 2], [cx - sizeX / 2, cz + sizeZ / 2]], true);
             ctx.stroke();
           }
-          pins.push([at(v.def.cx, v.def.cz), TYPE_COLOR[e.type] || TYPE_COLOR.arena, k + 1]);
+          pins.push([at(v.def.cx, v.def.cz), TYPE_COLOR[kindOf(e)] || TYPE_COLOR.arena, k + 1]);
           return;
         }
         const pts = v.def.points.map(([x, , z]) => [x, z]);
@@ -477,7 +479,7 @@ export class CityScreen {
           ctx.lineWidth = 3;
           line(pts, v.def.closed);
           ctx.stroke();
-          ctx.strokeStyle = TYPE_COLOR[e.type];
+          ctx.strokeStyle = TYPE_COLOR[kindOf(e)];
           ctx.lineWidth = 1.4;
           ctx.stroke();
           ctx.setLineDash([2, 2]);
@@ -489,7 +491,8 @@ export class CityScreen {
           }
           ctx.setLineDash([]);
         }
-        pins.push([at(pts[0][0], pts[0][1]), TYPE_COLOR[e.type], k + 1]);
+        const pin = e.mode === 'rampage' ? pts[Math.floor(pts.length / 2)] : pts[0]; // (a Rampage shares its circuit's start: pinned halfway round)
+        pins.push([at(pin[0], pin[1]), TYPE_COLOR[kindOf(e)], k + 1]);
       });
       const grid = d.city.grid;
       const planShop = d.city.plan?.specials?.find((q) => q.kind === 'shop');

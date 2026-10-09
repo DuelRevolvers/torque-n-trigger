@@ -144,6 +144,27 @@ export const DISTRICTS = [
   },
 ];
 
+// Rampage (phase 7a): one per district, on its circuit's route, for its purse.
+// Targets: takedowns for bronze, silver and gold (GUESS, inside B3's range).
+const RAMPAGES = {
+  rustline: ['Rampage: Rail Yard', [2, 4, 6]],
+  strip: ['Rampage: Casino Row', [3, 5, 7]],
+  maple: ['Rampage: Ridgeway', [3, 6, 8]],
+  chrome: ['Rampage: Hilltop', [4, 7, 10]],
+  undercity: ['Rampage: Underpass', [4, 7, 10]],
+  spire: ['Rampage: Spire', [5, 9, 13]],
+};
+for (const d of DISTRICTS) {
+  const c = d.events.find((e) => e.key === 'circuit');
+  const [name, targets] = RAMPAGES[d.id];
+  d.events.push({
+    key: 'rampage', type: 'circuit', mode: 'rampage', name,
+    desc: `The ${c.name} with no laps and no finish: three minutes to take out as many rivals as you can. They keep coming, and every slam and wreck wears your chassis down.`,
+    route: structuredClone(c.route), cars: c.cars, purse: c.purse, timeLimit: 180, targets,
+    ...(c.barrierStyle ? { barrierStyle: c.barrierStyle } : {}),
+  });
+}
+
 // A district published from the T&T SDK (src/content/maps) plays in place of
 // its district file, everywhere (it's official: the career plays it too).
 DISTRICTS.forEach((d, i) => {

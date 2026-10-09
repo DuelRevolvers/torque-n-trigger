@@ -17,6 +17,7 @@ import { updateTakedowns } from './takedown.js';
 import { neutralInput } from './input.js';
 import { initEventCar, eventInput, updateEvent } from './event.js';
 import { updateDeathRoll } from './deathRoll.js';
+import { updateRampage } from './rampage.js';
 import { initTraffic, stepTraffic, clearTraffic } from './traffic.js';
 
 const NEUTRAL = neutralInput();
@@ -83,6 +84,7 @@ export function stepWorld(world, inputs) {
   updateCombat(world, effective, SIM_DT, respawnCar);
   if (state.event) updateEvent(world, SIM_DT);
   updateTakedowns(world, wreckPhysical);
+  if (state.event?.mode === 'rampage') updateRampage(world, SIM_DT, respawnCar);
   state.tick++;
 }
 

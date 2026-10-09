@@ -119,6 +119,19 @@ export const DEATH_ROLL = {
   blast: { cost: 1, radius: 7, damage: 60, push: 12, lift: 6 }, // charges; m; HP at the centre; m/s outward at the centre; m/s up for the wreck
 };
 
+// Rampage (phase 7a): B3's Road Rage (docs/gameplay/modes.md §4). CONFIRMED unless marked.
+export const RAMPAGE = {
+  time: 180, // s on the clock (B3's World Tour)
+  slam: 0.04, wreck: 0.15, // chassis lost to a slam (side or shunt) on you, and to a wreck
+  floor: 0.01, floorAbove: 0.1, // a wreck can't take chassis below 1 % unless it was already under 10 %
+  totaled: 0.3, // wrecked under 30 % chassis: totaled, out of the event
+  reenter: 5, // s a rival a human took down stays out (B3's 5 s entry stagger, LIKELY)
+  ahead: 150, // m in front of a human that a rival comes back (B3: 30 route nodes, GUESS)
+  leashBehind: 140, leashAhead: 160, leashCooldown: 4, // m from the nearest human before a rival is moved; s between moves
+  targets: [2, 4, 6], // takedowns for bronze, silver, gold (B3 outside the World Tour, LIKELY)
+  humansFirst: 0.3, // an AI's victim score (lower wins) times this for a human (GUESS)
+};
+
 // Rush hour traffic (phase 6): B3's lane traffic (docs/systems/traffic.md,
 // CONFIRMED unless marked). B3's per-tick values are turned into per-second ones
 // at 60 updates a second (B3's own rate is a GUESS).
