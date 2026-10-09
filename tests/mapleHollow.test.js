@@ -139,8 +139,9 @@ test('maple hollow: race edges are the lawns and the property lines', () => {
   assert.equal(at(3).surface, SURFACE.ROAD);
   assert.equal(at(7.5).surface, SURFACE.CURB, 'the sidewalk');
   assert.ok([SURFACE.OFFROAD, SURFACE.WET].includes(at(14).surface), 'the lawn');
-  // What stands on the verges and lawns is solid: trees, lamps, minivans.
-  assert.ok(t.obstacles.length > 150, `${t.obstacles.length} obstacles inside the walls`);
+  // The verges and lawns are clear for the race (sim/raceClear.js): their trees,
+  // lamps and minivans are gone; the mailboxes, bins and fences are there to smash.
+  assert.ok(t.obstacles.length < 40, `${t.obstacles.length} obstacles inside the walls`);
   // Where there's no property line (the park, the plaza), the Watch's cars mark the edge.
   assert.ok(t.watchCars.length > 50);
 });

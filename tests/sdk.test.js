@@ -458,7 +458,9 @@ test('sdk: ramps, oil, barrels, signs, start and spawn points work in the events
   const race = buildTrack(cityVenue(d.city, sprint.route).def);
   const k = newGadget('kicker', 'x', 0, 0);
   const top = [rx + Math.sin(heading) * (k.len / 2 - 0.1), rz + Math.cos(heading) * (k.len / 2 - 0.1)];
-  assert.ok(race.standY(...top) > route.standY(...top) + k.height * 0.9, 'the kicker lifts the race road');
+  // (Below the Palace podium the route runs under: what a car on the road stands on.)
+  const reach = route.y[i] + 4;
+  assert.ok(race.standY(...top, reach) > route.standY(...top, reach) + k.height * 0.9, 'the kicker lifts the race road');
 
   // Oil: a third of the grip on it.
   const world = createWorld({ track: arena, cars: [{ params: TEST_CAR }, { params: TEST_CAR }], poses: [{ pos: { x: 60, y: up(60, 60) + 0.5, z: 60 }, yaw: 0 }, { pos: { x: 200, y: up(200, 60) + 0.5, z: 60 }, yaw: 0 }] });

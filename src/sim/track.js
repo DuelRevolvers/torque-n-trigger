@@ -34,6 +34,23 @@ export function onFoot(o, x, z) {
 const FIT_W = 2.4; // a car's width and length, with room
 const FIT_L = 4.6;
 const MIN_RISE = 1;
+// The most a wheel or the body climbs onto in one go (a kerb). Anything taller
+// (a top, a deck, a ramp's side) is a wall unless the car's lowest point (a
+// query's foot) is already up level with it: the way up is a ramp.
+export const STEP_UP = 0.25;
+
+// Is a ramp's surface at (x, z) a wall for something whose lowest point is at
+// foot? Then how far into the ramp's footprint (p) and the way in (rx, rz),
+// across its nearest face.
+export function rampWall(r, dx, dz, u, h, foot) {
+  if (foot === undefined || h <= foot + STEP_UP) return null;
+  const v = -dx * r.dirZ + dz * r.dirX; // across it
+  const side = r.width / 2 - Math.abs(v);
+  const end = r.len - u;
+  if (side <= end && side <= u) return { p: side, rx: (Math.sign(v) || 1) * r.dirZ, rz: -(Math.sign(v) || 1) * r.dirX };
+  return end <= u ? { p: end, rx: -r.dirX, rz: -r.dirZ } : { p: u, rx: r.dirX, rz: r.dirZ };
+}
+
 // (ground: a height, or a function giving it, asked only if the footprint fits.)
 export function fitsCar(o, ground = o.y || 0) {
   if (!(o.h > 0)) return false;
@@ -335,11 +352,13 @@ class Track {
   // Nearest road surface: the main line, or a shortcut branch when the point is
   // on one. Branch hits report main-line progress (s, index) so laps and
   // positions keep working, and a lateral scaled to the main wall distance.
-  query(x, z, hint = -1, y) {
+  // y: the height asking; foot: the lowest point of what's asking (a wheel's
+  // bottom, the body's lowest corner), for what it can stand on (STEP_UP).
+  query(x, z, hint = -1, y, foot = y) {
     const r = this.queryMain(x, z, hint);
     let best = this.branches ? this.queryBranches(x, z, r) : r;
     if (!this.closed && !best.onBranch && (r.index === 0 || r.index === this.count - 1)) best = this.endCap(best, x, z);
-    return this.obstacles || this.sprinklers || this.patches || this.flood || this.lockdown || this.ramps ? this.solidAt(x, z, y, best) : best;
+    return this.obstacles || this.sprinklers || this.patches || this.flood || this.lockdown || this.ramps ? this.solidAt(x, z, y, best, foot) : best;
   }
 
   // An open track's ends (a sprint's start and finish): where the barrier
@@ -365,7 +384,8 @@ class Track {
   }
 
   // A ramp's surface under (x, z), if it's above the ground g: the new ground.
-  onRamp(x, z, g) {
+  // (foot: a ramp's side too high to step onto from there is a wall, in out.rampHit.)
+  onRamp(x, z, g, foot) {
     let out = g;
     for (const r of this.ramps) {
       const dx = x - r.x;
@@ -375,6 +395,11 @@ class Track {
       const slope = r.height / r.len;
       const h = r.abs + slope * u;
       if (h <= out.height) continue;
+      const w = rampWall(r, dx, dz, u, h, foot);
+      if (w) {
+        if (!out.rampHit || w.p > out.rampHit.p) out = { ...out, rampHit: w };
+        continue;
+      }
       const n = Math.hypot(slope, 1);
       out = { ...out, height: h, nx: (-r.dirX * slope) / n, ny: 1 / n, nz: (-r.dirZ * slope) / n, surface: r.surface ?? SURFACE.ROAD };
     }
@@ -412,7 +437,7 @@ class Track {
   }
 
   // The lawns under a sprinkler are wet; an obstacle inside the walls is a wall.
-  solidAt(x, z, y, g) {
+  solidAt(x, z, y, g, foot = y) {
     let out = g;
     if (this.patches && (g.surface === SURFACE.OFFROAD || g.offRoad)) {
       const p = this.patchAt(x, z);
@@ -420,18 +445,27 @@ class Track {
     }
     if (this.sprinklers && out.surface === SURFACE.OFFROAD && this.wetAt(x, z)) out = { ...out, surface: SURFACE.WET };
     if (this.flood && floodWet(this.flood, x, z, y ?? g.height, this.time || 0)) out = { ...out, surface: SURFACE.WET };
-    if (this.ramps) out = this.onRamp(x, z, out);
+    let pen = Math.abs(g.lateral) - this.wallDist;
+    let hit = null;
+    if (this.ramps) {
+      out = this.onRamp(x, z, out, foot);
+      if (out.rampHit) {
+        // (Beside a ramp, below its surface: its side is a wall.)
+        if (out.rampHit.p > pen) {
+          pen = out.rampHit.p;
+          hit = [out.rampHit.rx, out.rampHit.rz];
+        }
+        delete out.rampHit;
+      }
+    }
     // (The lockdown's bollards, while they're up.)
     const risen = this.lockdown ? lockdownBoxes(this.lockdown, Math.round((this.time || 0) * 60), x, z) : [];
     const fixed = this.obstacles ? this.obstacleGrid.get(Math.floor(x / 16) * 100003 + Math.floor(z / 16)) : null;
-    if (!fixed && !risen.length) return out;
-    const list = risen.length ? [...(fixed || []), ...risen] : fixed;
-    let pen = Math.abs(g.lateral) - this.wallDist;
-    let hit = null;
+    const list = !fixed && !risen.length ? [] : risen.length ? [...(fixed || []), ...risen] : fixed;
     let stand = null; // the top of what it's on
     for (const o of list) {
       const top = this.isTop(o, g.index);
-      if (top && y !== undefined && y >= o.y + o.h - 0.1) {
+      if (top && foot !== undefined && foot >= o.y + o.h - STEP_UP) {
         // Up on it: its top is the ground.
         if (onFoot(o, x, z) && (stand === null || o.y + o.h > stand)) stand = o.y + o.h;
         continue;

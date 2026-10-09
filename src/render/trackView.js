@@ -734,10 +734,11 @@ function mapleDressing(track, tex, at, opts) {
   const i0 = track.closed ? 0 : 0;
   const [sx, , sz] = at(i0, 0);
   const W = track.localWall ? track.localWall(track.s[i0]) : track.wallDist;
-  // The captain, in hi-vis, with a megaphone, by the line.
+  // The captain, in hi-vis, with a megaphone, by the line (behind the wall:
+  // nothing stands inside it, sim/raceClear.js).
   {
     const i = track.indexAtDistance(4);
-    const [x, y, z] = at(i, W - 1.5);
+    const [x, y, z] = at(i, W + 1.5);
     const yaw = Math.atan2(-track.rx[i], -track.rz[i]);
     figure(painted, tinted, x, y, z, yaw, '#c8f03a');
     painted.push(tinted(new THREE.ConeGeometry(0.18, 0.45, 8).rotateX(-Math.PI / 2).rotateY(yaw).translate(x + Math.sin(yaw) * 0.35, y + 1.72, z + Math.cos(yaw) * 0.35), '#e8e8e8'));
@@ -751,10 +752,10 @@ function mapleDressing(track, tex, at, opts) {
     .forEach((f, k) => {
       for (let q = 0; q < 2; q++) figure(painted, tinted, f.x + f.fx * 1.2 + f.fz * (q - 0.5) * 1.4, f.y + 0.5, f.z + f.fz * 1.2 - f.fx * (q - 0.5) * 1.4, Math.atan2(f.fx, f.fz), GOWNS[(k * 2 + q) % GOWNS.length]);
     });
-  // Lawn chairs and a barbecue on the lawns just past the line, where there's room.
+  // Lawn chairs and a barbecue on the lawns just past the line, behind the wall, where there's room.
   for (const [s, side] of [[14, -1], [22, 1], [34, -1]]) {
     const i = track.indexAtDistance(s);
-    const lat = side * Math.max(6, W - 5);
+    const lat = side * (W + 4);
     const [x, y, z] = at(i, lat);
     if (!clear(x, z)) continue;
     const yaw = Math.atan2(-track.rx[i] * side, -track.rz[i] * side);
@@ -805,12 +806,12 @@ function mapleDressing(track, tex, at, opts) {
     }
   }
   if (painted.length) group.add(new THREE.Mesh(mergeGeometries(painted), litMaterial({ vertexColors: true })));
-  // Spotlights on stands either side of the grid, their light swinging over the road.
+  // Spotlights on stands either side of the grid, behind the walls, their light swinging over the road.
   const pools = [];
   const poolMat = additiveMaterial({ map: tex.glow, color: '#fff0d0', opacity: 0.3 });
   for (const [k, side] of [[0, -1], [1, 1]]) {
     const i = track.indexAtDistance(track.closed ? 12 : 44 + k * 6);
-    const [x, y, z] = at(i, side * (W - 2));
+    const [x, y, z] = at(i, side * (W + 1.2));
     const stand = new THREE.Mesh(new THREE.BoxGeometry(0.3, 4, 0.3), litMaterial({ color: '#2a2a30' }));
     stand.position.set(x, y + 2, z);
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.5, 0.5), glowMaterial({ color: '#fff4dc', intensity: 3 }));
@@ -894,14 +895,17 @@ function chromeDressing(track, tex, at, opts) {
   const bannerMat = glowMaterial({ map: banner, intensity: 1.6, side: THREE.DoubleSide });
   for (const [ds, side] of [[-10, -1], [-10, 1], [14, -1], [14, 1]]) {
     const i = track.indexAtDistance(Math.max(0, s0 + ds));
-    const [x, y, z] = at(i, side * (half + 3));
+    // (On the parapet, the race's wall: nothing stands inside it, sim/raceClear.js.)
+    const [x, y, z] = at(i, side * ((track.localWall ? track.localWall(track.s[i]) : track.wallDist) + 0.3));
     painted.push(tinted(new THREE.BoxGeometry(0.25, 9, 0.25).translate(x, y + 4.5, z), '#8a8e98'));
     const g = new THREE.PlaneGeometry(1.4, 5).rotateY(Math.atan2(track.tx[i], track.tz[i]) + Math.PI / 2).translate(x, y + 5.8, z);
     group.add(new THREE.Mesh(g, bannerMat));
   }
-  // Pit gazebos: white canopies on the deck either side, where there's room.
+  // Pit gazebos: white canopies on the deck either side, where there's room
+  // past the walls (never inside them, in the way).
   for (const [ds, side] of [[-24, -1], [-24, 1], [-36, 1]]) {
     const i = track.indexAtDistance(Math.max(0, s0 + ds));
+    if (half + 9 - 3.2 < (track.localWall ? track.localWall(track.s[i]) : track.wallDist)) continue;
     const [x, y, z] = at(i, side * (half + 9));
     if (!clear(x, z)) continue;
     const yaw = Math.atan2(track.tx[i], track.tz[i]);
@@ -1285,7 +1289,7 @@ function beacons(track) {
   const at = pointAt(track);
   for (const i of [Math.min(4, track.count - 1), Math.max(0, track.count - 5)]) {
     for (const side of [-1, 1]) {
-      const p = at(i, side * (track.halfWidth + 1.2), 0);
+      const p = at(i, side * (track.wallDist + 0.4), 0); // (behind the wall)
       geos.push(new THREE.BoxGeometry(0.2, 1.4, 0.2).translate(p[0], p[1] + 0.7, p[2]));
       geos.push(new THREE.BoxGeometry(0.45, 0.35, 0.45).translate(p[0], p[1] + 1.55, p[2]));
     }

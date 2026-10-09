@@ -140,6 +140,23 @@ export function districtLayout(map) {
   return cache.get(map);
 }
 
+// The district with some of its objects gone (a race's cleared route,
+// sim/raceClear.js): the same district, its layout without them, for the renderer.
+const clearedMaps = new WeakMap();
+export function clearedMap(map, gone) {
+  if (!gone?.size) return map;
+  if (!clearedMaps.has(gone)) {
+    const m = Object.create(map);
+    const keep = (it) => !gone.has(it);
+    const base = baseLayout(map);
+    const layout = districtLayout(map);
+    bases.set(m, { ...base, items: base.items.filter(keep) });
+    cache.set(m, { ...layout, items: layout.items.filter(keep), draw: layout.draw.filter(keep) });
+    clearedMaps.set(gone, m);
+  }
+  return clearedMaps.get(gone);
+}
+
 // The SDK changing a district's edits: made again on the district's own layout
 // (kept), without building the district again. Only for a district the SDK
 // has open (its own copy), never a built-in one.
@@ -517,7 +534,7 @@ function buildLayout(map) {
       for (let t = 20; t < L - 20; t += 38) {
         for (const side of [-1, 1]) {
           const [x, z] = P(A, ux, uz, t, side * (SETBACK + 0.8));
-          hide(around(x, z, 0.2), 7);
+          items.push({ t: 'solid', r: around(x, z, 0.2), h: 7, solid: true, hidden: true, lamp: true }); // (lamp: the pass draws it while it's here)
         }
       }
     }

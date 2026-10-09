@@ -295,7 +295,7 @@ export function authoredLayout(map) {
     for (let t = 20; t < L - 20; t += 38) {
       for (const side of [-1, 1]) {
         const [x, z] = P(A, ux, uz, t, side * (SETBACK + 0.8));
-        hide(around(x, z, 0.2), 7);
+        items.push({ t: 'solid', r: around(x, z, 0.2), h: 7, solid: true, hidden: true, lamp: true }); // (lamp: the pass draws it while it's here)
       }
     }
   }

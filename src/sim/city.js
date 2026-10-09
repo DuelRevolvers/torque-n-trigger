@@ -23,6 +23,7 @@ import { buildArena } from './arena.js';
 import * as G from './geom2d.js';
 import { planTrack, planRoam } from './planRoute.js';
 import { isSpot, spotEnds, placedSolids, RUN_UP, RUN_OFF } from './routePoints.js';
+import { clearRoute } from './raceClear.js';
 
 export const STREET = { halfWidth: 8, curbWidth: 1.2, shoulderWidth: 4 };
 export const SETBACK = STREET.halfWidth + STREET.curbWidth + STREET.shoulderWidth; // centreline to lot edge
@@ -1510,6 +1511,8 @@ function authoredRoute(map, style, route) {
 //   around? (circuit: site kind), from?/to? (sprint: site kind or 'pier'), site? (arena: event ground index) }
 export function cityVenue(style, route) {
   const venue = cityVenueOf(style, route);
+  // A sprint or circuit runs on clear road (sim/raceClear.js).
+  if ((route.kind === 'sprint' || route.kind === 'circuit') && venue.kind === 'track' && !venue.def.cleared) clearRoute(districtMap(style), venue.def);
   const gadgets = style.edits?.gadgets;
   const atmosphere = style.edits?.atmosphere;
   if (!gadgets?.length && !atmosphere) return venue;

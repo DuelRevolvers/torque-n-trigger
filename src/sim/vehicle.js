@@ -213,7 +213,8 @@ function physicsSubstep(car, p, ctl, track, h) {
     const w = p.wheels[i];
     const rMount = quatRotate(q, w);
     const mount = add(car.pos, rMount);
-    const g = track.query(mount.x, mount.z, car.trackIndex, mount.y);
+    // (Its foot: the tyre's bottom now, so it climbs onto nothing taller than a kerb.)
+    const g = track.query(mount.x, mount.z, car.trackIndex, mount.y, mount.y - (susp.rest - car.wheels[i].compression) - p.wheelRadius);
     const n = v3(g.nx, g.ny, g.nz);
     const upDotN = dot(up, n);
     let comp = 0;
@@ -441,27 +442,38 @@ function resolveBodyContacts(car, p, track) {
   const hy = height / 2;
   const hz = len / 2;
 
-  let groundPen = 0;
-  let groundN = null;
+  // Each corner's foot is the body's bottom there (the lower of the two corners
+  // at that end and side): a corner pressed into a side isn't up on top.
+  const corners = [];
+  const foot = {};
   for (const sx of [-1, 1]) {
     for (const sy of [-1, 1]) {
       for (const sz of [-1, 1]) {
         const r = quatRotate(car.quat, v3(sx * hx, offsetY + sy * hy, sz * hz));
         const pt = add(car.pos, r);
-        const g = track.query(pt.x, pt.z, car.trackIndex, pt.y);
-        const pen = (g.height - pt.y) * g.ny;
-        if (pen > 0) {
-          const n = v3(g.nx, g.ny, g.nz);
-          applyContactImpulse(car, p, r, n, 0.1, 0.6);
-          if (pen > groundPen) {
-            groundPen = pen;
-            groundN = n;
-          }
-        }
+        corners.push([r, pt, sx * 2 + sz]);
+        foot[sx * 2 + sz] = Math.min(foot[sx * 2 + sz] ?? Infinity, pt.y);
       }
     }
   }
-  if (groundN) car.pos = add(car.pos, scale(groundN, groundPen));
+  let groundPen = 0;
+  let groundN = null;
+  for (const [r, pt, k] of corners) {
+    const g = track.query(pt.x, pt.z, car.trackIndex, pt.y, foot[k]);
+    const pen = (g.height - pt.y) * g.ny;
+    if (pen > 0) {
+      const n = v3(g.nx, g.ny, g.nz);
+      applyContactImpulse(car, p, r, n, 0.1, 0.6);
+      if (pen > groundPen) {
+        groundPen = pen;
+        groundN = n;
+      }
+    }
+  }
+  if (groundN) {
+    car.pos = add(car.pos, scale(groundN, groundPen));
+    for (const k in foot) foot[k] += groundN.y * groundPen;
+  }
 
   let wallPen = 0;
   let wallN = null;
@@ -469,7 +481,7 @@ function resolveBodyContacts(car, p, track) {
     for (const sz of [-1, 1]) {
       const r = quatRotate(car.quat, v3(sx * hx, offsetY, sz * hz));
       const pt = add(car.pos, r);
-      const g = track.query(pt.x, pt.z, car.trackIndex, pt.y);
+      const g = track.query(pt.x, pt.z, car.trackIndex, pt.y, foot[sx * 2 + sz]);
       const excess = Math.abs(g.lateral) - track.wallDist;
       if (excess > 0) {
         const side = -Math.sign(g.lateral);

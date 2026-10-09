@@ -1086,12 +1086,15 @@ export function districtViewOf(map, tex, { only = null } = {}) {
   const lampGeos = [];
   const headGeos = [];
   const poolGeos = [];
+  // (Only where the layout still has the post: a race clears the ones on its route.)
+  const lampAt = new Set(layout.items.filter((it) => it.lamp).map((it) => `${Math.round((it.r[0] + it.r[1]) / 2)},${Math.round((it.r[2] + it.r[3]) / 2)}`));
   if (!roof && !only) {
     for (const { A, L, ux, uz } of edgeList) {
       for (let t = 20; t < L - 20; t += 38) {
         for (const side of [-1, 1]) {
           const lat = side * (SETBACK + 0.8);
           const [x, y, z] = P(A, ux, uz, t, lat, 0);
+          if (!lampAt.has(`${Math.round(x)},${Math.round(z)}`)) continue;
           const yaw = Math.atan2(-uz * side, ux * side); // local +Z toward the road
           const pole = new THREE.BoxGeometry(0.25, 7, 0.25);
           pole.translate(0, 3.5, 0);

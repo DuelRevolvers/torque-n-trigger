@@ -18,7 +18,7 @@ import { wetAt } from './sprinklers.js';
 import { floodAt, inSurge, sumpWetAt } from './flood.js';
 import { WATER_DROP } from './ground.js';
 import { LIFT_POST } from './gadgets.js';
-import { fitsCar, onFoot } from './track.js';
+import { fitsCar, onFoot, rampWall, STEP_UP } from './track.js';
 
 const WALL_DIST = 1000;
 const WATER = { drop: WATER_DROP, respawn: true }; // painted water (def.waterAt)
@@ -214,7 +214,9 @@ class Arena {
   // Ground height and normal at arena-local (x, z): holes (water, the gaps
   // between rooftops), then ramps, then spiral ramp towers (the level under a
   // car at height ly), then the floor (flat, or the district's hills in free roam).
-  ground(x, z, ly) {
+  // (lfoot: the asker's lowest point; a ramp too high to step onto from there
+  // goes in walls, not under it.)
+  ground(x, z, ly, lfoot, walls) {
     const base = this.heightAt ? this.heightAt(x + this.cx, z + this.cz) - this.y0 : 0;
     if (this.def.waterAt?.(x + this.cx, z + this.cz)) return { h: base - WATER.drop, nx: 0, ny: 1, nz: 0 };
     for (const hl of this.holes) {
@@ -231,6 +233,11 @@ class Arena {
         const n = Math.hypot(slope, 1);
         // (A kicker over a canyon stands at its own height, abs, not on the ground below.)
         const from = r.abs !== undefined ? r.abs - this.y0 : base + (r.base || 0);
+        const w = rampWall(r, dx, dz, u, from + slope * u, lfoot);
+        if (w) {
+          walls?.push(w);
+          continue;
+        }
         return { h: from + slope * u, nx: (-r.dirX * slope) / n, ny: 1 / n, nz: (-r.dirZ * slope) / n, top: true, surface: r.surface };
       }
     }
@@ -292,11 +299,14 @@ class Arena {
     return out;
   }
 
-  query(wx, wz, hint, y) {
+  // (foot: the asker's lowest point, as Track.query.)
+  query(wx, wz, hint, y, foot = y) {
     const x = wx - this.cx;
     const z = wz - this.cz;
     const ly = y === undefined ? undefined : y - this.y0;
-    const g = this.ground(x, z, ly);
+    const lfoot = foot === undefined ? undefined : foot - this.y0;
+    const rampWalls = [];
+    const g = this.ground(x, z, ly, lfoot, rampWalls);
     // Deepest penetration into the outer walls or any obstacle (negative = clear).
     let pen = -Infinity;
     let rx = 1;
@@ -407,8 +417,16 @@ class Arena {
         rz = bz;
       }
     };
+    // (Beside a ramp, below its surface: its side is a wall.)
+    for (const w of rampWalls) {
+      if (w.p > pen) {
+        pen = w.p;
+        rx = w.rx;
+        rz = w.rz;
+      }
+    }
     for (const o of this.nearObstacles(x, z)) {
-      if (ly !== undefined && this.drivable.has(o) && ly >= (o.y || 0) + o.h - 0.1) {
+      if (lfoot !== undefined && this.drivable.has(o) && lfoot >= (o.y || 0) + o.h - STEP_UP) {
         // Up on something a car fits on (a roof, a container): its top is the ground.
         const top = (o.y || 0) + o.h;
         if (top > g.h && onFoot(o, x, z)) Object.assign(g, { h: top, nx: 0, ny: 1, nz: 0, top: true, surface: 0 });
@@ -426,7 +444,7 @@ class Arena {
         const [u, v] = toLocal(p, x, z);
         if (Math.abs(u) > p.hw || Math.abs(v) > p.hd) return;
       } else if (Math.abs(x - p.x) > p.hw || Math.abs(z - p.z) > p.hd) return;
-      if (ly !== undefined && ly > top - 1) {
+      if (lfoot !== undefined && lfoot > top - STEP_UP) {
         if (top > g.h) Object.assign(g, { h: top, nx: 0, ny: 1, nz: 0, top: true, surface: 0 });
         return;
       }

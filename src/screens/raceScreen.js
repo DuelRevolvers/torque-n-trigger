@@ -35,7 +35,7 @@ import { buildTrainView, updateTrainView } from '../render/trainView.js';
 import { buildTruckView, updateTruckView } from '../render/truckView.js';
 import { buildRvView, updateRvView } from '../render/rvView.js';
 import { buildTrafficView, updateTrafficView, trafficPoses } from '../render/trafficView.js';
-import { districtLayout } from '../sim/cityLayout.js';
+import { districtLayout, clearedMap } from '../sim/cityLayout.js';
 import { trainAt } from '../sim/train.js';
 import { additiveMaterial } from '../render/retroMaterial.js';
 import { CarView, damageStage } from '../render/carView.js';
@@ -97,7 +97,7 @@ export class RaceScreen {
     this.speedLines = new SpeedLines(this.camera);
     this.speedFx = 0;
     this.venues = new Map();
-    this.envs = new Map(); // district environments, shared by that district's events
+    this.envs = new Map(); // district environments: a district's, or a race's with its route cleared
     this.poses = [];
     this._qa = new THREE.Quaternion();
     this._qb = new THREE.Quaternion();
@@ -153,7 +153,7 @@ export class RaceScreen {
           pond: map.sites?.find((s) => s.pond)?.pond || null,
           heightAt: map.heightAt,
           // The Corporate Spire: its streets (the race's edges), fireworks for the championship.
-          planMap: map.plan ? map : null,
+          planMap: map.plan ? clearedMap(map, v.def.cleared) : null,
           fireworks: def.key === 'boss' && !!def.city.look.spire,
           // The rooftops: the East Terrace bridge, where the drag's crowd stands.
           crowdBridge: map.roof ? map.crossings.find((c) => c.st.name === 'Terrace Line' && c.deckB?.name === 'Skyline Straight') || null : null,
@@ -178,16 +178,18 @@ export class RaceScreen {
     return entry;
   }
 
-  // The whole district around the route (built once per district, last two kept).
-  env(style) {
-    if (this.envs.has(style)) return this.envs.get(style);
+  // The whole district around the route (built once per district, or per race
+  // with its route cleared of props, sim/raceClear.js; the last two kept).
+  env(style, gone = null) {
+    const key = gone?.size ? gone : style;
+    if (this.envs.has(key)) return this.envs.get(key);
     if (this.envs.size >= 2) {
       const [oldKey, old] = this.envs.entries().next().value;
       this.scene.remove(old);
       old.traverse((o) => o.geometry?.dispose());
       this.envs.delete(oldKey);
     }
-    const map = districtMap(style);
+    const map = clearedMap(districtMap(style), gone);
     const group = buildDistrictView(map, this.app.tex);
     // What's placed in the T&T SDK (lights flickering with the district's
     // clock, barrels gone once they've blown up).
@@ -209,7 +211,7 @@ export class RaceScreen {
       };
     }
     this.scene.add(group);
-    this.envs.set(style, group);
+    this.envs.set(key, group);
     return group;
   }
 
@@ -230,7 +232,7 @@ export class RaceScreen {
     this.venueEntry = venue;
     venue.group.visible = true;
     for (const env of this.envs.values()) env.visible = false;
-    this.envGroup = this.def.city ? this.env(this.def.city) : null;
+    this.envGroup = this.def.city ? this.env(this.def.city, getVenue(this.def.venue, this.def).def.cleared) : null;
     if (this.envGroup) {
       this.envGroup.visible = true;
       // Warehouse Row's doorways are shuttered for the boss fight.
