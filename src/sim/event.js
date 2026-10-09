@@ -8,6 +8,8 @@ import { gridLateral } from './world.js';
 import { quatRotate } from './math.js';
 import { applyDamage } from './combat.js';
 import { pickupSpots } from './trackgen.js';
+import { NITRO } from './rules.js';
+import { earnNitro } from './nitro.js';
 
 // A car off a burning plate burns on this long (s); one off a sparking plate
 // stays shocked this long.
@@ -122,6 +124,7 @@ export function eventInput(world, i, raw) {
     car.launch.done = true;
     if (ev.time < 0.3) {
       car.launchBoost = 1.5;
+      earnNitro(world, i, NITRO.launch);
       world.events.push({ type: 'launch', car: i });
     }
   }
@@ -274,15 +277,20 @@ function updateStyle(world, i, dt) {
   };
 
   const slip = speed > 12 ? Math.acos(Math.max(-1, Math.min(1, (fwd.x * car.vel.x + fwd.z * car.vel.z) / speed))) : 0;
-  if (grounded && slip > 0.35) st.drift += dt;
-  else if (slip < 0.2) {
+  if (grounded && slip > 0.35) {
+    st.drift += dt;
+    if (st.drift > NITRO.driftAfter) earnNitro(world, i, NITRO.driftPerSecond * dt);
+  } else if (slip < 0.2) {
     if (st.drift > 0.8) award('DRIFT', st.drift * STYLE.driftPerSecond);
     st.drift = 0;
   }
   // Air only counts while upright: lying on the roof or side (then resetting) pays nothing.
   const upright = quatRotate(car.quat, { x: 0, y: 1, z: 0 }).y > 0.3;
   if (!upright) st.air = 0;
-  else if (!grounded) st.air += dt;
+  else if (!grounded) {
+    st.air += dt;
+    if (st.air > NITRO.airAfter) earnNitro(world, i, NITRO.airPerSecond * dt);
+  }
   else {
     if (st.air > 0.6) award('AIR', st.air * STYLE.airPerSecond);
     st.air = 0;
@@ -298,6 +306,7 @@ function updateStyle(world, i, dt) {
     if (d > 2.3 && d < 3.2 && rel > 12) {
       st.nm[j] = 3;
       award('NEAR MISS', STYLE.nearMiss);
+      earnNitro(world, i, NITRO.nearMiss);
     }
   });
 }

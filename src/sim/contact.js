@@ -5,7 +5,8 @@
 
 import { sub, quatRotate, quatRotateInv } from './math.js';
 import { SIM_HZ, SIM_DT } from '../config.js';
-import { CONTACT as C, SLAM_REACTION as SR, SLAM_DAMAGE } from './rules.js';
+import { CONTACT as C, SLAM_REACTION as SR, SLAM_DAMAGE, NITRO } from './rules.js';
+import { earnNitro } from './nitro.js';
 
 const FWD = { x: 0, y: 0, z: -1 };
 const SLAMS = new Set(['slam', 'shunt', 'huge']); // hits that count as a slam on the victim
@@ -117,7 +118,12 @@ export function noteContact(world, a, b, n, impact, point) {
     v.lastSlamKind = r.label;
     v.lastSlamGeo = r.geo;
     v.hitSide = hitSide(world, vic, point);
-    if (r.geo !== 'shunt' && r.geo !== 'headOn') startReaction(world, atk, vic, point);
+    if (r.geo !== 'shunt' && r.geo !== 'headOn') {
+      startReaction(world, atk, vic, point);
+      // (B3's slam boost transfer: the attacker gains, the victim loses.)
+      earnNitro(world, atk, NITRO.slamDealt);
+      earnNitro(world, vic, NITRO.slammed);
+    }
   }
   world.events.push({ type: 'contact', a, b, attacker: atk, victim: vic, label: r.label, geo: r.geo, angle: r.angle, impact, point });
   return { label: r.label, geo: r.geo, atk, vic };

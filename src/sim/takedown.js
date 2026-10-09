@@ -7,7 +7,8 @@
 
 import { sub, quatRotate } from './math.js';
 import { SIM_HZ, SIM_DT } from '../config.js';
-import { CRASH, CREDIT } from './rules.js';
+import { CRASH, CREDIT, NITRO } from './rules.js';
+import { earnNitro } from './nitro.js';
 import { rubTime, updateReaction } from './contact.js';
 
 const FWD = { x: 0, y: 0, z: -1 };
@@ -90,6 +91,7 @@ export function award(world, x, v, cause, psych = false, s = world.state.cars[v]
   const { cars, tick } = world.state;
   const X = cars[x].contact;
   cars[x].takedowns++;
+  earnNitro(world, x, NITRO.takedown);
   const double = within(tick, X.lastVictimTick, CREDIT.doubleWindow);
   if (double) X.doubles++;
   if (RAMS.has(cause)) X.rams++;
@@ -141,6 +143,7 @@ export function checkLucky(world, i, impact) {
   c.luckyTick = c.lastSlamTick;
   c.lucky++;
   world.state.cars[c.lastSlamBy].contact.denied++;
+  earnNitro(world, i, NITRO.lucky);
   world.events.push({ type: 'lucky', car: i, by: c.lastSlamBy });
 }
 

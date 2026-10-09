@@ -24,9 +24,12 @@ test('AI race contact soak (diagnostic)', (t) => {
   const sideHist = [0, 0, 0, 0, 0]; // side-type hits by impact: <2, 2-4, 4-6, 6-8.9, 8.9+ m/s
   const outcomes = { wreck: 0, lucky: 0 }; // plus takedowns by cause
   const seconds = 150;
+  const fired = world.state.cars.map(() => 0); // nitro charges used, per car
   for (let tk = 0; tk < seconds * 60; tk++) {
     world.events = [];
+    const before = world.state.cars.map((c) => c.nitro.active);
     stepWorld(world, world.state.cars.map((_, i) => aiInput(world, i, SIM_DT)));
+    world.state.cars.forEach((c, i) => c.nitro.active > before[i] && fired[i]++);
     for (const e of world.events) {
       if (e.type === 'wreck' || e.type === 'lucky') outcomes[e.type]++;
       if (e.type === 'takedown') outcomes[`takedown/${e.cause}`] = (outcomes[`takedown/${e.cause}`] || 0) + 1;
@@ -44,5 +47,6 @@ test('AI race contact soak (diagnostic)', (t) => {
   t.diagnostic(`contacts in ${seconds}s, 6 AI cars: ${total} ${JSON.stringify(labels)}`);
   t.diagnostic(`by geometry: ${JSON.stringify(geos)}; max impact ${maxImpact.toFixed(1)} m/s`);
   t.diagnostic(`wrecks and takedowns: ${JSON.stringify(outcomes)}`);
+  t.diagnostic(`nitro charges used per car: ${fired.join(', ')}; takedowns per car: ${world.state.cars.map((c) => c.takedowns).join(', ')}`);
   t.diagnostic(`side-type hits by impact (<2, 2-4, 4-6, 6-8.9, 8.9+ m/s): ${sideHist.join(', ')}`);
 });

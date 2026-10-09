@@ -7,6 +7,8 @@ import { conditionFactor } from '../parts/build.js';
 import { onOil, rainGrip } from './gadgets.js';
 import { newContact, touchContact, noteContact, damageMul } from './contact.js';
 import { crashes, queueCredit, ringOutCredit, award, checkLucky } from './takedown.js';
+import { earnNitro } from './nitro.js';
+import { NITRO } from './rules.js';
 
 const DEFAULT_COMBAT = {
   hp: 500, armor: 0, heatCapacity: 70, dissipation: 0.7, heatRate: 1, powerDeficit: 0,
@@ -118,13 +120,17 @@ function invInertiaWorld(car, p, v) {
   return quatRotate(car.quat, v3(b.x / p.inertia.x, b.y / p.inertia.y, b.z / p.inertia.z));
 }
 
-export function applyDamage(world, j, amount, point, source, silent = false) {
+// ram: a car-to-car hit (slams earn nitrous on their own, contact.js); other
+// damage from a car is its weapons', and earns it nitrous.
+export function applyDamage(world, j, amount, point, source, silent = false, ram = false) {
   const car = world.state.cars[j];
   if (car.wrecked || amount <= 0 || car.invulnerable) return;
+  source ??= -1; // (hazards pass null: no one's)
   const p = world.params[j];
   const c = combatOf(p);
   if (car.shield > 0) amount *= 0.2;
   amount *= 1 - c.armor * cfOf(car, 'armor');
+  if (source >= 0 && source !== j && !ram) earnNitro(world, source, (NITRO.damage * Math.min(amount, car.hp)) / car.maxHp);
   car.hp -= amount;
   if (source >= 0 && source !== j) {
     car.lastHitBy = source;
@@ -183,6 +189,7 @@ function wreck(world, j, source) {
   car.shield = 0;
   car.wreckTick = world.state.tick;
   car.contact.react = null;
+  earnNitro(world, j, NITRO.wrecked);
   car.vel = add(car.vel, v3(0, 5, 0));
   car.angVel = add(car.angVel, quatRotate(car.quat, v3(0, 0, 1.5)));
   if (source >= 0 && source !== j) award(world, source, j, 'hp');
@@ -465,8 +472,8 @@ export function collideCars(world) {
       const front = (car, p) => quatRotateInv(car.quat, sub(point, car.pos)).z < -p.body.length * 0.25;
       const dmgA = (base * (2 * pb.mass) / (pa.mass + pb.mass) * (1 - ca.rollCage * 0.4)) / ca.ramResist + (front(B, pb) ? (cb.ramDamage * impact) / 15 : 0);
       const dmgB = (base * (2 * pa.mass) / (pa.mass + pb.mass) * (1 - cb.rollCage * 0.4)) / cb.ramResist + (front(A, pa) ? (ca.ramDamage * impact) / 15 : 0);
-      applyDamage(world, a, dmgA * damageMul(hit, a), point, b);
-      applyDamage(world, b, dmgB * damageMul(hit, b), point, a);
+      applyDamage(world, a, dmgA * damageMul(hit, a), point, b, false, true);
+      applyDamage(world, b, dmgB * damageMul(hit, b), point, a, false, true);
       if (crashes(world, a, 'car', impact, b)) wreckPhysical(world, a, 'car');
       if (crashes(world, b, 'car', impact, a)) wreckPhysical(world, b, 'car');
     }

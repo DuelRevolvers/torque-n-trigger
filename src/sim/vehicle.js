@@ -8,6 +8,8 @@ import {
   v3, add, sub, scale, dot, cross, length, normalize, clamp, approach,
   quatRotate, quatRotateInv, quatIntegrate, quatFromYaw,
 } from './math.js';
+import { NITRO } from './rules.js';
+import { nitroKick } from './nitro.js';
 
 const WORLD_UP = v3(0, 1, 0);
 const LOCAL_UP = WORLD_UP;
@@ -97,8 +99,9 @@ function updateNitro(car, p, input, dt) {
     n.active = p.nitro.duration;
   }
   n.active = Math.max(0, n.active - dt);
+  // (The timed refill is slow: nitrous is earned by fighting and risky driving, sim/nitro.js.)
   if (n.charges < p.nitro.charges) {
-    n.recharge += dt;
+    n.recharge += dt * NITRO.idleRate;
     if (n.recharge >= p.nitro.rechargeTime) {
       n.charges++;
       n.recharge = 0;
@@ -182,7 +185,7 @@ function updateDrivetrain(car, p, input, dt) {
   let drive = (torque * ratio * t.efficiency) / p.wheelRadius;
   if (car.shiftTimer > 0) drive *= p.arcade ? p.arcade.shiftKeep : 0.25;
   if (car.reverse) drive = vLong < -p.maxReverseSpeed ? 0 : -drive;
-  else if (car.nitro.active > 0) drive += p.nitro.force;
+  else if (car.nitro.active > 0) drive += p.nitro.force * nitroKick(p.nitro.duration - car.nitro.active);
 
   car.rpm = Math.min(e.redline + 150, rpm + car.wheelspin * 1500);
   car.braking = brake > 0.05;

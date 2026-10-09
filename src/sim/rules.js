@@ -55,3 +55,18 @@ export const CREDIT = {
   luckyWindow: 2, // s after being slammed
   doubleWindow: 1, // s between two takedowns that make a double (B3, CONFIRMED)
 };
+
+// Earned nitrous (phase 3). Amounts are in charges (1 = one full charge); B3's
+// boost units converted at 72 units ≈ one T&T charge, then tuned (GUESS values).
+export const NITRO = {
+  idleRate: 0.4, // the timed refill, as a share of the part's own rate (rechargeTime)
+  takedown: 1, wrecked: -1, // B3: the bar grows a level / shrinks a level
+  slamDealt: 0.5, slammed: -0.5, // side slams and T-bones (B3 converts to 1.7; cut)
+  damage: 1, // per target's max HP dealt by weapons: 0.1 per 10 % (B3 has no guns)
+  nearMiss: 0.2,
+  driftPerSecond: 0.05, driftAfter: 0.8, // s of drifting before it earns
+  airPerSecond: 0.1, airAfter: 0.6, // s in the air before it earns
+  launch: 0.5, // a perfect launch (B3's Boost Start: +50 units)
+  lucky: 0.25, // surviving a slam into a wall
+  kick: 1, kickTime: 0.5, // force × (1 + kick × (1 − t / kickTime)) just after a charge fires (B3: 4 over 2 s)
+};

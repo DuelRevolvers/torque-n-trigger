@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PAD } from './helpers.js';
 import { createWorld, stepWorld, snapshotWorld, restoreWorld } from '../src/sim/world.js';
-import { collideCars, wreckPhysical } from '../src/sim/combat.js';
+import { collideCars, wreckPhysical, applyDamage } from '../src/sim/combat.js';
 import { reactInput } from '../src/sim/contact.js';
 import { tolerance, crashes, award, updateTakedowns, signatureAt } from '../src/sim/takedown.js';
 import { resolveSpot } from '../src/sim/event.js';
@@ -251,4 +251,13 @@ test('signature spots resolve from SDK clicks or track progress', () => {
   assert.deepEqual(resolveSpot({ name: 'A', from: [60, 0], to: [20, 0] }, track(false)), { name: 'A', s0: 20, s1: 60 });
   assert.deepEqual(resolveSpot({ name: 'A', from: [60, 0], to: [20, 0] }, track(true)), { name: 'A', s0: 60, s1: 20 });
   assert.deepEqual(resolveSpot({ name: 'B', s0: -10, s1: 5 }, track(true)), { name: 'B', s0: 90, s1: 5 });
+});
+
+test('a hazard hit (no source) credits no one, even if the car then crashes', () => {
+  const w = worldN(2);
+  applyDamage(w, 1, 5, w.state.cars[1].pos, null);
+  assert.equal(w.state.cars[1].lastHitBy, -1);
+  wreckPhysical(w, 1, 'wall');
+  step(w, 40);
+  assert.deepEqual(takedowns(w), [0, 0]);
 });
