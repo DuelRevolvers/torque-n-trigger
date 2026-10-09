@@ -164,15 +164,15 @@ test('Hitting traffic: knocked loose, a wall\'s damage, and a crash over 33.5 m/
   assert.ok(soft.loose, 'knocked loose');
   assert.ok(!soft.car.wrecked && soft.car.hp < soft.car.maxHp, 'hurt, not crashed');
   assert.ok(Math.hypot(soft.loose.vx, soft.loose.vz) > 10, 'shoved');
-  const hard = hit(40);
+  const hard = hit(60); // (over 33.5 × 1.64: the test car in a race)
   assert.ok(hard.car.wrecked, 'crashed head-on');
 });
 
-test('Traffic check: a slammed rival crashes into traffic at ~13 m/s and the slammer gets the takedown', () => {
+test('Traffic check: a slammed rival crashes into traffic at ~40 m/s and the slammer gets the takedown', () => {
   const w = rushHour();
   const c = laneCar(w, 200, 0, 0);
   put(w, 0, 100, -6, 0);
-  put(w, 1, 200 - 4, c.lat, 20);
+  put(w, 1, 200 - 4, c.lat, 45);
   Object.assign(w.state.cars[1].contact, { lastSlamBy: 0, lastSlamTick: w.state.tick });
   stepTraffic(w);
   assert.ok(w.state.cars[1].wrecked);

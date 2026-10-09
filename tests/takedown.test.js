@@ -43,23 +43,38 @@ const wallHit = (w, i, impact) => {
 };
 const takedowns = (w) => w.state.cars.map((c) => c.takedowns);
 
-test('crash tolerance follows health, armor, roll cage and a fresh slam', () => {
+test('crash tolerance follows health, armor, roll cage, weight, a fresh slam and the event', () => {
   const w = worldN();
-  assert.ok(Math.abs(tolerance(w, 0) - 1.15) < 1e-9, 'healthy, default roll cage');
+  const kg = Math.sqrt(1200 / 1400); // (the test car's weight)
+  const base = (1 + 0.6 * 0.3) * kg; // (the default roll cage)
+  assert.ok(Math.abs(tolerance(w, 0) - base * 1.5) < 1e-9, 'healthy, a race');
   hurt(w, 0);
   slammedBy(w, 0, 1);
-  assert.ok(Math.abs(tolerance(w, 0) - 0.25 * 1.15 * 0.4) < 1e-9);
+  assert.ok(Math.abs(tolerance(w, 0) - base * 0.7 * 0.7 * 1.5) < 1e-9, 'a quarter HP: 70 %; slammed: 70 %');
   const armored = createWorld({ track: PAD, cars: [{ params: { ...TEST_CAR, combat: { hp: 500, armor: 0.4, rollCage: 1 } } }] });
-  assert.ok(Math.abs(tolerance(armored, 0) - 1.7) < 1e-9);
+  assert.ok(Math.abs(tolerance(armored, 0) - 2 * kg * 1.5) < 1e-9, 'armour and a full roll cage');
+  const heavy = createWorld({ track: PAD, cars: [{ params: { ...TEST_CAR, mass: 2600 } }] });
+  assert.ok(Math.abs(tolerance(heavy, 0) - 1.18 * 1.3 * 1.5) < 1e-9, 'weight, up to 1.3');
+  const arena = worldN();
+  arena.state.event = { type: 'arena' };
+  assert.ok(Math.abs(tolerance(arena, 0) - base * 2.5) < 1e-9, 'an arena');
 });
 
-test('a hurt, slammed car is wrecked by a light wall hit; a healthy one is not', () => {
+test('car hits: the lighter car takes more of the hit, a ram-resistant one less', () => {
+  const w = createWorld({ track: PAD, cars: [{ params: TEST_CAR }, { params: { ...TEST_CAR, mass: 2400 } }, { params: { ...TEST_CAR, combat: { hp: 500, ramResist: 1.5, rollCage: 0.3 } } }] });
+  const limit = 67.056 * tolerance(w, 0); // (150 mph)
+  assert.equal(crashes(w, 0, 'car', limit * 0.8, 1), true, 'hit by a car twice its weight');
+  assert.equal(crashes(w, 1, 'car', limit * 1.2, 0), false, 'the heavy car shrugs it off');
+  assert.equal(crashes(w, 2, 'car', limit * 1.2, 0), false, 'ram resist');
+});
+
+test('a hurt, slammed car is wrecked by a lighter wall hit than a healthy one survives', () => {
   const w = worldN();
-  wallHit(w, 0, 20);
-  assert.equal(w.state.cars[0].wrecked, false, 'healthy car survives 20 m/s');
+  wallHit(w, 0, 40);
+  assert.equal(w.state.cars[0].wrecked, false, 'healthy car survives 40 m/s');
   hurt(w, 0);
   slammedBy(w, 0, 1);
-  wallHit(w, 0, 5);
+  wallHit(w, 0, 25);
   assert.equal(w.state.cars[0].wrecked, true);
   assert.deepEqual(takedowns(w), [0, 0], 'credit waits 0.5 s');
   step(w, 30);
@@ -71,7 +86,8 @@ test('no takedown if the attacker is wrecked within 0.5 s', () => {
   const w = worldN();
   hurt(w, 0);
   slammedBy(w, 0, 1);
-  wallHit(w, 0, 5);
+  wallHit(w, 0, 25);
+  assert.equal(w.state.cars[0].wrecked, true);
   step(w, 10);
   wreckPhysical(w, 1, 'wall');
   step(w, 30);
@@ -82,31 +98,48 @@ test('slam someone, then crash yourself: they get the takedown', () => {
   const w = worldN();
   slammedBy(w, 1, 0); // car 0 slammed car 1
   hurt(w, 0);
-  wallHit(w, 0, 10); // then car 0 hits the wall
+  wallHit(w, 0, 35); // then car 0 hits the wall
   step(w, 30);
   assert.deepEqual(takedowns(w), [0, 1]);
 });
 
 test('a hard hit wrecks a hurt car outright; the slam that did it is credited', () => {
   const w = worldN();
-  sideSlam(w);
+  sideSlam(w, 60);
   assert.equal(w.state.cars[1].wrecked, false, 'healthy victim survives');
   const w2 = worldN();
-  hurt(w2, 1);
-  sideSlam(w2);
+  hurt(w2, 1, 0.5);
+  sideSlam(w2, 60);
   assert.equal(w2.state.cars[1].wrecked, true);
   step(w2, 31);
   assert.deepEqual(takedowns(w2), [1, 0]);
   assert.equal(w2.state.cars[1].contact.takedownCause, 'car');
 });
 
+test('a respawned car isn\'t crashed by its wreck\'s wall hits, and is guarded for 2 s', () => {
+  const w = worldN();
+  w.respawnOnWreck = true;
+  const c = w.state.cars[0];
+  wreckPhysical(w, 0, 'wall');
+  c.impact = 40; // (the wreck slid into a wall)
+  step(w, 5 * 60 + 2);
+  assert.equal(c.wrecked, false, 'respawned, and not crashed again');
+  assert.ok(c.spawnGuard > 0 && c.shield > 0, 'guarded, shown as the shield');
+  applyDamage(w, 0, 10 * c.maxHp, c.pos, 1);
+  assert.equal(crashes(w, 0, 'wall', 500), false);
+  assert.equal(c.wrecked, false, 'no damage or crash while guarded');
+  step(w, 2 * 60);
+  applyDamage(w, 0, 10 * c.maxHp, c.pos, 1);
+  assert.equal(c.wrecked, true, 'fair game after 2 s');
+});
+
 test('you cannot crash into the car you just took down', () => {
   const w = worldN();
   hurt(w, 0);
   award(w, 0, 1, 'wall');
-  assert.equal(crashes(w, 0, 'car', 60, 1), false);
+  assert.equal(crashes(w, 0, 'car', 90, 1), false);
   w.state.tick += 91;
-  assert.equal(crashes(w, 0, 'car', 60, 1), true);
+  assert.equal(crashes(w, 0, 'car', 90, 1), true);
 });
 
 test('tipping over soon after a slam is a wreck; on its own it is not', () => {
@@ -126,7 +159,7 @@ test('rubbing, tailgating and recent gunfire earn the credit', () => {
   const w = worldN();
   w.state.cars[0].contact.touching[1] = { secs: 0.2, tick: w.state.tick };
   hurt(w, 0, 0.15);
-  wallHit(w, 0, 10);
+  wallHit(w, 0, 35);
   step(w, 30);
   assert.deepEqual(takedowns(w), [0, 1]);
 
@@ -135,7 +168,7 @@ test('rubbing, tailgating and recent gunfire earn the credit', () => {
   step(t, 35);
   assert.equal(t.state.cars[0].contact.psychedBy, 1);
   hurt(t, 0, 0.15);
-  wallHit(t, 0, 10);
+  wallHit(t, 0, 35);
   t.events = [];
   for (let k = 0; k < 30 && !t.events.some((e) => e.type === 'takedown'); k++) {
     t.events = [];
@@ -150,7 +183,7 @@ test('rubbing, tailgating and recent gunfire earn the credit', () => {
     Object.assign(g.state.cars[0], { lastHitBy: 1, lastHitTick: 0 });
     g.state.tick = ago;
     hurt(g, 0, 0.15);
-    wallHit(g, 0, 10);
+    wallHit(g, 0, 35);
     step(g, 30);
     assert.equal(g.state.cars[1].takedowns, want, `${ago} ticks after the shot`);
   }
@@ -210,7 +243,7 @@ test('pending credit is paid when the event ends, and survives snapshots', () =>
   const w = worldN();
   hurt(w, 0);
   slammedBy(w, 0, 1);
-  wallHit(w, 0, 5);
+  wallHit(w, 0, 25);
   const snap = JSON.parse(JSON.stringify(snapshotWorld(w)));
   const w2 = worldN();
   restoreWorld(w2, snap);

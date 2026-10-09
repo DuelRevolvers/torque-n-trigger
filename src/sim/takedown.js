@@ -17,21 +17,33 @@ const UP = { x: 0, y: 1, z: 0 };
 const within = (tick, then, seconds) => then >= 0 && tick - then < seconds * SIM_HZ;
 const dist = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
-// 1.0 for a healthy, unarmored, unslammed car; lower is easier to crash.
+// How hard a hit car i shrugs off, times the crash thresholds (about 1.5 for a
+// healthy race car, 2.5 in an arena); lower is easier to crash. Health, armour
+// and roll cage, weight, a slam just taken, and the event.
 export function tolerance(world, i) {
   const car = world.state.cars[i];
-  const c = world.params[i].combat || {};
-  const health = Math.max(CRASH.minHealth, car.hp / car.maxHp);
+  const p = world.params[i];
+  const c = p.combat || {};
+  const health = CRASH.healthFloor + (1 - CRASH.healthFloor) * Math.max(0, car.hp / car.maxHp);
+  const parts = 1 + CRASH.armor * (c.armor || 0) + CRASH.rollCage * (c.rollCage ?? 0.3);
+  const weight = Math.max(CRASH.weightMin, Math.min(CRASH.weightMax, Math.sqrt((p.mass || CRASH.weightRef) / CRASH.weightRef)));
   const slammed = car.contact.lastSlamBy >= 0 && within(world.state.tick, car.contact.lastSlamTick, CRASH.slammedFor);
-  return health * (1 + CRASH.armor * (c.armor || 0) + CRASH.rollCage * (c.rollCage ?? 0.3)) * (slammed ? CRASH.slammed : 1);
+  const event = world.state.event?.type === 'arena' ? CRASH.arena : CRASH.race;
+  return health * parts * weight * (slammed ? CRASH.slammed : 1) * event;
 }
 
 // Does car i crash from this hit? kind: 'wall' (m/s into the wall) or 'car' (closing speed), other: the car hit.
 export function crashes(world, i, kind, speed, other = -1) {
   const car = world.state.cars[i];
-  if (car.wrecked || car.invulnerable) return false;
+  if (car.wrecked || car.invulnerable || car.spawnGuard > 0) return false;
   const c = car.contact;
   if (other >= 0 && c.lastVictim === other && within(world.state.tick, c.lastVictimTick, CRASH.victimGrace)) return false;
+  if (kind === 'car' && other >= 0) {
+    // (The lighter car takes more of the hit; a ram bumper or heavy suspension takes less.)
+    const m = world.params[i].mass;
+    const mo = world.params[other].mass;
+    speed *= Math.min(CRASH.share, (2 * mo) / (m + mo)) / (world.params[i].combat?.ramResist || 1);
+  }
   return speed > CRASH[kind] * tolerance(world, i);
 }
 
@@ -161,7 +173,7 @@ export function updateTakedowns(world, wreckPhysical) {
   updateTailgates(world);
   state.cars.forEach((car, i) => {
     const c = car.contact;
-    if (car.wrecked || car.invulnerable || c.lastSlamBy < 0 || !within(state.tick, c.lastSlamTick, CRASH.tipSlamWindow)) return;
+    if (car.wrecked || car.invulnerable || car.spawnGuard > 0 || c.lastSlamBy < 0 || !within(state.tick, c.lastSlamTick, CRASH.tipSlamWindow)) return;
     if (quatRotate(car.quat, UP).y < CRASH.tipUp) wreckPhysical(world, i, 'tipOver');
   });
   if (!state.credits?.length) return;

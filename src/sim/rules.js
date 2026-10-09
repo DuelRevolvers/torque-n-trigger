@@ -38,8 +38,14 @@ export const CRASH = {
   car: 150 * MPH, // m/s closing speed car-vs-car (67 m/s)
   tipUp: 0.5, // up vector Y below this (past 60 degrees) ...
   tipSlamWindow: 2, // ... within this many seconds of a slam
-  minHealth: 0.15, armor: 0.5, rollCage: 0.5,
-  slammed: 0.4, slammedFor: 1,
+  // How hard a hit a car shrugs off (takedown.js tolerance): T&T's own, eased
+  // from B3's after play-testing (B3: HP share down to 15 %, slammed 0.4).
+  race: 1.5, arena: 2.5, // the thresholds times this: races ease them a lot, arenas far more
+  healthFloor: 0.6, // at 0 HP a car shrugs off 60 % of what it does at full HP
+  armor: 1, rollCage: 0.6, // + this per point of armour and of roll cage
+  weightRef: 1400, weightMin: 0.85, weightMax: 1.3, // × √(mass / 1400 kg), kept inside these
+  share: 1.5, // car hits: closing speed × the other car's weight share 2m₂/(m₁+m₂), at most this
+  slammed: 0.7, slammedFor: 1, // × this for 1 s after being slammed
   victimGrace: 1.5, // s: no crashing into the car you just took down
   traffic: 75 * MPH, // m/s closing speed along the normal into traffic (B3, CONFIRMED: 33.5 m/s)
 };
