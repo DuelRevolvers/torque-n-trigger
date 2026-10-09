@@ -144,6 +144,9 @@ export const LAST_LAP_OUT = {
   maxCars: 6, // the career's field, so no race runs past 5 laps
   clear: 5, // s before an eliminated car's wreck is cleared off the road
   lastTargets: 0.5, // an AI in last place: its victim score for the car just ahead times this (GUESS)
+  // The elimination blast: bigger than a Detonate, and a car within `wreck` m is
+  // wrecked outright, the eliminated car's takedown (T&T, not B3; GUESS).
+  blast: { radius: 12, damage: 90, push: 18, lift: 8, wreck: 6 },
 };
 
 // Rush hour traffic (phase 6): B3's lane traffic (docs/systems/traffic.md,

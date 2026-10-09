@@ -53,9 +53,8 @@ function detonate(world, i) {
 // Blows car i's wreck up: nearby cars are thrown clear and take blast damage
 // (a wreck from it is car i's takedown), and the wreck jumps. (Detonate, and a
 // Last Lap Out elimination.)
-export function blast(world, i) {
+export function blast(world, i, B = DEATH_ROLL.blast) {
   const car = world.state.cars[i];
-  const B = DEATH_ROLL.blast;
   world.state.cars.forEach((t, j) => {
     const dx = t.pos.x - car.pos.x;
     const dz = t.pos.z - car.pos.z;
