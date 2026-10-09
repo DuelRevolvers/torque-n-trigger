@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.log
 Archive/
+backup/
+.claude/handoff/
