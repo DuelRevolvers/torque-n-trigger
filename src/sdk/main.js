@@ -1963,7 +1963,7 @@ function runAi() {
       evRun = { progress: p };
       const box = $('ev-run');
       if (box) box.innerHTML = runText();
-    });
+    }, aiDifficulty);
   } catch (err) {
     evRun = { error: `The AI test run couldn't start: ${err.message}` };
     renderEvents();
@@ -2130,6 +2130,14 @@ try {
   nudgeAmounts = { ...nudgeAmounts, ...JSON.parse(localStorage.getItem(NUDGE_STORE) || '{}') };
 } catch {
   // (The defaults.)
+}
+// The AI difficulty for AI test runs (easy | normal | hard); set in Controls, kept in this browser.
+const AI_DIFF_STORE = 'tt-sdk:aiDifficulty';
+let aiDifficulty = 'normal';
+try {
+  aiDifficulty = localStorage.getItem(AI_DIFF_STORE) || 'normal';
+} catch {
+  // (The default.)
 }
 const nudgeStep = (fine) => (fine ? Number(nudgeAmounts.fine) || 0.1 : nudgeAmounts.step === 'grid' ? gridSize() : Number(nudgeAmounts.step) || gridSize());
 
@@ -4878,6 +4886,8 @@ function renderControls() {
     ${keysNote ? `<p class="note warn">${esc(keysNote)}</p>` : ''}
     <div class="krow head"><span></span><span class="keys"><b>Key</b><b>Alt</b><i class="clear"></i></span></div>
     ${ACTIONS.map(([title, , list]) => `<h4>${esc(title)}</h4>${list.map(row).join('')}${title === 'Editing' ? nudgeRows : ''}`).join('')}
+    <h4>AI test run</h4>
+    <div class="krow"><span>AI difficulty</span><span class="keys"><select id="ai-difficulty">${[['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']].map(([v, t]) => `<option value="${v}"${aiDifficulty === v ? ' selected' : ''}>${t}</option>`).join('')}</select></span></div>
     <h4>Fixed keys</h4>${FIXED_KEYS.map(([what, k, alt]) => `<div class="krow fixed"><span>${esc(what)}</span><span class="keys"><kbd>${esc(k)}</kbd><kbd class="${alt ? '' : 'none'}">${esc(alt || '')}</kbd><i class="clear"></i></span></div>`).join('')}
     ${[['Mouse', MOUSE]].map(([title, list]) => `<h4>${title}</h4>${list.map(([what, k]) => `<div class="krow fixed"><span>${esc(keyText(what))}</span><span class="keys"><kbd class="wide">${esc(keyText(k))}</kbd><i class="clear"></i></span></div>`).join('')}`).join('')}
     <div class="row" style="margin-top:10px"><button id="keys-reset">Reset to defaults</button><button id="keys-close">Close</button></div>`;
@@ -4903,6 +4913,15 @@ function renderControls() {
       $(id).blur(); // (so the arrows nudge again)
     });
   }
+  $('ai-difficulty').addEventListener('change', () => {
+    aiDifficulty = $('ai-difficulty').value;
+    try {
+      localStorage.setItem(AI_DIFF_STORE, aiDifficulty);
+    } catch {
+      // (Kept for this session only.)
+    }
+    $('ai-difficulty').blur();
+  });
   $('keys-reset').addEventListener('click', () => {
     binding = structuredClone(DEFAULT_KEYS);
     nudgeAmounts = { step: 'grid', fine: 0.1 };

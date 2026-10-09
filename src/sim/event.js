@@ -23,7 +23,7 @@ const HOLD = { ...neutralInput(), handbrake: true };
 const COUNTDOWN = 3;
 const STYLE = { driftPerSecond: 25, airPerSecond: 60, nearMiss: 40 };
 
-// def: { type: 'sprint'|'circuit'|'arena'|'drag', laps?, mode?, timeLimit?, pit?, startS?, finishS? }
+// def: { type: 'sprint'|'circuit'|'arena'|'drag', laps?, mode?, timeLimit?, pit?, startS?, finishS?, rubberBand? }
 export function createEventState(def, track) {
   return {
     type: def.type,
@@ -36,6 +36,8 @@ export function createEventState(def, track) {
     finishY: track.finishY ?? null, // (a finish up on something: only a car up there finishes)
     weapons: def.type === 'drag' ? 'rear' : 'all',
     manualShift: def.type === 'drag',
+    // AI rubber band (phase 4): races only, unless the event turns it off.
+    rubberBand: def.rubberBand ?? (def.type === 'sprint' || def.type === 'circuit'),
     phase: def.type === 'free' ? 'racing' : 'countdown',
     timer: def.type === 'free' ? 0 : COUNTDOWN,
     time: 0,

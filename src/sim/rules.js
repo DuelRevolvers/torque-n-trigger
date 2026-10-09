@@ -9,8 +9,8 @@ export const MPH = 0.44704; // m/s per mph
 export const CONTACT = {
   rubReset: 1.0, // s without touching before a pair's rub time resets
   pairCooldown: 1.0, // s before the same two cars can slam each other again
-  tradePaint: 20 * MPH, // side hit at or above this is trading paint (8.9 m/s)
-  slam: 36 * MPH, // side hit above this is a slam (16.1 m/s)
+  tradePaint: 3, // m/s: side hit at or above this is trading paint (B3: 20 mph, 8.9 m/s; lowered for T&T speeds, GUESS)
+  slam: 6, // m/s: side hit above this is a slam (B3: 36 mph, 16.1 m/s; T&T cars rarely reach that sideways, GUESS)
   bump: 20 * MPH, // nose into tail at or above this is a bump (8.9 m/s)
   shunt: 35 * MPH, // nose into tail above this is a shunt (15.6 m/s)
   huge: 150 * MPH, // any hit above this is huge (67 m/s)
@@ -69,4 +69,34 @@ export const NITRO = {
   launch: 0.5, // a perfect launch (B3's Boost Start: +50 units)
   lucky: 0.25, // surviving a slam into a wall
   kick: 1, kickTime: 0.5, // force × (1 + kick × (1 − t / kickTime)) just after a charge fires (B3: 4 over 2 s)
+};
+
+// AI that fights (phase 4): B3's attack machine (AI/defaults.cfg, CONFIRMED in
+// docs/systems/ai.md §5-6) in metres and seconds; T&T-only values are GUESS.
+export const AI_FIGHT = {
+  startDelay: 3, minAggression: 0.002, // s after GO before attacks; below this, never attack (B3)
+  windowAhead: 150, windowBehind: 40, // m: victim range along the track (B3)
+  minVictimSpeed: 15, // m/s (B3: 75 mph; lowered for T&T's city speeds, GUESS)
+  maxSpeedDiff: 22, // m/s: victim at most this much faster (B3: 50 mph)
+  slamAhead: 3.5, slamSide: 10, laneSin: 0.6, // can-slam: overlap, sideways gap, heading within ~37° (B3)
+  windupGap: 4.5, steerOut: 5, // (B3 winds up under 2.5 m; T&T cars need more room to hit hard, GUESS)
+  windupTime: 0.5, slamTime: 0.75, recoilTime: 0.5, // (B3)
+  slamLead: 0.1, // s: aim at the victim's position this far ahead (B3)
+  sideOffset: 5, // m beside the victim while lining up (B3)
+  approachTime: 30, coolMax: 3, // s; cooldown = aggression × coolMax (B3)
+  blockRange: 15, blockSpeedDiff: 9, blockMin: 3, blockMax: 15, // m, m/s (B3: 20 mph), s (B3)
+  retaliateGap: 1, // m: rubbed and further apart than this, slam straight away (B3)
+  swerveRate: 10, // m/s of lateral change while winding up, slamming and recoiling (GUESS)
+  minMatch: 8, // m/s floor while matching a victim's speed (GUESS)
+  ramThreshold: 0.6, ramKit: 0.3, heavier: 0.2, gunReady: 0.3, // ram-or-shoot bias (GUESS)
+  capOver: 0.4, gainBase: 0.5, gainCalm: 0.5, // cap = aggression + 0.4; gain = 0.5 + 0.5 × (1 − caution) (GUESS)
+  damageGrudge: 1, // grudge per max HP of damage taken: 0.1 per 10 % (GUESS)
+  grudgeMin: 0.3, grudgeScore: 0.15, // grudge needed to prefer a car, and the distance weight it gets (GUESS)
+  blindRub: 1, blindSlam: 2, // s of no avoidance after a rub / a slam (B3)
+  bandRamp: 100, bandOff: 0.8, // m of gap for the full band; share of the race after which it's off (GUESS)
+  difficulty: { // band: change to the pace scale ahead of / behind the nearest human (GUESS)
+    easy: { ahead: -0.08, behind: 0.02, aggression: 0.7 },
+    normal: { ahead: -0.04, behind: 0.06, aggression: 1 },
+    hard: { ahead: 0, behind: 0.08, aggression: 1.2 },
+  },
 };

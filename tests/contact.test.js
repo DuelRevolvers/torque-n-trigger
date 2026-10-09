@@ -35,9 +35,9 @@ const NORTH = [0, -1];
 const side = (vx, va = -30, vb = -30) => [[[-GAP, 0], NORTH, [vx, va]], [[0, 0], NORTH, [0, vb]]];
 const rear = (vb) => [[[0, 0], NORTH, [0, -30]], [[0, -(L / 2 + GAP)], NORTH, [0, vb]]];
 
-test('side hit at 10 m/s is trading paint, at 20 m/s a slam', () => {
+test('side hit at 4 m/s is trading paint, at 20 m/s a slam', () => {
   const w = world2();
-  const e = hit(w, ...side(10));
+  const e = hit(w, ...side(4));
   assert.equal(e.label, 'tradePaint');
   assert.equal(e.geo, 'side');
   assert.equal(e.attacker, 0);
@@ -71,7 +71,7 @@ test('T-bone and head-on geometry', () => {
 });
 
 test('a much faster victim takes the attacker role', () => {
-  const e = hit(world2(), ...side(10, -5, -30)); // slow car sideswipes a car 18.8 m/s faster
+  const e = hit(world2(), ...side(4, -5, -30)); // slow car sideswipes a car 23.6 m/s faster
   assert.equal(e.label, 'tradePaint');
   assert.deepEqual([e.attacker, e.victim], [1, 0]);
 });

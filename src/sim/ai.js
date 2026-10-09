@@ -6,6 +6,8 @@ import { neutralInput } from './input.js';
 import { quatRotate, clamp } from './math.js';
 import { WEAPON_BEHAVIOR } from './combat.js';
 import { GRAVITY } from '../config.js';
+import { AI_FIGHT } from './rules.js';
+import { initFight, senseHits, updateAttack, rubberBand, trackGap } from './aiAttack.js';
 
 const lines = new WeakMap(); // track -> racing line (derived data, not state)
 
@@ -68,7 +70,8 @@ function speedProfile(track, p, caution) {
   return v;
 }
 
-export function initAi(car, personality, seed) {
+// difficulty: 'easy' | 'normal' | 'hard' (aggression and the rubber band).
+export function initAi(car, personality, seed, difficulty = 'normal') {
   car.ai = {
     ...personality,
     rng: seed >>> 0 || 1,
@@ -83,6 +86,7 @@ export function initAi(car, personality, seed) {
     recentDamage: 0,
     nitroCooldown: 0,
   };
+  initFight(car.ai, difficulty);
 }
 
 function rand(ai) {
@@ -92,16 +96,6 @@ function rand(ai) {
 
 const profiles = new WeakMap(); // world -> per-car speed profiles
 
-const progressOf = (track, car) => car.race.lap * track.length + car.trackS;
-
-// Signed track-distance from a to b (positive = b is ahead), wrapped to +-L/2.
-function trackGap(track, a, b) {
-  let d = b.trackS - a.trackS;
-  const L = track.length;
-  if (d > L / 2) d -= L;
-  if (d < -L / 2) d += L;
-  return d;
-}
 
 // Arena AI: hunt a target (or flee when hurt and cautious), steer around walls
 // and obstacles, and use weapons as they bear.
@@ -117,7 +111,8 @@ function arenaInput(world, i, dt, input) {
   state.cars.forEach((c, j) => {
     if (j === i || c.wrecked) return;
     const d = Math.hypot(c.pos.x - car.pos.x, c.pos.z - car.pos.z);
-    const score = ai.target === 'leader' ? d * (0.5 + c.hp / c.maxHp) : d;
+    let score = ai.target === 'leader' ? d * (0.5 + c.hp / c.maxHp) : d;
+    if ((ai.hurt?.[j] || 0) > AI_FIGHT.grudgeMin) score *= AI_FIGHT.grudgeScore; // (the grudge)
     if (score < best) {
       best = score;
       target = c;
@@ -204,6 +199,8 @@ export function aiInput(world, i, dt) {
     return input; // never jump the start
   }
   if (ev && ev.time < (ai.reaction || 0)) return input;
+  if (!ai.atk) initFight(ai); // (states saved before phase 4)
+  senseHits(world, i, dt);
   if (track.isArena) return arenaInput(world, i, dt, input);
 
   if (!profiles.has(world)) profiles.set(world, []);
@@ -224,27 +221,20 @@ export function aiInput(world, i, dt) {
     ai.hpTimer = 0;
   }
 
-  // --- Other cars: who's ahead, behind, and who to fight ---
+  // --- Other cars: who's ahead and who's behind (who to fight: aiAttack.js) ---
   let blocker = null;
   let chaser = null;
-  let target = null;
-  let bestTargetScore = Infinity;
-  const leader = state.cars.reduce((best, c, j) => (j !== i && !c.wrecked && (!best || progressOf(track, c) > progressOf(track, best)) ? c : best), null);
+  const victim = ai.atk.state !== 'idle' && ai.atk.state !== 'cooldown' ? ai.atk.victim : -1;
   state.cars.forEach((c, j) => {
     if (j === i || c.wrecked) return;
     const gap = trackGap(track, car, c);
     const side = c.lateral - car.lateral;
-    if (gap > 0 && gap < 22 && Math.abs(side) < 3.2 && (!blocker || gap < blocker.gap)) blocker = { c, gap, side };
+    // Blind after a rub or slam, and never dodging its own victim (B3).
+    if (ai.blind === 0 && j !== victim && gap > 0 && gap < 22 && Math.abs(side) < 3.2 && (!blocker || gap < blocker.gap)) blocker = { c, gap, side };
     if (gap < 0 && gap > -25 && Math.abs(side) < 4 && (!chaser || gap > chaser.gap)) chaser = { c, gap };
-    const d = Math.hypot(c.pos.x - car.pos.x, c.pos.z - car.pos.z);
-    const score = ai.target === 'leader' && c === leader ? d * 0.5 : d;
-    if (gap > -5 && d < 80 && score < bestTargetScore) {
-      bestTargetScore = score;
-      target = c;
-    }
   });
 
-  // --- Lateral plan: racing line, overtaking, and lining up on a target ---
+  // --- Lateral plan: racing line, overtaking, and attacks ---
   const halfHere = track.localHalf ? track.localHalf(car.trackS) : track.halfWidth;
   let wantOffset = line.offset[idx];
   if (ev?.type === 'drag') {
@@ -257,10 +247,13 @@ export function aiInput(world, i, dt) {
     const passRight = blocker.c.lateral < line.offset[idx] ? true : blocker.c.lateral <= 0;
     wantOffset = clamp(blocker.c.lateral + (passRight ? 3.6 : -3.6), -halfHere + 1.5, halfHere - 1.5);
   }
-  if (target && ai.aggression > 0.45 && !pitting && ev?.type !== 'drag') {
-    const gap = trackGap(track, car, target);
-    if (gap > 0 && gap < 45) wantOffset += (target.lateral - wantOffset) * ai.aggression * 0.6;
-  }
+  // Attacks (B3's slam machine) on sprints and circuits; off in the pits.
+  const heatCap = p.combat?.heatCapacity || 70;
+  const coolEnough = car.heat < heatCap * (0.9 - ai.caution * 0.2);
+  const primary = p.weapons?.primary;
+  const fight = !pitting && (ev?.type === 'sprint' || ev?.type === 'circuit');
+  const plan = fight ? updateAttack(world, i, !!primary && (!primary.heatPerShot || coolEnough)) : null;
+  if (plan?.offset !== undefined) wantOffset = plan.offset;
   wantOffset = clamp(wantOffset, -halfHere + 1.2, halfHere - 1.2);
   // A median (the Strip's): keep to one side of it, switching only at a gap.
   if (track.medians) {
@@ -268,26 +261,32 @@ export function aiInput(world, i, dt) {
     else if (track.medianAt(car.trackS + 30)) ai.side = Math.sign(wantOffset) || ai.side || 1;
     wantOffset = keepSide(track, ai, wantOffset, car.trackS + 10);
   }
-  ai.offset += clamp(wantOffset - ai.offset, -4 * dt, 4 * dt);
+  const rate = plan?.rate ?? 4;
+  ai.offset += clamp(wantOffset - ai.offset, -rate * dt, rate * dt);
 
   // --- Steering: pure pursuit toward a point on the line, with skill noise ---
-  const look = 8 + speed * 0.55;
+  // (Swerving for an attack: a short look-ahead, so the car really moves over.)
+  const look = plan?.rate > 4 ? 4 + speed * 0.15 : 8 + speed * 0.55;
   const ti = track.indexAtDistance(car.trackS + look);
   const lat = track.medians ? keepSide(track, ai, ai.offset + (line.offset[ti] - line.offset[idx]), track.s[ti]) : ai.offset + (line.offset[ti] - line.offset[idx]);
-  const tx = track.x[ti] + track.rx[ti] * lat - car.pos.x;
-  const tz = track.z[ti] + track.rz[ti] * lat - car.pos.z;
+  // Slamming: steer straight at the victim's position just ahead.
+  const tx = plan?.point ? plan.point.x - car.pos.x : track.x[ti] + track.rx[ti] * lat - car.pos.x;
+  const tz = plan?.point ? plan.point.z - car.pos.z : track.z[ti] + track.rz[ti] * lat - car.pos.z;
   const angle = Math.atan2(fwd.x * tz - fwd.z * tx, fwd.x * tx + fwd.z * tz);
   ai.noise += ((rand(ai) - 0.5) * 2 - ai.noise) * dt * 1.5;
-  input.steer = clamp(angle * 2.2 + ai.noise * (1 - ai.skill) * 0.35, -1, 1);
+  input.steer = plan?.lock ?? clamp(angle * 2.2 + ai.noise * (1 - ai.skill) * 0.35, -1, 1);
 
   // --- Speed: follow the profile, scaled by skill and caution ---
-  const vt = vProfile[track.indexAtDistance(car.trackS + speed * 0.3)] * (0.86 + 0.14 * ai.skill) * (1 - ai.caution * 0.05);
+  // The rubber band moves the skill scale only, never past a perfect driver's (1).
+  const pace = Math.min(1, 0.86 + 0.14 * ai.skill + rubberBand(world, i));
+  let vt = vProfile[track.indexAtDistance(car.trackS + speed * 0.3)] * pace * (1 - ai.caution * 0.05);
+  if (plan?.speed !== undefined) vt = Math.min(vt, plan.speed);
   const vLimit = pitting && car.trackS > ev.pit.s0 - 30 ? Math.min(vt, 13) : vt;
   if (ev?.type === 'drag') input.throttle = 1;
   else if (speed < vLimit - 1) input.throttle = 1;
   else if (speed > vLimit + 2) input.brake = clamp((speed - vLimit) / 8, 0.2, 1);
   else input.throttle = 0.45;
-  if (blocker && blocker.gap < 6 && ai.caution > 0.5) {
+  if (blocker && blocker.gap < 6 && ai.caution > 0.5 && !plan?.ram) {
     input.throttle = Math.min(input.throttle, 0.4);
   }
 
@@ -304,8 +303,6 @@ export function aiInput(world, i, dt) {
 
   // --- Weapons and utility ---
   ai.fireDelay = Math.max(0, ai.fireDelay - dt);
-  const heatCap = p.combat?.heatCapacity || 70;
-  const coolEnough = car.heat < heatCap * (0.9 - ai.caution * 0.2);
   const inCone = (w, cone) => {
     const beh = WEAPON_BEHAVIOR[w.type];
     return state.cars.some((c, j) => {
@@ -318,7 +315,6 @@ export function aiInput(world, i, dt) {
       return Math.acos(clamp((dx * fwd.x + dz * fwd.z) / d, -1, 1)) < (cone ?? beh.cone) + 0.04;
     });
   };
-  const primary = p.weapons?.primary;
   if (primary && (!primary.heatPerShot || coolEnough) && inCone(primary)) {
     if (ai.fireDelay === 0) input.fire1 = true;
   } else {

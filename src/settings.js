@@ -11,6 +11,7 @@ export const DEFAULT_SETTINGS = {
   crt: false,
   vertexSnap: false,
   autoAccelerate: false,
+  difficulty: 'normal', // AI: 'easy' | 'normal' | 'hard' (aggression and rubber band)
   touchControls: 'auto', // 'auto' | 'on' | 'off'
   showFps: true,
   hudSize: 1, // HUD scale multiplier

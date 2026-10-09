@@ -101,7 +101,7 @@ export function routePreview(district, route) {
 
 // The event raced by AI drivers, headless, a slice at a time (so the SDK
 // stays responsive): finish order and times, where cars got stuck, wrecks.
-export function aiTestRun(district, key, onProgress = () => {}) {
+export function aiTestRun(district, key, onProgress = () => {}, difficulty = 'normal') {
   const def = districtEvents(district).find((e) => e.key === key);
   const v = cityVenue(district.city, def.route);
   const arena = v.kind === 'arena';
@@ -117,7 +117,7 @@ export function aiTestRun(district, key, onProgress = () => {}) {
     event: createEventState(def, track),
     respawnOnWreck: !(def.type === 'arena' && def.mode === 'lastStanding'),
   });
-  world.state.cars.forEach((c, k) => initAi(c, entries[k].personality, 7 + 31 * k));
+  world.state.cars.forEach((c, k) => initAi(c, entries[k].personality, 7 + 31 * k, difficulty));
   const limit = Math.round(((arena ? def.timeLimit || 120 : 480) + 10) / SIM_DT);
   const seen = world.state.cars.map(() => ({ p: 0, at: 0 }));
   const wrecked = world.state.cars.map(() => false);

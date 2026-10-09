@@ -193,7 +193,7 @@ test('slam reaction steers the victim away, scaled, and less for players', () =>
   step(p, 60);
   assert.equal(p.state.cars[1].contact.react, null, 'control back after hold + blend');
   const tp = worldN();
-  place(tp, 0, [[-GAP, 0], NORTH, [10, -30]]);
+  place(tp, 0, [[-GAP, 0], NORTH, [4, -30]]);
   place(tp, 1, [[0, 0], NORTH, [0, -30]]);
   collideCars(tp);
   assert.equal(tp.state.cars[1].contact.react, null, 'trading paint: no reaction');

@@ -8,6 +8,7 @@ const onOff = [[true, 'On'], [false, 'Off']];
 const offOn = [[false, 'Off'], [true, 'On']];
 const OPTIONS = [
   { tab: 'gameplay', key: 'autoAccelerate', label: 'Auto-accelerate', values: offOn },
+  { tab: 'gameplay', key: 'difficulty', label: 'AI difficulty', values: [['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']] },
   { tab: 'gameplay', key: 'units', label: 'Speed units', values: [['kmh', 'KM/H'], ['mph', 'MPH']] },
   { tab: 'gameplay', key: 'camera', label: 'Camera', values: [['chase', 'Chase'], ['far', 'Far'], ['windshield', 'Windshield']] },
   { tab: 'gameplay', key: 'godMode', label: 'God mode (solo)', values: offOn },

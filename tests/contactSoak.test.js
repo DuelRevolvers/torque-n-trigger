@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { buildTrack } from '../src/sim/track.js';
 import { TEST_LOOP } from '../src/sim/tracks/testLoop.js';
 import { createWorld, stepWorld } from '../src/sim/world.js';
+import { createEventState } from '../src/sim/event.js';
 import { initAi, aiInput } from '../src/sim/ai.js';
 import { SIM_DT } from '../src/config.js';
 import { computeBuild } from '../src/parts/build.js';
@@ -13,11 +14,13 @@ import { DRIVERS, buildDriver } from '../src/parts/drivers.js';
 const LABELS = ['rub', 'tradePaint', 'slam', 'bump', 'shunt', 'huge'];
 const GEOS = ['shunt', 'side', 'headOn', 'tbone', 'angled'];
 
-test('AI race contact soak (diagnostic)', (t) => {
+for (const difficulty of ['easy', 'normal', 'hard'])
+test(`AI race contact soak, ${difficulty} (diagnostic)`, (t) => {
   const track = buildTrack(TEST_LOOP);
   const entries = DRIVERS.slice(0, 6).map((d, k) => buildDriver(d, 1, 100 + k));
-  const world = createWorld({ track, cars: entries.map((e) => ({ params: computeBuild(e.build).params })) });
-  world.state.cars.forEach((c, k) => initAi(c, entries[k].personality, 7 + k));
+  // A long circuit, so the AI attacks (phase 4) as it would in a race.
+  const world = createWorld({ track, cars: entries.map((e) => ({ params: computeBuild(e.build).params })), event: createEventState({ type: 'circuit', laps: 99 }, track) });
+  world.state.cars.forEach((c, k) => initAi(c, entries[k].personality, 7 + k, difficulty));
   const labels = Object.fromEntries(LABELS.map((l) => [l, 0]));
   const geos = {};
   let maxImpact = 0;
@@ -25,10 +28,17 @@ test('AI race contact soak (diagnostic)', (t) => {
   const outcomes = { wreck: 0, lucky: 0 }; // plus takedowns by cause
   const seconds = 150;
   const fired = world.state.cars.map(() => 0); // nitro charges used, per car
+  const slams = world.state.cars.map(() => ({ tried: 0, landed: 0 })); // AI attack slams, per car
   for (let tk = 0; tk < seconds * 60; tk++) {
     world.events = [];
     const before = world.state.cars.map((c) => c.nitro.active);
-    stepWorld(world, world.state.cars.map((_, i) => aiInput(world, i, SIM_DT)));
+    const was = world.state.cars.map((c) => c.ai.atk.state);
+    const inputs = world.state.cars.map((_, i) => aiInput(world, i, SIM_DT));
+    world.state.cars.forEach((c, i) => {
+      if (c.ai.atk.state !== was[i] && c.ai.atk.state === 'slam') slams[i].tried++;
+      if (c.ai.atk.state !== was[i] && c.ai.atk.state === 'recoil') slams[i].landed++;
+    });
+    stepWorld(world, inputs);
     world.state.cars.forEach((c, i) => c.nitro.active > before[i] && fired[i]++);
     for (const e of world.events) {
       if (e.type === 'wreck' || e.type === 'lucky') outcomes[e.type]++;
@@ -44,6 +54,8 @@ test('AI race contact soak (diagnostic)', (t) => {
     }
   }
   const total = Object.values(labels).reduce((s, n) => s + n, 0);
+  const prog = world.state.cars.map((c) => c.race.lap * track.length + c.trackS);
+  t.diagnostic(`AI slams tried/landed per car: ${slams.map((s) => `${s.tried}/${s.landed}`).join(', ')}; spread first to last ${(Math.max(...prog) - Math.min(...prog)).toFixed(0)} m`);
   t.diagnostic(`contacts in ${seconds}s, 6 AI cars: ${total} ${JSON.stringify(labels)}`);
   t.diagnostic(`by geometry: ${JSON.stringify(geos)}; max impact ${maxImpact.toFixed(1)} m/s`);
   t.diagnostic(`wrecks and takedowns: ${JSON.stringify(outcomes)}`);

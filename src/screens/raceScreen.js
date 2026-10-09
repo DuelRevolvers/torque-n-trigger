@@ -295,7 +295,7 @@ export class RaceScreen {
       event: createEventState(this.def, this.track),
       respawnOnWreck: !(this.def.type === 'arena' && this.def.mode === 'lastStanding'),
     });
-    entries.forEach((e, k) => initAi(this.world.state.cars[k + H], e.personality, seed + 31 * k));
+    entries.forEach((e, k) => initAi(this.world.state.cars[k + H], e.personality, seed + 31 * k, this.app.settings.difficulty));
     this.queues = humans.map(() => new InputQueue());
     this.lastFrames = humans.map(() => neutralInput());
     this.views = this.builds.map((b, i) => this.makeView(i));
@@ -355,7 +355,7 @@ export class RaceScreen {
     const car = createCarState(i, computed.params, this.botPose());
     initCombat(car, computed.params);
     initEventCar(car, world.state.event);
-    initAi(car, entry.personality, seed);
+    initAi(car, entry.personality, seed, this.app.settings.difficulty);
     world.params.push(computed.params);
     world.state.cars.push(car);
     this.builds.push(entry.build);
