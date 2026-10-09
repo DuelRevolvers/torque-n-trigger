@@ -202,6 +202,10 @@ export class CityScreen {
       <h3>For sale</h3>${rows}<h3>Sell your spares</h3>${sell}`;
   }
 
+  get padTabLabel() {
+    return 'District';
+  }
+
   // LB / RB on a gamepad: step through home and the unlocked districts.
   onPadTab(dir) {
     const stops = ['home', ...DISTRICTS.map((_, i) => i).filter((i) => districtUnlocked(this.app.career, i))];
