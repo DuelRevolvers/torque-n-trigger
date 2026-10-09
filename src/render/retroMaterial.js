@@ -40,9 +40,26 @@ export const standardMaterial = (params) => retro(new THREE.MeshStandardMaterial
 
 // Unlit material for emissive things: neon, lights, signs. `intensity` pushes the
 // colour above 1.0 so it crosses the bloom threshold.
-export function glowMaterial({ intensity = 1, color = '#ffffff', ...params } = {}) {
+// `bloom`: how much of the usual glow round it (bloomWeight).
+export function glowMaterial({ intensity = 1, color = '#ffffff', bloom = 1, ...params } = {}) {
   const c = new THREE.Color(color).multiplyScalar(intensity);
-  return retro(new THREE.MeshBasicMaterial({ ...params, color: c }));
+  const m = retro(new THREE.MeshBasicMaterial({ ...params, color: c }));
+  return bloom < 1 ? bloomWeight(m, bloom) : m;
+}
+
+// The bloom pass (retroRenderer.js) weighs each pixel's glow by its alpha,
+// which is otherwise 1 everywhere. Draws m with its colour as it was (added,
+// or opaque) but the pixel's alpha eased toward w as m covers it: w of the glow.
+export function bloomWeight(m, w) {
+  const add = m.blending === THREE.AdditiveBlending;
+  m.blending = THREE.CustomBlending;
+  m.blendSrc = add ? THREE.SrcAlphaFactor : THREE.OneFactor;
+  m.blendDst = add ? THREE.OneFactor : THREE.ZeroFactor;
+  m.blendSrcAlpha = THREE.ConstantAlphaFactor;
+  m.blendDstAlpha = add ? THREE.OneMinusSrcAlphaFactor : THREE.ZeroFactor;
+  m.blendAlpha = w;
+  m.needsUpdate = true;
+  return m;
 }
 
 // Additive, depth-tested but not depth-writing: light beams, glows, underglow.

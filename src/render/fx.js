@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { glowMaterial } from './retroMaterial.js';
+import { glowMaterial, bloomWeight } from './retroMaterial.js';
 
 // Sprite effects in the classic-shooter style: camera-facing sprites for fire,
 // smoke, sparks, muzzle flashes and explosions; plus projectiles, mines, utility
@@ -9,7 +9,7 @@ const PARTICLES = {
   spark: { add: true, color: '#ffd070', s0: 0.3, s1: 0.05, life: 0.35, speed: 9, gravity: -12 },
   zap: { add: true, color: '#90e8ff', s0: 0.45, s1: 0.05, life: 0.22, speed: 6, gravity: -6 },
   fire: { add: true, color: '#ff6a1a', s0: 0.55, s1: 1.1, life: 0.5, speed: 1.0, rise: 2.5 },
-  flame: { add: true, color: '#ff8a2a', s0: 0.4, s1: 2.2, life: 0.45, speed: 0 },
+  flame: { add: true, color: '#ff8a2a', s0: 0.4, s1: 2.2, life: 0.45, speed: 0, bloom: 0.25 }, // (bloom: a quarter of the glow round it)
   flash: { add: true, color: '#fff2c0', s0: 1.1, s1: 0.4, life: 0.07, speed: 0 },
   boom: { add: true, color: '#ffcf80', s0: 5, s1: 8, life: 0.18, speed: 0 },
   smoke: { add: false, color: '#5a5868', opacity: 0.45, s0: 1.0, s1: 3.2, life: 1.6, speed: 0.6, rise: 1.6 },
@@ -53,6 +53,7 @@ export class Fx {
       if (!sprite) return;
       const m = sprite.material;
       m.blending = k.add ? THREE.AdditiveBlending : THREE.NormalBlending;
+      if (k.bloom) bloomWeight(m, k.bloom);
       m.color.set(k.color);
       if (k.add) m.color.multiplyScalar(2.5);
       m.opacity = k.opacity ?? 1;

@@ -85,13 +85,15 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
     steel: litMaterial({ color: '#5a6070' }),
     glass: additiveMaterial({ color: '#4ab8d8', opacity: 0.22 }),
     cyan: glowMaterial({ color: '#05d9e8', intensity: 2.2 }),
+    // (The sky lobby's lit floor: a quarter of the glow round it.)
+    lobbyFloor: glowMaterial({ color: '#05d9e8', intensity: 2.2, bloom: 0.25 }),
     white: glowMaterial({ color: '#e8f4ff', intensity: 2.6 }),
     red: glowMaterial({ color: '#ff2020', intensity: 3 }),
     amber: glowMaterial({ color: '#ffb040', intensity: 2.2 }),
     pool: additiveMaterial({ map: tex.glow, color: '#d8f0ff', opacity: 0.25 }),
     poolWater: glowMaterial({ color: '#1a8ab8', intensity: 0.9, side: DS }),
   };
-  const B = Object.fromEntries(['walkway', 'deck', 'road', 'lines', 'patch', 'concrete', 'painted', 'steel', 'glass', 'cyan', 'white', 'amber', 'tower', 'low', 'pool', 'poolWater', 'water', 'ground'].map((k) => [k, []]));
+  const B = Object.fromEntries(['walkway', 'deck', 'road', 'lines', 'patch', 'concrete', 'painted', 'steel', 'glass', 'cyan', 'lobbyFloor', 'white', 'amber', 'tower', 'low', 'pool', 'poolWater', 'water', 'ground'].map((k) => [k, []]));
   const paint = (g, c) => B.painted.push(tint(g, c));
   const blink = []; // red beacons: blink together
   const texts = new Map();
@@ -445,7 +447,7 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
       }
       case 'lobby': {
         // The glass floor lit from below, the ceiling lights, Kessler Performance.
-        B.cyan.push(new THREE.PlaneGeometry(it.w - 2, it.d - 2).rotateX(-Math.PI / 2).translate(it.x, it.y + 0.02, it.z));
+        B.lobbyFloor.push(new THREE.PlaneGeometry(it.w - 2, it.d - 2).rotateX(-Math.PI / 2).translate(it.x, it.y + 0.02, it.z));
         for (let x = it.x - it.w / 2 + 5; x < it.x + it.w / 2; x += 10) B.white.push(box(4, 0.15, 0.8, x, it.y + it.ceiling - 0.2, it.z));
         text('KESSLER PERFORMANCE', '#e8f4ff', it.x, it.y + 5.5, it.z - it.d / 2 + 1, 0, 1, 14, '#06121c');
         text('KESSLER PERFORMANCE', '#e8f4ff', it.x, it.y + 5.5, it.z + it.d / 2 - 1, 0, -1, 14, '#06121c');

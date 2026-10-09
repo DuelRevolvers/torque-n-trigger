@@ -226,6 +226,11 @@ export class RetroRenderer {
       this.composer.addPass(this.renderPass);
       this.composer.addPass(this.multiPass);
       this.bloom = new UnrealBloomPass(new THREE.Vector2(this.width, this.height), 0.55, 0.35, 0.9);
+      // A pixel's alpha is how much it glows (retroMaterial.js bloomWeight).
+      this.bloom.materialHighPassFilter.fragmentShader = this.bloom.materialHighPassFilter.fragmentShader.replace(
+        'gl_FragColor = mix( outputColor, texel, alpha );',
+        'gl_FragColor = mix( outputColor, texel, alpha * clamp( texel.a, 0.0, 1.0 ) );',
+      );
       this.composer.addPass(this.bloom);
       this.sizeComposer();
     }
