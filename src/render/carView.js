@@ -1445,6 +1445,7 @@ export class CarView {
 
   // pose: interpolated { pos, quat } (three.js types); car: latest sim state.
   update(pose, car, track, time) {
+    this.group.visible = !car.gone; // (Last Lap Out: a cleared wreck)
     this.group.position.copy(pose.pos);
     this.group.quaternion.copy(pose.quat);
 

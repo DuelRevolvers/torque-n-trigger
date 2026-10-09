@@ -14,7 +14,7 @@ import { computeBuild } from '../parts/build.js';
 import { DRIVERS, buildDriver } from '../parts/drivers.js';
 import * as G from '../sim/geom2d.js';
 
-export const TYPES = { sprint: 'Sprint', circuit: 'Circuit', drag: 'Drag race', arena: 'Arena', rampage: 'Rampage' }; // (a Rampage is a circuit with mode 'rampage')
+export const TYPES = { sprint: 'Sprint', circuit: 'Circuit', drag: 'Drag race', arena: 'Arena', rampage: 'Rampage', lastLapOut: 'Last Lap Out' }; // (Rampage and Last Lap Out are circuits with that mode)
 export const MODES = { takedowns: 'Most takedowns', lastStanding: 'Last car standing' };
 // How a race's barriers look (event.barrierStyle; render/trackView.js).
 export const BARRIER_STYLES = { '': "The district's", concrete: 'Plain concrete', chevrons: 'Black and yellow chevrons', steel: 'Steel' };
@@ -26,6 +26,7 @@ export function newEvent(type) {
   if (type === 'sprint') return { ...base, route: { kind: 'sprint', path: [] } };
   if (type === 'circuit') return { ...base, laps: 3, route: { kind: 'circuit', path: [], start: 30 } };
   if (type === 'drag') return { ...base, finishS: 414, route: { kind: 'drag', along: '', from: [0, 0], to: [0, 0] } };
+  if (type === 'lastLapOut') return { ...base, type: 'circuit', mode: 'lastLapOut', laps: base.cars - 1, route: { kind: 'circuit', path: [], start: 30 } };
   if (type === 'rampage') return { ...base, type: 'circuit', mode: 'rampage', timeLimit: 180, targets: [2, 4, 6], route: { kind: 'circuit', path: [], start: 30 } };
   return { ...base, mode: 'takedowns', timeLimit: 120, route: { kind: 'arena', site: 0 } };
 }
@@ -134,7 +135,7 @@ export function aiTestRun(district, key, onProgress = () => {}, difficulty = 'no
         world.state.cars.forEach((c, i) => {
           if (c.wrecked && !wrecked[i]) wrecks++;
           wrecked[i] = !!c.wrecked;
-          if (arena || ev.finishTime[i] !== undefined) return;
+          if (arena || c.out || ev.finishTime[i] !== undefined) return; // (out: Rampage and Last Lap Out)
           // (Stuck: 12 s without getting 10 m further along.)
           const p = (c.race?.lap || 0) * track.length + (c.trackS || 0);
           if (p > seen[i].p + 10) seen[i] = { p, at: tick };

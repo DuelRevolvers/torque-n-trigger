@@ -26,6 +26,7 @@ import { CHROME_CITY } from '../districts/chromeHeights.js';
 import { UNDERCITY_CITY } from '../districts/undercity.js';
 import { SPIRE_CITY } from '../districts/corporateSpire.js';
 import { officialDistrict, playedDistrict } from '../content/store.js';
+import { LAST_LAP_OUT } from '../sim/rules.js';
 
 // A plan district's outline on the city map: its boundary, scaled into place
 // (centre and metres per map unit), so the map and the district always match.
@@ -165,6 +166,28 @@ for (const d of DISTRICTS) {
   });
 }
 
+// Last Lap Out (phase 7b): one per district, on its circuit's route, for its
+// purse, with its modifiers; the field capped so no race runs past 5 laps.
+const LAST_LAP_OUTS = {
+  rustline: 'Last Lap Out: Rail Yard',
+  strip: 'Last Lap Out: Casino Row',
+  maple: 'Last Lap Out: Ridgeway',
+  chrome: 'Last Lap Out: Hilltop',
+  undercity: 'Last Lap Out: Underpass',
+  spire: 'Last Lap Out: Spire',
+};
+for (const d of DISTRICTS) {
+  const c = d.events.find((e) => e.key === 'circuit');
+  const cars = Math.min(LAST_LAP_OUT.maxCars, c.cars);
+  d.events.push({
+    key: 'lastLapOut', type: 'circuit', mode: 'lastLapOut', name: LAST_LAP_OUTS[d.id],
+    desc: `The ${c.name}, one lap for every rival: last place at the line blows up on the spot. Wreck the car ahead to stay out of the drop zone.`,
+    route: structuredClone(c.route), cars, laps: cars - 1, purse: c.purse,
+    ...(c.modifiers ? { modifiers: [...c.modifiers] } : {}),
+    ...(c.barrierStyle ? { barrierStyle: c.barrierStyle } : {}),
+  });
+}
+
 // A district published from the T&T SDK (src/content/maps) plays in place of
 // its district file, everywhere (it's official: the career plays it too).
 DISTRICTS.forEach((d, i) => {
@@ -241,6 +264,6 @@ export const districtUnlocked = (career, i) => i <= (career.district || 0);
 export function bossProgress(career, district) {
   const ids = district.events.map((e) => `${district.id}-${e.key}`);
   const done = ids.filter((id) => career.completed?.includes(id)).length;
-  const need = Math.ceil(ids.length * 0.75);
+  const need = Math.round(ids.length * 0.75); // (to the nearest: 5 of 6 or of 7, phase 7b)
   return { done, need, open: done >= need };
 }

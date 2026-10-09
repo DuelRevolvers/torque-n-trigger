@@ -132,6 +132,14 @@ export const RAMPAGE = {
   humansFirst: 0.3, // an AI's victim score (lower wins) times this for a human (GUESS)
 };
 
+// Last Lap Out (phase 7b): B3's Eliminator (docs/gameplay/modes.md §3). Laps
+// are cars − 1, and the elimination rule is B3's (CONFIRMED); these are T&T's own.
+export const LAST_LAP_OUT = {
+  maxCars: 6, // the career's field, so no race runs past 5 laps
+  clear: 5, // s before an eliminated car's wreck is cleared off the road
+  lastTargets: 0.5, // an AI in last place: its victim score for the car just ahead times this (GUESS)
+};
+
 // Rush hour traffic (phase 6): B3's lane traffic (docs/systems/traffic.md,
 // CONFIRMED unless marked). B3's per-tick values are turned into per-second ones
 // at 60 updates a second (B3's own rate is a GUESS).

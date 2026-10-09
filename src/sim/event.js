@@ -10,6 +10,7 @@ import { applyDamage } from './combat.js';
 import { pickupSpots } from './trackgen.js';
 import { NITRO, TRAFFIC, RAMPAGE } from './rules.js';
 import { initRampageCar } from './rampage.js';
+import { initLastLapOutCar } from './lastLapOut.js';
 import { SIM_HZ } from '../config.js';
 import { earnNitro } from './nitro.js';
 import { trafficConfig, racerBox, footGap, boxOf } from './traffic.js';
@@ -28,11 +29,12 @@ const STYLE = { driftPerSecond: 25, airPerSecond: 60, nearMiss: 40, oncomingPerM
 
 // def: { type: 'sprint'|'circuit'|'arena'|'drag', laps?, mode?, timeLimit?, targets?, pit?, startS?, finishS?, rubberBand? }
 // (mode 'rampage' on a circuit: no laps or finish, a clock and takedown targets; sim/rampage.js.)
+// (mode 'lastLapOut' on a circuit: cars − 1 laps, last place out each lap; sim/lastLapOut.js.)
 export function createEventState(def, track) {
   return {
     type: def.type,
     mode: def.mode || null,
-    laps: def.laps || 0,
+    laps: def.mode === 'lastLapOut' ? Math.max(1, (def.cars || 6) - 1) : def.laps || 0, // (Last Lap Out: kept to the field, sim/lastLapOut.js)
     timeLimit: def.timeLimit || (def.mode === 'rampage' ? RAMPAGE.time : 0),
     targets: def.mode === 'rampage' ? def.targets || RAMPAGE.targets : null, // Rampage: bronze, silver, gold takedowns
     pit: def.pit ? resolvePit(def.pit, track) : null,
@@ -70,6 +72,7 @@ export function initEventCar(car, ev) {
   car.race.penalty = 0;
   if (ev.modifiers.includes('oneHit')) car.maxHp = car.hp = 1;
   if (ev.mode === 'rampage') initRampageCar(car);
+  if (ev.mode === 'lastLapOut') initLastLapOutCar(car);
 }
 
 // Pit zone positions may be given from the end of the lap (negative s).
@@ -198,7 +201,7 @@ export function updateEvent(world, dt) {
     // Finishing.
     if (ev.type === 'sprint' || ev.type === 'drag') {
       if (car.trackS >= ev.finishS && (ev.finishY === null || ev.finishY === undefined || car.pos.y > ev.finishY - 1)) finish(world, i);
-    } else if (ev.type === 'circuit' && ev.mode !== 'rampage') {
+    } else if (ev.type === 'circuit' && ev.mode !== 'rampage' && ev.mode !== 'lastLapOut') {
       if (car.race.lap > ev.laps) finish(world, i);
     }
 
@@ -233,6 +236,12 @@ export function updateEvent(world, dt) {
     // (Rampage: the clock, or every human totaled.)
     const humans = state.cars.slice(0, world.humans || 0);
     if (ev.time >= ev.timeLimit || (humans.length && humans.every((c) => c.out))) ev.done = true;
+  } else if (ev.mode === 'lastLapOut') {
+    // (Last Lap Out: the last car left wins; or every human is out.)
+    const alive = state.cars.flatMap((c, i) => (c.out ? [] : [i]));
+    const humans = state.cars.slice(0, world.humans || 0);
+    if (alive.length === 1) finish(world, alive[0]);
+    if (alive.length <= 1 || (humans.length && humans.every((c) => c.out))) ev.done = true;
   } else if (ev.finished.length === n || (ev.timeLimit && ev.time >= ev.timeLimit)) {
     ev.done = true;
   }
@@ -384,6 +393,10 @@ export function standings(world) {
     // (Humans first, by takedowns: their targets grade them.)
     const H = world.humans || 0;
     return rows.sort((a, b) => (a.id >= H) - (b.id >= H) || (b.takedowns || 0) - (a.takedowns || 0) || b.hp - a.hp);
+  }
+  if (ev.mode === 'lastLapOut') {
+    // (Still in first, by the road; then the last out first.)
+    return rows.sort((a, b) => (b.eliminated === -1) - (a.eliminated === -1) || b.eliminated - a.eliminated || b.finished - a.finished || b.progress - a.progress);
   }
   if (ev.type === 'arena') return rows.sort((a, b) => b.takedowns - a.takedowns || b.hp - a.hp);
   return rows.sort((a, b) => (b.finished - a.finished) || (a.finished ? a.time - b.time : b.progress - a.progress));

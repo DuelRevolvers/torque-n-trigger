@@ -178,7 +178,7 @@ export function ringOut(world, j, hz) {
   world.events.push({ type: 'ringout', car: j, by: recent });
 }
 
-function wreck(world, j, source) {
+export function wreck(world, j, source) {
   const car = world.state.cars[j];
   car.wrecked = true;
   car.wrecks = (car.wrecks || 0) + 1; // (the Creator's "without being wrecked" triggers)
@@ -346,7 +346,7 @@ export function explode(world, pos, radius, damage, source) {
   blastTraffic(world, pos, radius);
   world.state.cars.forEach((t, j) => {
     const d = length(sub(t.pos, pos));
-    if (d > radius + 1.5) return;
+    if (d > radius + 1.5 || t.gone) return; // (Last Lap Out: a cleared wreck)
     applyDamage(world, j, damage * Math.max(0.25, 1 - d / (radius + 1.5)), pos, source, true);
     world.events.push({ type: 'hit', car: j, point: pos, local: quatRotateInv(t.quat, sub(pos, t.pos)), amount: damage });
   });
@@ -431,7 +431,7 @@ export function collideCars(world) {
     for (let b = a + 1; b < cars.length; b++) {
       const A = cars[a];
       const B = cars[b];
-      if (horizDist(A.pos, B.pos) > 8) continue;
+      if (A.gone || B.gone || horizDist(A.pos, B.pos) > 8) continue; // (Last Lap Out: a cleared wreck)
       let best = null;
       for (const sa of spheres(world, a)) {
         for (const sb of spheres(world, b)) {
@@ -500,7 +500,7 @@ export function updateCombat(world, inputs, dt, respawn) {
     if (car.wrecked) {
       car.firing.primary = car.firing.secondary = false;
       car.wreckTimer -= dt;
-      if (car.wreckTimer <= 0 && world.respawnOnWreck && !car.out) { // (Rampage: out is totaled, or a rival not back yet)
+      if (car.wreckTimer <= 0 && world.respawnOnWreck && !car.out) { // (out: Rampage's totaled, or a rival not back yet; Last Lap Out's eliminated)
         respawn(world, i, { back: 0, index: car.wreckIndex }); // right where it was wrecked
         car.wrecked = false;
         car.hp = car.maxHp;
