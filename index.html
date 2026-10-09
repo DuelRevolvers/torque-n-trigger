@@ -329,6 +329,25 @@
         .slot-btn { flex: 0 0 140px; margin: 0; }
         .g-side { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 50vh; }
       }
+      /* Button legend along the bottom of menus (src/ui/legend.js) */
+      #legend {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; pointer-events: none;
+        display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: 6px 18px;
+        min-height: 34px; padding: 4px max(14px, env(safe-area-inset-right)) max(4px, env(safe-area-inset-bottom)) 14px;
+        background: rgba(8, 2, 20, 0.92); border-top: 2px solid #33245a;
+        font: bold 12px var(--font); letter-spacing: 1px; text-transform: uppercase; color: var(--ink);
+      }
+      #legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+      .lg-pad, .lg-key { display: inline-flex; align-items: center; justify-content: center; font: bold 11px var(--font); }
+      .lg-pad { min-width: 20px; height: 20px; padding: 0 4px; border-radius: 10px; color: #000; }
+      .lg-pad + .lg-pad { margin-left: 3px; }
+      .lg-pad.a { background: #5cc93b; }
+      .lg-pad.b { background: #ec4a3f; }
+      .lg-pad.bumper { border-radius: 4px; background: #c9c3e6; }
+      .lg-pad.dpad, .lg-pad.start { background: none; color: var(--ink); border: 2px solid var(--ink); font-size: 12px; }
+      .lg-key { min-width: 22px; height: 20px; padding: 0 6px; border: 1px solid var(--ink); border-bottom-width: 3px; border-radius: 3px; text-transform: none; }
+      body.legend-ui #ui .screen { bottom: 34px; }
+      body.legend-menu #menu { padding-bottom: 50px; }
       .pad-focus { outline: 3px solid #ffe14d !important; outline-offset: 2px; box-shadow: 0 0 12px #ffe14d88; }
       .pad-open { outline-color: #4de1ff !important; }
     </style>

@@ -8,8 +8,10 @@ import { gridLateral } from './world.js';
 import { quatRotate } from './math.js';
 import { applyDamage } from './combat.js';
 import { pickupSpots } from './trackgen.js';
-import { NITRO } from './rules.js';
+import { NITRO, TRAFFIC } from './rules.js';
+import { SIM_HZ } from '../config.js';
 import { earnNitro } from './nitro.js';
+import { trafficConfig, racerBox, footGap, boxOf } from './traffic.js';
 
 // A car off a burning plate burns on this long (s); one off a sparking plate
 // stays shocked this long.
@@ -21,7 +23,7 @@ const PICKUP_RADIUS = 2.6;
 
 const HOLD = { ...neutralInput(), handbrake: true };
 const COUNTDOWN = 3;
-const STYLE = { driftPerSecond: 25, airPerSecond: 60, nearMiss: 40 };
+const STYLE = { driftPerSecond: 25, airPerSecond: 60, nearMiss: 40, oncomingPerMetre: 0.25 }; // (oncoming: GUESS)
 
 // def: { type: 'sprint'|'circuit'|'arena'|'drag', laps?, mode?, timeLimit?, pit?, startS?, finishS?, rubberBand? }
 export function createEventState(def, track) {
@@ -42,6 +44,7 @@ export function createEventState(def, track) {
     timer: def.type === 'free' ? 0 : COUNTDOWN,
     time: 0,
     modifiers: def.modifiers || [],
+    traffic: trafficConfig(def, track), // rush hour: { rate, mph, mix, seed } or null
     // Health, nitro and ammo pickups that respawn after being taken.
     // (The automatic ones unless the event turns them off; and the drops placed in the T&T SDK.)
     pickups: def.type === 'drag' ? [] : [...(def.autoDrops === false ? [] : pickupSpots(track, def.seed ?? 1)), ...(track.drops || track.def?.drops || [])].map((p, id) => ({ id, ...p, active: true, timer: 0 })),
@@ -311,6 +314,45 @@ function updateStyle(world, i, dt) {
       earnNitro(world, i, NITRO.nearMiss);
     }
   });
+  if (state.traffic) trafficStyle(world, i, car, st, speed, dt, award);
+}
+
+// Rush hour (phase 6, B3): passing within 1.8 m of a traffic car's footprint at
+// speed is a near miss, paid once past it and chained within 2.5 s (a touch
+// isn't one); driving in the oncoming lanes at 50 mph or more earns nitrous
+// after 40 m (the first payout covers those 40 m), and style cash when it ends.
+export function trafficStyle(world, i, car, st, speed, dt, award) {
+  const { state, track } = world;
+  const tr = state.traffic;
+  const fast = speed >= TRAFFIC.nearMissSpeed && !car.wrecked;
+  if (!fast) st.chain = 0;
+  const A = racerBox(world, i);
+  const close = {};
+  for (const c of [...tr.cars, ...tr.loose]) {
+    if (Math.abs(c.x - car.pos.x) > 8 || Math.abs(c.z - car.pos.z) > 8) continue;
+    const gap = footGap(A, boxOf(c));
+    if (gap <= 0 || st.close?.[c.id] === 'hit') close[c.id] = gap <= TRAFFIC.nearMissGap ? 'hit' : undefined;
+    else if (gap <= TRAFFIC.nearMissGap && fast) close[c.id] = 1;
+  }
+  for (const [id, v] of Object.entries(st.close || {})) {
+    if (close[id] !== undefined || v !== 1 || !fast) continue;
+    st.chain = state.tick - (st.nmTick ?? -1e9) <= TRAFFIC.chainTime * SIM_HZ ? (st.chain || 0) + 1 : 1;
+    st.nmTick = state.tick;
+    award(st.chain > 1 ? `NEAR MISS x${st.chain}` : 'NEAR MISS', STYLE.nearMiss);
+    earnNitro(world, i, NITRO.nearMiss);
+  }
+  for (const id of Object.keys(close)) if (close[id] === undefined) delete close[id];
+  st.close = close;
+  const k = Math.max(0, car.trackIndex);
+  const along = car.vel.x * track.tx[k] + car.vel.z * track.tz[k];
+  if (!car.wrecked && car.lateral < -(track.medianAt?.(car.trackS) || 0) - 0.5 && along >= TRAFFIC.oncomingSpeed) {
+    const d = along * dt;
+    st.onc = (st.onc || 0) + d;
+    if (st.onc > TRAFFIC.oncomingAfter) earnNitro(world, i, NITRO.oncomingPerMetre * (st.onc - d <= TRAFFIC.oncomingAfter ? st.onc : d));
+  } else {
+    if (st.onc > TRAFFIC.oncomingAfter) award('ONCOMING', st.onc * STYLE.oncomingPerMetre);
+    st.onc = 0;
+  }
 }
 
 // Final order. Finished cars first (by time), then the rest by progress;

@@ -14,6 +14,7 @@ import { Hud } from './ui/hud.js';
 import { SettingsMenu } from './ui/settingsMenu.js';
 import { setCrtWarp } from './ui/crtWarp.js';
 import { PadNav } from './ui/padNav.js';
+import { Legend } from './ui/legend.js';
 import { loadCareer, clearCareer, saveCareer, unlockAll, relockAll } from './career/career.js';
 import { roamEvent, districtEvents } from './career/districts.js';
 import { districtFromDoc, migrateDoc } from './content/mapDoc.js';
@@ -76,9 +77,16 @@ const app = {
     hud.clear();
     app.current.enter(data);
     updateTouchVisibility();
+    document.getElementById('pause-btn').hidden = !canPause();
     onResize();
   },
 };
+
+// The pause menu is for a loaded game: not the title screen, its pages, the
+// lobby or the starter pick (Settings on the title screen still opens it).
+function canPause() {
+  return !(app.current instanceof MenuScreen || app.current instanceof LobbyScreen || app.current instanceof StarterScreen);
+}
 
 // Touch controls only while driving.
 const coarsePointer = window.matchMedia('(pointer: coarse)').matches;
@@ -195,24 +203,30 @@ app.loadSlot = (n) => {
   app.go('garage');
 };
 menu.setOpen(false);
+// (Open: it always closes.)
+const togglePause = () => {
+  if (menu.open || canPause()) menu.toggle();
+};
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Escape' || e.code === 'KeyP') menu.toggle();
+  if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
 });
-document.getElementById('pause-btn').addEventListener('click', () => menu.toggle());
+document.getElementById('pause-btn').addEventListener('click', togglePause);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden && app.current instanceof RaceScreen) menu.setOpen(true);
 });
 
 // --- Main loop ---
 const padNav = new PadNav();
+const legend = new Legend();
 startFixedLoop({
   dt: SIM_DT,
   step() {
     if (!menu.open || app.current.online) app.current.step(); // online races never pause
   },
   render(alpha, frameDt) {
-    if (gamepads.pollStart()) menu.toggle();
+    if (gamepads.pollStart()) togglePause();
     padNav.poll(menu.open ? menu.root : app.ui, frameDt, menu.open ? null : app.current);
+    legend.update(menu.open ? menu.root : app.ui, menu.open, padNav, app.current, canPause());
     if (frameDt > 0) app.fps += (1 / frameDt - app.fps) * 0.05;
     const { scene, camera } = app.current.render(alpha, frameDt, menu.open);
     renderer.setSpeedFx(app.current.speedFx || 0);
@@ -250,13 +264,13 @@ syncUnlockAll();
 function testDrive() {
   if (!new URLSearchParams(window.location.search).has('testdrive')) return null;
   try {
-    const { doc, spawn, event: key } = sdkGet('testdrive');
+    const { doc, spawn, event: key, traffic } = sdkGet('testdrive');
     const district = districtFromDoc(migrateDoc(doc));
     let event;
     if (key) {
       // One of its events, raced against the AI (never counted in the career).
       const def = districtEvents(district).find((e) => e.key === key);
-      event = { ...def, name: `Test: ${def.name}`, career: false, entryFee: 0 };
+      event = { ...def, name: `Test: ${def.name}`, career: false, entryFee: 0, trafficDensity: traffic || 1 }; // (rush hour: the SDK's Controls)
     } else {
       event = { ...roamEvent(district), name: `Test drive: ${doc.name}` };
       if (spawn) getVenue(event.venue, event).def.spawnAt = spawn;

@@ -33,6 +33,8 @@ export class PadNav {
       up: pressed(BTN.UP) || axis(1) < -0.5, down: pressed(BTN.DOWN) || axis(1) > 0.5,
       left: pressed(BTN.LEFT) || axis(0) < -0.5, right: pressed(BTN.RIGHT) || axis(0) > 0.5,
     };
+    // (Any button or stick input this frame: the menu legend switches to the pad.)
+    this.active = pads.some((p) => p.buttons.some((b) => b.pressed) || p.axes.some((a) => Math.abs(a) > 0.5));
     const prev = this.prev;
     const edge = (k) => now[k] && !prev[k];
     this.prev = now;
@@ -43,7 +45,7 @@ export class PadNav {
     }
     if (!root || !pads.length) return;
 
-    const items = [...root.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el.getClientRects().length);
+    const items = navItems(root);
     if (!items.length) return;
     let current = items.find((el) => el.classList.contains('pad-focus'));
     if (!current && this.used) {
@@ -87,8 +89,7 @@ export class PadNav {
       else current.click();
     }
     if (edge('B')) {
-      const back = items.find((el) => el.matches('.menu-resume, [data-back], .back, .garage, .cancel') || /^(◀|BACK\b)/.test(el.textContent.trim()));
-      back?.click();
+      items.find(isBack)?.click();
     }
     if (edge('LB')) screen?.onPadTab?.(-1);
     if (edge('RB')) screen?.onPadTab?.(1);
@@ -119,6 +120,16 @@ export class PadNav {
     el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     this.index = items.indexOf(el);
   }
+}
+
+// The buttons, dropdowns and fields the pad can move between, on screen now.
+export function navItems(root) {
+  return [...root.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el.getClientRects().length);
+}
+
+// A button that goes back: B presses it.
+export function isBack(el) {
+  return el.matches('.menu-resume, [data-back], .back, .garage, .cancel') || /^(◀|BACK\b)/.test(el.textContent.trim());
 }
 
 // The next option in a dropdown that isn't disabled, d = 1 down or -1 up.

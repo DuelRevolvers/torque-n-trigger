@@ -491,7 +491,7 @@ async function testDrive(eventKey = null) {
   // (The tab opens first: a browser only allows it straight after the click.)
   const tab = window.open('', 'tt-testdrive');
   try {
-    await sdkPut(DRIVE, { doc: JSON.parse(serializeDoc(session.doc)), spawn, event: eventKey });
+    await sdkPut(DRIVE, { doc: JSON.parse(serializeDoc(session.doc)), spawn, event: eventKey, traffic: trafficDensity });
   } catch (err) {
     tab?.close();
     window.alert(`Couldn't hand the map to the game: ${err.message}`);
@@ -2126,6 +2126,15 @@ const AI_DIFF_STORE = 'tt-sdk:aiDifficulty';
 let aiDifficulty = 'normal';
 try {
   aiDifficulty = localStorage.getItem(AI_DIFF_STORE) || 'normal';
+} catch {
+  // (The default.)
+}
+// Rush hour traffic in test drives (× the district's density); set in Controls, kept in this browser.
+const TRAFFIC_STORE = 'tt-sdk:trafficDensity';
+const TRAFFIC_DENSITIES = [0.5, 1, 1.5, 2];
+let trafficDensity = 1;
+try {
+  trafficDensity = Number(localStorage.getItem(TRAFFIC_STORE)) || 1;
 } catch {
   // (The default.)
 }
@@ -4874,6 +4883,8 @@ function renderControls() {
     ${ACTIONS.map(([title, , list]) => `<h4>${esc(title)}</h4>${list.map(row).join('')}${title === 'Editing' ? nudgeRows : ''}`).join('')}
     <h4>AI test run</h4>
     <div class="krow"><span>AI difficulty</span><span class="keys"><select id="ai-difficulty">${[['easy', 'Easy'], ['normal', 'Normal'], ['hard', 'Hard']].map(([v, t]) => `<option value="${v}"${aiDifficulty === v ? ' selected' : ''}>${t}</option>`).join('')}</select></span></div>
+    <h4>Test drive</h4>
+    <div class="krow"><span>Rush hour traffic (an event with Rush hour)</span><span class="keys"><select id="traffic-density">${TRAFFIC_DENSITIES.map((v) => `<option value="${v}"${trafficDensity === v ? ' selected' : ''}>${v}×</option>`).join('')}</select></span></div>
     <h4>Fixed keys</h4>${FIXED_KEYS.map(([what, k, alt]) => `<div class="krow fixed"><span>${esc(what)}</span><span class="keys"><kbd>${esc(k)}</kbd><kbd class="${alt ? '' : 'none'}">${esc(alt || '')}</kbd><i class="clear"></i></span></div>`).join('')}
     ${[['Mouse', MOUSE]].map(([title, list]) => `<h4>${title}</h4>${list.map(([what, k]) => `<div class="krow fixed"><span>${esc(keyText(what))}</span><span class="keys"><kbd class="wide">${esc(keyText(k))}</kbd><i class="clear"></i></span></div>`).join('')}`).join('')}
     <div class="row" style="margin-top:10px"><button id="keys-reset">Reset to defaults</button><button id="keys-close">Close</button></div>`;
@@ -4907,6 +4918,15 @@ function renderControls() {
       // (Kept for this session only.)
     }
     $('ai-difficulty').blur();
+  });
+  $('traffic-density').addEventListener('change', () => {
+    trafficDensity = Number($('traffic-density').value) || 1;
+    try {
+      localStorage.setItem(TRAFFIC_STORE, String(trafficDensity));
+    } catch {
+      // (Kept for this session only.)
+    }
+    $('traffic-density').blur();
   });
   $('keys-reset').addEventListener('click', () => {
     binding = structuredClone(DEFAULT_KEYS);
