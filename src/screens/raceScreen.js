@@ -32,6 +32,7 @@ import { buildDistrictView, districtClear, setDistrictStyles } from '../render/d
 import { buildTrainView, updateTrainView } from '../render/trainView.js';
 import { buildTruckView, updateTruckView } from '../render/truckView.js';
 import { buildRvView, updateRvView } from '../render/rvView.js';
+import { buildTrafficView, updateTrafficView, trafficPoses } from '../render/trafficView.js';
 import { districtLayout } from '../sim/cityLayout.js';
 import { trainAt } from '../sim/train.js';
 import { additiveMaterial } from '../render/retroMaterial.js';
@@ -296,6 +297,11 @@ export class RaceScreen {
     });
     this.slowK = 0; // calls since the last real step, in slow motion
     entries.forEach((e, k) => initAi(this.world.state.cars[k + H], e.personality, seed + 31 * k, this.app.settings.difficulty));
+    // Rush hour: the traffic's meshes.
+    this.trafficView?.removeFromParent();
+    this.trafficView = this.world.state.traffic ? buildTrafficView() : null;
+    if (this.trafficView) this.scene.add(this.trafficView);
+    this.trafficPrev = null;
     this.queues = humans.map(() => new InputQueue());
     this.lastFrames = humans.map(() => neutralInput());
     this.views = this.builds.map((b, i) => this.makeView(i));
@@ -487,6 +493,7 @@ export class RaceScreen {
     for (const t of this.history.keys()) if (t < snap.tick) this.history.delete(t);
     // Keep interpolation sane after a correction.
     this.prevPoses = this.capturePoses();
+    this.trafficPrev = trafficPoses(this.world.state);
   }
 
   capturePoses() {
@@ -522,6 +529,7 @@ export class RaceScreen {
     state.cars[0].invulnerable = !this.mp && !!this.app.settings.godMode;
     for (let i = this.humans; i < state.cars.length; i++) inputs.push(aiInput(this.world, i, SIM_DT));
     this.prevPoses = this.capturePoses();
+    if (this.trafficView) this.trafficPrev = trafficPoses(state);
     stepWorld(this.world, inputs);
     if (net?.role === 'client') {
       this.world.events.length = 0; // effects come from the host's snapshots
@@ -712,7 +720,7 @@ export class RaceScreen {
         if (e.type === 'takedown' && e.car === p && e.victim !== p) {
           if (!this.mp) this.victims.add(e.victim);
           if (e.signature) this.popup(`SIGNATURE: ${e.signature.toUpperCase()}`, PALETTE.amber, p);
-          else this.popup(`${e.cause === 'deathRoll' ? 'DEATH ROLL' : e.psych ? 'PSYCH OUT' : 'TAKEDOWN'}! ${this.names[e.victim]}`, PALETTE.pink, p);
+          else this.popup(`${e.cause === 'deathRoll' ? 'DEATH ROLL' : e.cause === 'traffic' ? 'TRAFFIC CHECK' : e.psych ? 'PSYCH OUT' : 'TAKEDOWN'}! ${this.names[e.victim]}`, PALETTE.pink, p);
           if (e.revenge) this.popup('REVENGE!', PALETTE.pink, p);
           if (e.double) this.popup('DOUBLE TAKEDOWN!', PALETTE.amber, p);
         }
@@ -753,6 +761,7 @@ export class RaceScreen {
       this.views[i] = this.makeView(i);
     });
     state.cars.forEach((car, i) => this.views[i].update(this.pose(i, paused ? 1 : alpha), car, this.track, this.time));
+    if (this.trafficView) updateTrafficView(this.trafficView, state, this.trafficPrev, paused ? 1 : alpha, this.time);
     this.venueEntry.animate?.((state.tick + (paused ? 0 : alpha)) * SIM_DT, this.time);
     this.envGroup?.userData.animate?.((state.tick + (paused ? 0 : alpha)) * SIM_DT, this.time);
     this.fx.handleEvents(events, this.world, this.views);

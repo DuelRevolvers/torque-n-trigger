@@ -77,6 +77,10 @@ function bare(type, paint) {
   return cache.get(key);
 }
 
+// A bare body by type and paint, shared (never transform it): moving traffic.
+export const NPC_TYPES = TYPES;
+export const npcBody = (type, paint) => bare(type, paint);
+
 // An NPC car for seed n (its type and colour), placed: { x, y (the ground), z,
 // yaw (its length along the heading) }; type forces a body ('van'), paint a colour.
 export function npcCar(n, { x = 0, y = 0, z = 0, yaw = 0, type, paint } = {}) {

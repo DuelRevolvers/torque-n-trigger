@@ -3,7 +3,8 @@
 // syncs with the rest of the state. See rules.js AI_FIGHT for the numbers.
 
 import { clamp, quatRotate } from './math.js';
-import { AI_FIGHT as F } from './rules.js';
+import { AI_FIGHT as F, TRAFFIC } from './rules.js';
+import { trafficAhead } from './traffic.js';
 
 const SLAM_STRENGTH = { slam: 1, huge: 1.5, shunt: 0.5 };
 
@@ -191,7 +192,8 @@ export function updateAttack(world, i, gunReady) {
         return null;
       }
       // Ram: ride alongside, a few metres to the side. Shoot: sit behind it.
-      const offset = atk.ram ? v.lateral - side * F.sideOffset : v.lateral;
+      // (Rush hour: on the side that shoves it into traffic just ahead of it.)
+      const offset = atk.ram ? v.lateral - (pushSide(world, v) || side) * F.sideOffset : v.lateral;
       // Waiting for a victim behind: match its speed (B3's speed matching).
       const speed = gap < -2 ? Math.max(F.minMatch, vs * (1 + clamp(gap / 100, -1, 1))) : undefined;
       return { victim: atk.victim, offset, rate: 4, speed, ram: atk.ram };
@@ -257,4 +259,13 @@ export function rubberBand(world, i) {
   // A wrecked human ahead: the pack behind eases off instead of running away.
   if (near.g > 0 && !near.wrecked) return d.behind * k;
   return d.ahead * k;
+}
+
+// Rush hour (phase 6, T&T's own, GUESS): which side of victim v to line up on
+// so a slam shoves it into traffic within TRAFFIC.pushRange ahead of it (+1:
+// from its left, -1: from its right); 0 when there's none.
+function pushSide(world, v) {
+  let near = null;
+  for (const t of trafficAhead(world, v.trackS, TRAFFIC.pushRange)) if (Math.abs(t.lat - v.lateral) < 8 && (!near || t.d < near.d)) near = t;
+  return near ? Math.sign(near.lat - v.lateral) : 0;
 }

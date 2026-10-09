@@ -264,13 +264,13 @@ syncUnlockAll();
 function testDrive() {
   if (!new URLSearchParams(window.location.search).has('testdrive')) return null;
   try {
-    const { doc, spawn, event: key } = sdkGet('testdrive');
+    const { doc, spawn, event: key, traffic } = sdkGet('testdrive');
     const district = districtFromDoc(migrateDoc(doc));
     let event;
     if (key) {
       // One of its events, raced against the AI (never counted in the career).
       const def = districtEvents(district).find((e) => e.key === key);
-      event = { ...def, name: `Test: ${def.name}`, career: false, entryFee: 0 };
+      event = { ...def, name: `Test: ${def.name}`, career: false, entryFee: 0, trafficDensity: traffic || 1 }; // (rush hour: the SDK's Controls)
     } else {
       event = { ...roamEvent(district), name: `Test drive: ${doc.name}` };
       if (spawn) getVenue(event.venue, event).def.spawnAt = spawn;

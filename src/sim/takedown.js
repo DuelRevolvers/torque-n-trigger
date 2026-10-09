@@ -62,7 +62,7 @@ function candidates(world, v) {
   return out;
 }
 
-// Car v has just been wrecked physically (cause: 'wall' | 'car' | 'tipOver' | 'damage'): queue the credit.
+// Car v has just been wrecked physically (cause: 'wall' | 'car' | 'traffic' | 'tipOver' | 'damage'): queue the credit.
 export function queueCredit(world, v, cause) {
   const cands = candidates(world, v);
   if (!cands.length) return;
@@ -81,7 +81,7 @@ export function ringOutCredit(world, v) {
   return cars[v].lastHitBy >= 0 && within(tick, cars[v].lastHitTick ?? -1, CREDIT.weaponWindow) ? cars[v].lastHitBy : -1;
 }
 
-const RAMS = new Set(['wall', 'car', 'tipOver', 'deathRoll']); // physical takedowns
+const RAMS = new Set(['wall', 'car', 'traffic', 'tipOver', 'deathRoll']); // physical takedowns ('traffic': a traffic check)
 
 // The signature spot (a named stretch of the route) at track position s, or null.
 // A spot whose start is past its end runs over the lap line.

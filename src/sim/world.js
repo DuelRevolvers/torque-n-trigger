@@ -17,6 +17,7 @@ import { updateTakedowns } from './takedown.js';
 import { neutralInput } from './input.js';
 import { initEventCar, eventInput, updateEvent } from './event.js';
 import { updateDeathRoll } from './deathRoll.js';
+import { initTraffic, stepTraffic, clearTraffic } from './traffic.js';
 
 const NEUTRAL = neutralInput();
 
@@ -41,6 +42,7 @@ export function createWorld({ track, cars, respawnOnWreck = true, poses = null, 
     state.event = event;
     state.cars.forEach((car) => initEventCar(car, event));
   }
+  initTraffic(state); // (rush hour)
   return { track, params, state, respawnOnWreck, humans, slowmo, events: [] };
 }
 
@@ -77,6 +79,7 @@ export function stepWorld(world, inputs) {
   if (track.triggers) hitTriggers(world);
   if (track.gusts) applyGusts(world);
   if (track.flood) applyFlood(world);
+  if (state.traffic) stepTraffic(world, SIM_DT);
   updateCombat(world, effective, SIM_DT, respawnCar);
   if (state.event) updateEvent(world, SIM_DT);
   updateTakedowns(world, wreckPhysical);
@@ -170,6 +173,7 @@ export function respawnCar(world, id, { back = 0, index = null } = {}) {
   car.trackS = track.s[i];
   car.lateral = lateral;
   car.nitro.charges = Math.min(car.nitro.charges, params.nitro.charges);
+  clearTraffic(world, car.pos); // (never back into a traffic car)
 }
 
 // Lap timing in ticks. A lap only counts if the car passed the halfway point, so

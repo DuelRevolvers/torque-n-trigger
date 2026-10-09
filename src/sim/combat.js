@@ -10,6 +10,7 @@ import { crashes, queueCredit, ringOutCredit, award, checkLucky } from './takedo
 import { earnNitro } from './nitro.js';
 import { deathRollLive } from './deathRoll.js';
 import { NITRO } from './rules.js';
+import { blastTraffic, shootTraffic } from './traffic.js';
 
 const DEFAULT_COMBAT = {
   hp: 500, armor: 0, heatCapacity: 70, dissipation: 0.7, heatRate: 1, powerDeficit: 0,
@@ -342,6 +343,7 @@ function raycastCars(world, self, origin, dir, range) {
 }
 
 export function explode(world, pos, radius, damage, source) {
+  blastTraffic(world, pos, radius);
   world.state.cars.forEach((t, j) => {
     const d = length(sub(t.pos, pos));
     if (d > radius + 1.5) return;
@@ -364,6 +366,13 @@ function updateProjectiles(world, dt) {
     const dist = length(step);
     const dir = scale(step, 1 / dist);
     const hit = raycastCars(world, pr.owner, pr.pos, dir, dist);
+    // (Traffic in the way is cover: the shot stops on it and knocks it.)
+    const th = shootTraffic(world, pr.pos, dir, hit ? hit.t : dist);
+    if (th) {
+      if (pr.splash) explode(world, th.point, pr.splash, pr.damage, pr.owner);
+      else world.events.push({ type: 'spark', pos: th.point });
+      return false;
+    }
     if (hit) {
       if (pr.splash) explode(world, hit.point, pr.splash, pr.damage, pr.owner);
       else applyDamage(world, hit.car, pr.damage, hit.point, pr.owner);

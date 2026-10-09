@@ -5,8 +5,9 @@
 import { neutralInput } from './input.js';
 import { quatRotate, clamp } from './math.js';
 import { WEAPON_BEHAVIOR } from './combat.js';
-import { GRAVITY } from '../config.js';
-import { AI_FIGHT } from './rules.js';
+import { GRAVITY, SIM_HZ } from '../config.js';
+import { AI_FIGHT, TRAFFIC } from './rules.js';
+import { trafficAhead } from './traffic.js';
 import { initFight, senseHits, updateAttack, rubberBand, trackGap } from './aiAttack.js';
 
 const lines = new WeakMap(); // track -> racing line (derived data, not state)
@@ -106,23 +107,24 @@ function arenaInput(world, i, dt, input) {
   const p = params[i];
   const fwd = quatRotate(car.quat, { x: 0, y: 0, z: -1 });
   const speed = Math.hypot(car.vel.x, car.vel.z);
+  const A = (AI_FIGHT.difficulty[ai.difficulty] || AI_FIGHT.difficulty.normal).arena; // (phase 6)
   let target = null;
   let best = Infinity;
   state.cars.forEach((c, j) => {
     if (j === i || c.wrecked) return;
     const d = Math.hypot(c.pos.x - car.pos.x, c.pos.z - car.pos.z);
-    let score = ai.target === 'leader' ? d * (0.5 + c.hp / c.maxHp) : d;
+    let score = ai.target === 'leader' || A.preferHurt ? d * (0.5 + c.hp / c.maxHp) : d;
     if ((ai.hurt?.[j] || 0) > AI_FIGHT.grudgeMin) score *= AI_FIGHT.grudgeScore; // (the grudge)
     if (score < best) {
       best = score;
       target = c;
     }
   });
-  const flee = target && ai.caution > 0.5 && car.hp < car.maxHp * 0.3;
+  const flee = target && ai.caution > 0.5 && car.hp < car.maxHp * A.flee;
   let gx = 0;
   let gz = 0;
   if (target) {
-    const lead = Math.min(1.2, best / 30);
+    const lead = Math.min(1.2, best / 30) * A.lead;
     gx = target.pos.x + target.vel.x * lead;
     gz = target.pos.z + target.vel.z * lead;
     if (flee) {
@@ -153,15 +155,19 @@ function arenaInput(world, i, dt, input) {
     angle = right < left ? 1 : -1;
   }
   ai.noise += ((rand(ai) - 0.5) * 2 - ai.noise) * dt * 1.5;
-  input.steer = clamp(angle * 2.5 + ai.noise * (1 - ai.skill) * 0.3, -1, 1);
-  input.throttle = Math.abs(angle) > 1.2 && speed > 14 ? 0.3 : 1;
-  if (Math.abs(angle) > 1.4 && speed > 18) input.brake = 0.6;
+  input.steer = clamp(angle * 2.5 + ai.noise * (1 - ai.skill) * 0.3 * A.noise, -1, 1);
+  const commit = A.commit && target && !flee && best < 15; // (hard: no lifting when it's close)
+  input.throttle = !commit && Math.abs(angle) > 1.2 && speed > 14 ? 0.3 : 1;
+  if (!commit && Math.abs(angle) > 1.4 && speed > 18) input.brake = 0.6;
 
   const inRange = (w) => w && target && best < w.range && (WEAPON_BEHAVIOR[w.type].cone > 1 || Math.abs(angle) < WEAPON_BEHAVIOR[w.type].cone + 0.05);
   const heatOk = car.heat < (p.combat?.heatCapacity || 70) * (0.9 - ai.caution * 0.2);
-  if (!flee && inRange(p.weapons?.primary) && (!p.weapons.primary.heatPerShot || heatOk)) input.fire1 = true;
   const sec = p.weapons?.secondary;
-  if (sec) input.fire2 = sec.type === 'mines' ? flee || rand(ai) < dt * 0.5 : !!inRange(sec);
+  // On target for the difficulty's delay before firing.
+  ai.aimT = !flee && (inRange(p.weapons?.primary) || (sec && sec.type !== 'mines' && inRange(sec))) ? (ai.aimT || 0) + dt : 0;
+  const ready = ai.aimT >= A.fireDelay;
+  if (ready && !flee && inRange(p.weapons?.primary) && (!p.weapons.primary.heatPerShot || heatOk)) input.fire1 = true;
+  if (sec) input.fire2 = sec.type === 'mines' ? flee || rand(ai) < dt * 0.5 : ready && !!inRange(sec);
   const util = p.weapons?.utility;
   if (util && car.utility.cooldown === 0) {
     if (util.type === 'repair' && car.hp < car.maxHp * 0.45) input.utility = true;
@@ -173,15 +179,19 @@ function arenaInput(world, i, dt, input) {
   // Stuck against something: reverse out.
   if (speed < 1.5) ai.stuckTime += dt;
   else ai.stuckTime = 0;
+  // (Stuck again soon after: twice as long, steering the other way.)
   if (ai.stuckTime > 1.2 && ai.recover <= 0) {
-    ai.recover = 1.2;
+    const again = state.tick - (ai.recoverEnd ?? -1e9) < AI_FIGHT.stuckAgain * SIM_HZ;
+    ai.recover = again ? 2.4 : 1.2;
+    ai.recoverSteer = again ? -(ai.recoverSteer || 1) : -Math.sign(angle || 1);
     ai.stuckTime = 0;
   }
   if (ai.recover > 0) {
     ai.recover -= dt;
+    if (ai.recover <= 0) ai.recoverEnd = state.tick;
     input.throttle = 0;
     input.brake = 1;
-    input.steer = -Math.sign(angle || 1);
+    input.steer = ai.recoverSteer ?? -Math.sign(angle || 1);
   }
   return input;
 }
@@ -233,6 +243,18 @@ export function aiInput(world, i, dt) {
     if (ai.blind === 0 && j !== victim && gap > 0 && gap < 22 && Math.abs(side) < 3.2 && (!blocker || gap < blocker.gap)) blocker = { c, gap, side };
     if (gap < 0 && gap > -25 && Math.abs(side) < 4 && (!chaser || gap > chaser.gap)) chaser = { c, gap };
   });
+  // Rush hour: traffic it's about to reach, by closing speed (B3's avoidance
+  // projects traffic to the moment of closest approach; GUESS times).
+  if (state.traffic && ai.blind === 0) {
+    for (const t of trafficAhead(world, car.trackS, 60)) {
+      const side = t.lat - car.lateral;
+      const closing = speed - t.along;
+      const reach = closing > 0.5 ? t.d / closing : Infinity;
+      if (Math.abs(side) >= 3.2 || (t.d > 22 && reach > TRAFFIC.dodgeTime)) continue;
+      const gap = Math.min(t.d, reach * speed);
+      if (!blocker || gap < blocker.gap) blocker = { c: { lateral: t.lat }, gap, side, traffic: true, reach };
+    }
+  }
 
   // --- Lateral plan: racing line, overtaking, and attacks ---
   const halfHere = track.localHalf ? track.localHalf(car.trackS) : track.halfWidth;
@@ -254,6 +276,19 @@ export function aiInput(world, i, dt) {
   const fight = !pitting && (ev?.type === 'sprint' || ev?.type === 'circuit');
   const plan = fight ? updateAttack(world, i, !!primary && (!primary.heatPerShot || coolEnough)) : null;
   if (plan?.offset !== undefined) wantOffset = plan.offset;
+  // Rush hour: traffic about to be reached comes first, unless mid-slam: round
+  // it on a free side (the nearer first), else brake for it.
+  const slamming = plan && (ai.atk.state === 'windup' || ai.atk.state === 'slam');
+  let dodging = false;
+  let trafficBrake = false;
+  if (blocker?.traffic && blocker.reach < TRAFFIC.dodgeTime && !slamming) {
+    const near = trafficAhead(world, car.trackS, Math.max(30, speed * TRAFFIC.dodgeTime));
+    const free = (x) => Math.abs(x) <= halfHere - 1.2 && near.every((t) => Math.abs(t.lat - x) > TRAFFIC.freeGap);
+    const ways = [blocker.c.lateral + TRAFFIC.passGap, blocker.c.lateral - TRAFFIC.passGap].sort((a, b) => Math.abs(a - car.lateral) - Math.abs(b - car.lateral));
+    const way = ways.find(free);
+    if (way !== undefined) [wantOffset, dodging] = [way, true];
+    else trafficBrake = true;
+  }
   wantOffset = clamp(wantOffset, -halfHere + 1.2, halfHere - 1.2);
   // A median (the Strip's): keep to one side of it, switching only at a gap.
   if (track.medians) {
@@ -261,12 +296,12 @@ export function aiInput(world, i, dt) {
     else if (track.medianAt(car.trackS + 30)) ai.side = Math.sign(wantOffset) || ai.side || 1;
     wantOffset = keepSide(track, ai, wantOffset, car.trackS + 10);
   }
-  const rate = plan?.rate ?? 4;
+  const rate = dodging ? TRAFFIC.dodgeRate : plan?.rate ?? 4;
   ai.offset += clamp(wantOffset - ai.offset, -rate * dt, rate * dt);
 
   // --- Steering: pure pursuit toward a point on the line, with skill noise ---
   // (Swerving for an attack: a short look-ahead, so the car really moves over.)
-  const look = plan?.rate > 4 ? 4 + speed * 0.15 : 8 + speed * 0.55;
+  const look = plan?.rate > 4 || dodging ? 4 + speed * 0.15 : 8 + speed * 0.55;
   const ti = track.indexAtDistance(car.trackS + look);
   const lat = track.medians ? keepSide(track, ai, ai.offset + (line.offset[ti] - line.offset[idx]), track.s[ti]) : ai.offset + (line.offset[ti] - line.offset[idx]);
   // Slamming: steer straight at the victim's position just ahead.
@@ -288,6 +323,10 @@ export function aiInput(world, i, dt) {
   else input.throttle = 0.45;
   if (blocker && blocker.gap < 6 && ai.caution > 0.5 && !plan?.ram) {
     input.throttle = Math.min(input.throttle, 0.4);
+  }
+  if (blocker?.traffic && (trafficBrake || (blocker.reach < TRAFFIC.brakeTime && !dodging)) && !slamming) {
+    input.throttle = 0;
+    input.brake = Math.max(input.brake || 0, 0.6);
   }
 
   // Manual shifting: skilled drivers shift closer to the redline.
