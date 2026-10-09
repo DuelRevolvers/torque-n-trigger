@@ -35,10 +35,9 @@ import { buildRvView, updateRvView } from '../render/rvView.js';
 import { districtLayout } from '../sim/cityLayout.js';
 import { trainAt } from '../sim/train.js';
 import { additiveMaterial } from '../render/retroMaterial.js';
-import { CarView } from '../render/carView.js';
+import { CarView, damageStage } from '../render/carView.js';
 import { CameraRig, CAMERA_MODES, CAMERA_NAMES } from '../render/cameraRig.js';
 import { saveSettings } from '../settings.js';
-import { Rain, RAIN_MAX, RAIN_USUAL } from '../render/rain.js';
 import { Fx } from '../render/fx.js';
 import { SpeedLines } from '../render/speedLines.js';
 import { formatTime } from '../ui/hud.js';
@@ -88,8 +87,6 @@ export class RaceScreen {
     moon.position.set(-0.4, 1, 0.3);
     scene.add(moon);
     this.moon = moon;
-    this.rain = new Rain(RAIN_MAX);
-    scene.add(this.rain.mesh);
     this.fx = new Fx(scene, app.tex);
     this.scene = scene;
     this.camera = new THREE.PerspectiveCamera(68, 16 / 9, 0.3, 1500);
@@ -244,7 +241,7 @@ export class RaceScreen {
     const theme = DISTRICTS.find((d) => d.id === this.def.district)?.theme;
     const mods = this.def.modifiers || [];
     const blackout = mods.includes('blackout');
-    // (A map's own atmosphere, set in the T&T SDK: haze, fog, darkness, rain.)
+    // (A map's own atmosphere, set in the T&T SDK: haze, fog, darkness.)
     const atmos = this.def.city?.edits?.atmosphere || {};
     const haze = atmos.haze || theme?.haze || PALETTE.haze;
     const thick = atmos.fog ?? 1;
@@ -254,8 +251,6 @@ export class RaceScreen {
     const dark = atmos.darkness || 0;
     this.hemi.intensity = (blackout ? 0.3 : 1.4) * (1 - 0.8 * dark);
     this.moon.intensity = 1.2 * (1 - 0.85 * dark);
-    this.rainAmount = atmos.rain ?? RAIN_USUAL;
-    this.rain.setAmount(Math.round(RAIN_MAX * this.rainAmount));
     this.hemiBase = this.hemi.intensity;
     this.scene.background = venue.outdoor ? this.app.tex.sky : new THREE.Color('#07050d');
 
@@ -749,6 +744,14 @@ export class RaceScreen {
     });
     this.popupsBy = this.popupsBy.map((list) => list.filter((p) => p.age < 1.8));
 
+    // Healed (a repair, a pit, a pickup): a fresh car, as damaged as its HP still
+    // says. Back to full HP clears the hit dents too.
+    state.cars.forEach((car, i) => {
+      const view = this.views[i];
+      if (car.wrecked || !(damageStage(car, 0.03) < (view.stage ?? 0) || (view.dented && car.hp >= car.maxHp))) return;
+      view.removeFrom(this.scene);
+      this.views[i] = this.makeView(i);
+    });
     state.cars.forEach((car, i) => this.views[i].update(this.pose(i, paused ? 1 : alpha), car, this.track, this.time));
     this.venueEntry.animate?.((state.tick + (paused ? 0 : alpha)) * SIM_DT, this.time);
     this.envGroup?.userData.animate?.((state.tick + (paused ? 0 : alpha)) * SIM_DT, this.time);
@@ -781,16 +784,14 @@ export class RaceScreen {
         }
       }
     }
-    // Speed blur, speed lines and rain follow one camera: single screen only.
+    // Speed blur and speed lines follow one camera: single screen only.
     const fxOn = settings.speedFx !== false && !this.resultsShown && !split;
     this.speedFx = fxOn ? this.rigs[0].intensity || 0 : 0;
     this.speedLines.update(paused ? 0 : dt, Math.hypot(player.vel.x, player.vel.z), this.speedFx);
-    // Under the Undercity's deck (or in its tunnel): no sky light, no rain.
+    // Under the Undercity's deck (or in its tunnel): no sky light.
     const cam = this.camera.position;
     const covered = !!this.track?.ceilingAt && this.track.ceilingAt(cam.x, cam.z, cam.y) != null;
     if (this.track?.ceilingAt) this.hemi.intensity += ((covered ? this.hemiBase * 0.45 : this.hemiBase) - this.hemi.intensity) * Math.min(1, dt * 3);
-    this.rain.mesh.visible = settings.rain && this.rainAmount > 0 && this.outdoor && !split && !covered;
-    if (this.rain.mesh.visible) this.rain.update(this.camera.position, dt);
 
     // Results a moment after the player finishes, is eliminated, or the event ends.
     const done = (p) => ev.finishTime[p] !== undefined || (ev.mode === 'lastStanding' && state.cars[p].wrecked);

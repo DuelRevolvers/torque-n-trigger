@@ -25,7 +25,6 @@ import { bridgeView } from '../render/bridgeView.js';
 import { BRIDGE_STYLES, BRIDGE_DEFAULTS } from '../sim/bridges.js';
 import { placedView, startMarkers } from '../render/placedView.js';
 import { rampGeometry } from '../render/shapes.js';
-import { Rain, RAIN_MAX, RAIN_USUAL } from '../render/rain.js';
 import { makePickupMesh } from '../render/pickupMesh.js';
 import { SPECIALS, progress, triggerText, specialOfType, specialOfGadget } from '../career/unlocks.js';
 import { buildArena } from '../sim/arena.js';
@@ -311,19 +310,10 @@ function applyFog(trying = null) {
   scene.background = haze;
   const sky = tool === 'sky';
   scene.fog = $('fog').checked || sky ? new THREE.FogExp2(haze, (theme.fog || 0.004) * (a.fog ?? 1)) : null;
-  // (Its darkness and rain while the Sky tab's open.)
+  // (Its darkness while the Sky tab's open.)
   const dark = sky ? a.darkness || 0 : 0;
   hemi.intensity = 1.6 * (1 - 0.8 * dark);
   sun.intensity = 1.2 * (1 - 0.85 * dark);
-  const rain = sky ? a.rain ?? RAIN_USUAL : 0;
-  if (rain > 0 && !skyRain) {
-    skyRain = new Rain(RAIN_MAX);
-    scene.add(skyRain.mesh);
-  }
-  if (skyRain) {
-    skyRain.setAmount(Math.round(RAIN_MAX * rain));
-    skyRain.mesh.visible = rain > 0;
-  }
 }
 
 function dispose(g) {
@@ -3900,7 +3890,6 @@ function frame(now) {
   camera.lookAt(cam.x + f.x, cam.y + f.y, cam.z + f.z);
   view?.userData.animate?.(now / 1000, now / 1000);
   gadgetGroup?.userData.animate(now / 1000);
-  if (skyRain?.mesh.visible) skyRain.update(camera.position, dt);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
@@ -4223,22 +4212,19 @@ function gadgetInspector(ins, f) {
 const signText = (t) => t.toUpperCase().replace(/[^A-Z0-9 .,:!?'&+\-/#%$*()]/g, '').slice(0, 24);
 
 // --- Atmosphere (the Sky tab) ---------------------------------------------------------
-// A map's own haze colour, fog, darkness and rain (edits.atmosphere), over the
-// district's: every event on the map and free roam have it (the race screen);
-// heavy rain costs grip (sim/gadgets.js rainGrip). The SDK shows it while the
-// Sky tab's open (or Fog's on), with the rain.
+// A map's own haze colour, fog and darkness (edits.atmosphere), over the
+// district's: every event on the map and free roam have it (the race screen).
+// The SDK shows it while the Sky tab's open (or Fog's on).
 
 const SKY_PRESETS = {
   own: { name: "District's own", atmos: null },
-  clear: { name: 'Clear night', atmos: { fog: 0.5, rain: 0 } },
-  drizzle: { name: 'Neon drizzle', atmos: { fog: 1, rain: 0.4 } },
-  downpour: { name: 'Downpour', atmos: { fog: 1.6, rain: 1, darkness: 0.25 } },
-  fog: { name: 'Thick fog', atmos: { fog: 3, rain: 0, haze: '#3a3448' } },
-  toxic: { name: 'Toxic haze', atmos: { fog: 2.2, rain: 0.2, haze: '#24401c' } },
-  blackout: { name: 'Blackout', atmos: { fog: 1.5, rain: 0.3, darkness: 0.8 } },
+  clear: { name: 'Clear night', atmos: { fog: 0.5 } },
+  murk: { name: 'Neon murk', atmos: { fog: 1.6, darkness: 0.25 } },
+  fog: { name: 'Thick fog', atmos: { fog: 3, haze: '#3a3448' } },
+  toxic: { name: 'Toxic haze', atmos: { fog: 2.2, haze: '#24401c' } },
+  blackout: { name: 'Blackout', atmos: { fog: 1.5, darkness: 0.8 } },
 };
 const HAZES = ['#101018', '#1e0d30', '#2a1030', '#0c1a2a', '#3a3448', '#24401c', '#402a10', '#301018'];
-let skyRain = null;
 
 const atmosOf = () => session?.doc.edits.atmosphere || {};
 
@@ -4249,16 +4235,15 @@ function renderSky() {
   const pct = (v) => Math.round(v * 100);
   $('sky-list').innerHTML = Object.entries(SKY_PRESETS).map(([k, p]) => `<button data-sky="${k}">${esc(p.name)}</button>`).join('');
   $('sky-panel').innerHTML = `<h3>Atmosphere</h3>
-    <p class="note">This map's sky, over the district's own: in every event on it and in free roam. Heavy rain (past the usual 40%) costs grip; an event's Blackout makes it darker still.</p>
+    <p class="note">This map's sky, over the district's own: in every event on it and in free roam. An event's Blackout makes it darker still.</p>
     <div class="sliders">
       <label>Haze <span class="swatches">${HAZES.map((c) => `<button class="sw${haze === c ? ' on' : ''}" data-haze="${c}" title="${c}" style="background:${c}"></button>`).join('')}<input type="color" id="sky-haze" value="${haze}" title="Any colour" /></span></label>
       <label>Fog <input type="range" id="sky-fog" min="0" max="4" step="0.1" value="${a.fog ?? 1}" /><input class="num" id="sky-fog-v" data-for="sky-fog" data-unit="×" inputmode="decimal" /></label>
       <label>Darkness <input type="range" id="sky-dark" min="0" max="90" step="5" value="${pct(a.darkness || 0)}" /><input class="num" id="sky-dark-v" data-for="sky-dark" data-unit="%" inputmode="decimal" /></label>
-      <label>Rain <input type="range" id="sky-rain" min="0" max="100" step="5" value="${pct(a.rain ?? RAIN_USUAL)}" /><input class="num" id="sky-rain-v" data-for="sky-rain" data-unit="%" inputmode="decimal" /></label>
     </div>
     <div class="row"><button id="sky-reset" title="The district's own sky">Reset</button></div>`;
   $('sky-panel').querySelectorAll('input.num[data-for]').forEach(numberBox);
-  const read = (extra = {}) => ({ haze: $('sky-haze').value, fog: Number($('sky-fog').value), darkness: Number($('sky-dark').value) / 100, rain: Number($('sky-rain').value) / 100, ...extra });
+  const read = (extra = {}) => ({ haze: $('sky-haze').value, fog: Number($('sky-fog').value), darkness: Number($('sky-dark').value) / 100, ...extra });
   const keep = (atmos) => {
     if (session.change((e) => (atmos ? (e.atmosphere = atmos) : delete e.atmosphere))) changed(false);
     applyFog();

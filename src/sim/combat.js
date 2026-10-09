@@ -4,7 +4,7 @@
 
 import { v3, add, sub, scale, dot, cross, length, normalize, quatRotate, quatRotateInv } from './math.js';
 import { conditionFactor } from '../parts/build.js';
-import { onOil, rainGrip } from './gadgets.js';
+import { onOil } from './gadgets.js';
 import { newContact, touchContact, noteContact, damageMul } from './contact.js';
 import { crashes, queueCredit, ringOutCredit, award, checkLucky } from './takedown.js';
 import { earnNitro } from './nitro.js';
@@ -97,7 +97,6 @@ export function updateMods(world, i) {
   let grip = (car.condition.wheels !== undefined && car.condition.wheels <= 0 ? 0.55 : 0.6 + 0.4 * cfOf(car, 'wheels'));
   grip *= 0.85 + 0.15 * cfOf(car, 'suspension');
   if (world.state.zones.some((z) => z.type === 'oil' && horizDist(z.pos, car.pos) < z.radius) || onOil(world.track, car.pos)) grip *= 0.35;
-  grip *= rainGrip(world.track);
   car.mods = { torque, grip, brake: 0.4 + 0.6 * cfOf(car, 'brakes') };
 }
 

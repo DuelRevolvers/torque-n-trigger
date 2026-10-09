@@ -16,7 +16,6 @@ const OPTIONS = [
   { tab: 'gameplay', key: 'roamAll', label: 'Free roam: all districts', values: offOn },
   { tab: 'video', key: 'resolution', label: 'Resolution', values: [[540, '960x540'], [720, '1280x720'], [0, 'Native'], [360, '640x360']] },
   { tab: 'video', key: 'bloom', label: 'Neon bloom', values: onOff },
-  { tab: 'video', key: 'rain', label: 'Rain', values: onOff },
   { tab: 'video', key: 'speedFx', label: 'Speed effects', values: onOff },
   { tab: 'video', key: 'dither', label: 'Colour dither', values: offOn },
   { tab: 'video', key: 'vertexSnap', label: 'Vertex wobble', values: offOn },

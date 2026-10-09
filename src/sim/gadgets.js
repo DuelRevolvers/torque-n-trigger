@@ -298,9 +298,3 @@ export function onOil(track, pos) {
   return list.some((o) => (pos.x - o.x) ** 2 + (pos.z - o.z) ** 2 < o.r * o.r && Math.abs(pos.y - o.y) < 2.5);
 }
 
-// How much of its grip a car keeps in the rain (atmosphere rain, 0-1: the
-// game's usual is 0.4, no loss; a downpour, 1, loses a fifth).
-export function rainGrip(track) {
-  const rain = track.rain ?? track.def?.rain ?? 0;
-  return rain > 0.4 ? 1 - 0.2 * Math.min(1, (rain - 0.4) / 0.6) : 1;
-}

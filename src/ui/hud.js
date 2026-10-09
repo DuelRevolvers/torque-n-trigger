@@ -407,14 +407,16 @@ export class Hud {
     if (car.wrecked) {
       const dr = eventInfo?.deathRoll;
       if (dr?.slow) rect(0, 0, W, H, 'rgba(90, 40, 150, 0.18)'); // slow motion
-      text('WRECKED', W / 2, H / 2 - 20, { color: PALETTE.pink, align: 'center', scale: 3 });
-      text(`RESPAWN IN ${Math.max(0, Math.ceil(car.wreckTimer))}`, W / 2, H / 2 + 6, { color: '#ffffff', align: 'center' });
+      // (While Death Rolling, up out of the way: the wreck is in the middle.)
+      const y = dr ? Math.round(H * 0.14) : H / 2 - 20;
+      text('WRECKED', W / 2, y, { color: PALETTE.pink, align: 'center', scale: dr ? 2 : 3 });
+      text(`RESPAWN IN ${Math.max(0, Math.ceil(car.wreckTimer))}`, W / 2, y + (dr ? 18 : 26), { color: '#ffffff', align: 'center' });
       if (dr) {
         // Death Roll: the prompt, and a bar for the time left to aim the wreck.
-        text('DEATH ROLL', W / 2, H / 2 + 22, { color: PALETTE.amber, align: 'center', scale: 2 });
-        text(dr.canSlow ? 'HOLD NITROUS TO SLOW TIME, STEER TO AIM' : 'STEER TO AIM YOUR WRECK', W / 2, H / 2 + 42, { color: '#ffffff', align: 'center' });
-        rect(W / 2 - 40, H / 2 + 54, 80, 3, 'rgba(0, 0, 0, 0.5)');
-        rect(W / 2 - 40, H / 2 + 54, Math.round(80 * dr.left), 3, PALETTE.amber);
+        text('DEATH ROLL', W / 2, y + 32, { color: PALETTE.amber, align: 'center', scale: 2 });
+        text(dr.canSlow ? 'HOLD NITROUS TO SLOW TIME, STEER TO AIM' : 'STEER TO AIM YOUR WRECK', W / 2, y + 50, { color: '#ffffff', align: 'center' });
+        rect(W / 2 - 40, y + 62, 80, 3, 'rgba(0, 0, 0, 0.5)');
+        rect(W / 2 - 40, y + 62, Math.round(80 * dr.left), 3, PALETTE.amber);
       }
     }
 

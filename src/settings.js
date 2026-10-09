@@ -5,7 +5,6 @@ const KEY = 'tt.settings.v2';
 export const DEFAULT_SETTINGS = {
   resolution: 540, // internal render height in pixels; 0 = native
   bloom: true,
-  rain: true,
   dither: false,
   scanlines: false,
   crt: false,

@@ -1514,8 +1514,7 @@ export function cityVenue(style, route) {
   const atmosphere = style.edits?.atmosphere;
   if (!gadgets?.length && !atmosphere) return venue;
   // What's placed in the T&T SDK (sim/gadgets.js): drops, ramps, oil,
-  // barrels, the start and spawn points (an arena event: those inside it);
-  // and the map's rain (grip).
+  // barrels, the start and spawn points (an arena event: those inside it).
   const H = districtMap(style).heightAt;
   const d = venue.def;
   const arena = venue.kind === 'arena';
@@ -1549,7 +1548,6 @@ export function cityVenue(style, route) {
     d.spawnPoints = [...mine, ...own.filter((p) => mine.every((q) => Math.hypot(q.x - p.x, q.z - p.z) > 5))];
     d.spawns = d.spawnPoints.length;
   }
-  if (atmosphere?.rain !== undefined) d.rain = atmosphere.rain;
   return venue;
 }
 

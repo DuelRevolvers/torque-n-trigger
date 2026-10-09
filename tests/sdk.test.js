@@ -414,7 +414,7 @@ test('sdk: lights and drops: a lamp post is solid in free roam and races, drops 
   assert.equal(createEventState({ ...sprint, type: 'drag' }, track).pickups.length, 0, 'none in a drag race');
 });
 
-test('sdk: ramps, oil, barrels, signs, start and spawn points, and the rain work in the events', async () => {
+test('sdk: ramps, oil, barrels, signs, start and spawn points work in the events', async () => {
   const { newGadget, signSize } = await import('../src/sim/gadgets.js');
   const { buildTrack } = await import('../src/sim/track.js');
   const { createWorld, stepWorld } = await import('../src/sim/world.js');
@@ -445,7 +445,7 @@ test('sdk: ramps, oil, barrels, signs, start and spawn points, and the rain work
     newGadget('spawn', 'g8', ground.cx + 4, ground.cz + 4, Math.PI),
     newGadget('spawn', 'g9', ground.cx - 4, ground.cz + 4, Math.PI),
   ];
-  doc.edits.atmosphere = { rain: 1, fog: 2, darkness: 0.5 };
+  doc.edits.atmosphere = { fog: 2, darkness: 0.5 };
   const d = districtFromDoc(parseDoc(serializeDoc(doc)));
   const map = districtMap(d.city);
   const roam = cityVenue(d.city, { kind: 'roam' }).def;
@@ -460,13 +460,12 @@ test('sdk: ramps, oil, barrels, signs, start and spawn points, and the rain work
   const top = [rx + Math.sin(heading) * (k.len / 2 - 0.1), rz + Math.cos(heading) * (k.len / 2 - 0.1)];
   assert.ok(race.standY(...top) > route.standY(...top) + k.height * 0.9, 'the kicker lifts the race road');
 
-  // Oil: a third of the grip on it; heavy rain costs a fifth everywhere.
+  // Oil: a third of the grip on it.
   const world = createWorld({ track: arena, cars: [{ params: TEST_CAR }, { params: TEST_CAR }], poses: [{ pos: { x: 60, y: up(60, 60) + 0.5, z: 60 }, yaw: 0 }, { pos: { x: 200, y: up(200, 60) + 0.5, z: 60 }, yaw: 0 }] });
   updateMods(world, 0);
   updateMods(world, 1);
   const [onOil, off] = world.state.cars.map((c) => c.mods.grip);
   assert.ok(near(onOil / off, 0.35, 0.01), `oil: ${(onOil / off).toFixed(2)} of the grip`);
-  assert.ok(near(off, 0.8, 0.01), `a downpour: grip ${off.toFixed(2)}`);
 
   // A barrel: hit, it blows up (and the one beside it), hurting and throwing a car near it.
   const bang = createWorld({ track: arena, cars: [{ params: TEST_CAR }, { params: TEST_CAR }], poses: [{ pos: { x: 90, y: up(90, 60) + 0.6, z: 60 }, yaw: 0 }, { pos: { x: 90, y: up(90, 64) + 0.6, z: 64 }, yaw: 0 }] });
@@ -489,7 +488,6 @@ test('sdk: ramps, oil, barrels, signs, start and spawn points, and the rain work
   const fight = buildArena(cityVenue(d.city, arenaEv.route).def);
   assert.ok(near(fight.spawnPose(0).pos.x, ground.cx + 4, 0.01) && near(fight.spawnPose(1).pos.x, ground.cx - 4, 0.01), 'placed spawns first');
   assert.ok(fight.def.spawnPoints.length >= arenaEv.cars, 'enough for every car');
-  assert.equal(fight.def.rain, 1);
 });
 
 test('sdk: arenas drawn, redrawn and taken out: their outline is the wall, the cars start inside it', async () => {

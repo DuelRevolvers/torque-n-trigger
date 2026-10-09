@@ -272,7 +272,7 @@ export const SDK_HTML = `
         <button data-tab="terrain" title="Shape and paint the ground">Terrain</button>
         <button data-tab="roads" title="Streets and blocks">Roads</button>
         <button data-tab="events" title="Make and edit this district's events (0)">Events</button>
-        <button data-tab="sky" title="This map's atmosphere: haze, fog, darkness and rain">Sky</button>
+        <button data-tab="sky" title="This map's atmosphere: haze, fog and darkness">Sky</button>
       </div>
       <div id="pane-sky" class="pane" hidden>
         <p class="tip">Start from one of these, then set it on the right.</p>

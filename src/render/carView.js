@@ -1178,6 +1178,7 @@ export class CarView {
 
   // Pushes body vertices inward around a hit (body-local point).
   dent(local, amount) {
+    this.dented = true;
     const pos = this.bodyMesh.geometry.attributes.position;
     const strength = Math.min(1, amount / 40) * 0.14;
     const r = 0.9;
@@ -1196,10 +1197,10 @@ export class CarView {
   }
 
   // Visible damage stages from remaining HP (design doc section 9), plus the
-  // looks of broken parts. Stages only get worse; a respawn builds a fresh car.
+  // looks of broken parts. Stages only get worse on a view; healing or a
+  // respawn builds a fresh one (the race screen).
   damageState(car) {
-    const frac = car.wrecked ? 0 : car.hp / car.maxHp;
-    const stage = car.wrecked ? 4 : frac > 0.75 ? 0 : frac > 0.5 ? 1 : frac > 0.25 ? 2 : 3;
+    const stage = damageStage(car);
     while ((this.stage ?? 0) < stage) this.applyStage((this.stage = (this.stage ?? 0) + 1));
     if (stage >= 1 && stage < 4 && this.underglow) this.underglow.visible = Math.random() > (stage >= 3 ? 0.4 : 0.1);
     if (stage === 3) for (const h of this.headlights.slice(1)) h.visible = Math.random() > 0.25;
@@ -1478,6 +1479,15 @@ export class CarView {
     this.shadow.quaternion.multiplyQuaternions(_tilt, _yaw);
     this.shadow.material.opacity = Math.max(0, 1 - heightAbove * 0.25);
   }
+}
+
+// The damage stage HP shows: 0 clean, 1 scuffed, 2 battered, 3 critical, 4
+// wrecked. margin: as if this share of max HP lower (so healing must clear a
+// stage's line by it before the car looks better).
+export function damageStage(car, margin = 0) {
+  if (car.wrecked) return 4;
+  const frac = car.hp / car.maxHp - margin;
+  return frac > 0.75 ? 0 : frac > 0.5 ? 1 : frac > 0.25 ? 2 : 3;
 }
 
 const UTILITY_COLORS = { oil: '#8a6a30', smoke: '#c8c8d8', shield: '#05d9e8', repair: '#39ff14' };
