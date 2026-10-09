@@ -15,6 +15,7 @@ export function neutralInput() {
     camera: false, // next camera view (render only, like lookBack)
     reset: false,
     shiftUp: false, // manual gearbox (drag races)
+    detonate: false, // blow up the wreck (Death Roll)
   };
 }
 
@@ -35,6 +36,7 @@ export function sanitizeInput(frame) {
     camera: !!frame.camera,
     reset: !!frame.reset,
     shiftUp: !!frame.shiftUp,
+    detonate: !!frame.detonate,
   };
 }
 

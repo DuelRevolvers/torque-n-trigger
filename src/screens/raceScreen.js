@@ -614,12 +614,13 @@ export class RaceScreen {
     if (v >= 0) this.rigs[v]?.kick(preset);
   }
 
-  // Death Roll detonation for the HUD: can human p blow the wreck up, has it, and the button (fire secondary).
+  // Death Roll detonation for the HUD: can human p blow the wreck up, has it, and the button.
   detonateInfo(p) {
     const dr = this.world.state.cars[p].deathRoll;
     const s = this.app.settings;
-    const key = keyBinds(s).fire2?.[0];
-    const button = [key && keyName(key), padBinds(s).fire2 >= 0 && padName(padBinds(s).fire2)].filter(Boolean).join(' / ') || 'FIRE 2';
+    const key = keyBinds(s).detonate?.[0];
+    const pad = padBinds(s).detonate;
+    const button = [key && keyName(key), pad >= 0 && padName(pad)].filter(Boolean).join(' / ') || 'ALT';
     return { canBlow: canDetonate(this.world, p), blown: !!dr?.blown && dr.tick === this.world.state.cars[p].wreckTick, button };
   }
 

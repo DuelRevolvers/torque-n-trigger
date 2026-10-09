@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ACTIONS, KEY_DEFAULTS, PAD_DEFAULTS, keyBinds, padBinds, withKey, keyName, padName } from '../src/input/bindings.js';
+import { ACTIONS, KEY_DEFAULTS, PAD_DEFAULTS, keyBinds, padBinds, withKey, keyName, padName, sameGroup } from '../src/input/bindings.js';
 
 test('bindings: key names are short enough for the main and alt columns', () => {
   assert.equal(keyName('ShiftRight'), 'R SHIFT');
@@ -11,15 +11,17 @@ test('bindings: key names are short enough for the main and alt columns', () => 
   assert.equal(keyName('Mouse2'), 'RMB');
 });
 
-test('bindings: look back on L3, the camera on R3 and V, every action bound once', () => {
+test('bindings: look back on L3, the camera on R3 and V, every driving action bound once', () => {
   assert.equal(PAD_DEFAULTS.lookBack, 10);
   assert.equal(PAD_DEFAULTS.camera, 11);
   assert.deepEqual(KEY_DEFAULTS.camera, ['KeyV']);
   assert.deepEqual(KEY_DEFAULTS.lookBack, ['KeyQ']);
   for (const [a] of ACTIONS) assert.ok(KEY_DEFAULTS[a]?.length, `${a} has a key`);
-  const keys = Object.values(KEY_DEFAULTS).flat();
+  // (Wreck actions, like detonate, share keys with driving ones: see below.)
+  const driving = (o) => Object.entries(o).filter(([a]) => sameGroup(a, 'throttle')).map(([, v]) => v);
+  const keys = driving(KEY_DEFAULTS).flat();
   assert.equal(new Set(keys).size, keys.length, 'no key on two actions');
-  const buttons = Object.values(PAD_DEFAULTS);
+  const buttons = driving(PAD_DEFAULTS);
   assert.equal(new Set(buttons).size, buttons.length, 'no button on two actions');
   assert.ok(Object.values(KEY_DEFAULTS).every((codes) => codes.length <= 2), 'a main and at most one alt');
 });
@@ -62,4 +64,19 @@ test('bindings: an action added since bindings were saved avoids keys and button
   assert.equal(padBinds({ bindings: { pad } }).camera, -1);
   assert.equal(padName(-1), '—');
   assert.equal(padBinds({}).camera, 11);
+});
+
+test('bindings: detonate (a wreck action) defaults to RMB and RB, shared with driving actions', () => {
+  assert.equal(padName(PAD_DEFAULTS.detonate), 'RB');
+  assert.deepEqual(KEY_DEFAULTS.detonate, ['Mouse2']);
+  // Saved before detonate existed, with RB still on shift up: detonate gets RB too.
+  const settings = { bindings: { pad: { ...PAD_DEFAULTS, detonate: undefined }, all: { fire2: ['Mouse2'] } } };
+  delete settings.bindings.pad.detonate;
+  assert.equal(padBinds(settings).detonate, 5);
+  assert.equal(padBinds(settings).shiftUp, 5);
+  assert.deepEqual(keyBinds(settings).detonate, ['Mouse2']);
+  // Rebinding one group never takes a key from the other.
+  const next = withKey(keyBinds({}), 'detonate', 0, 'KeyF');
+  assert.deepEqual(next.shiftUp, ['KeyF'], 'shift up keeps F');
+  assert.deepEqual(withKey(keyBinds({}), 'fire1', 0, 'Mouse2').detonate, ['Mouse2'], 'detonate keeps RMB');
 });

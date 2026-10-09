@@ -130,9 +130,9 @@ test('ram damage from a steered wreck that finishes a rival is a Death Roll', ()
   assert.equal(w.events.find((e) => e.type === 'takedown')?.cause, 'deathRoll');
 });
 
-const fire = () => ({ ...neutralInput(), fire2: true });
+const fire = (nitro = false) => ({ ...neutralInput(), detonate: true, nitro });
 
-test('fire secondary detonates the wreck once, for a nitrous charge, only on a fresh press', () => {
+test('the detonate button blows up the wreck once, for a nitrous charge, only on a fresh press', () => {
   const w = wrecked();
   const car = w.state.cars[0];
   updateDeathRoll(w, 0, fire());
@@ -160,4 +160,21 @@ test('the blast throws a near rival clear, and a wreck from it is a Death Roll',
   assert.ok(v.vel.x > 0, 'pushed away from the blast');
   assert.equal(v.wrecked, true);
   assert.equal(w.events.find((e) => e.type === 'takedown')?.cause, 'deathRoll');
+});
+
+test('after a detonation the Death Roll lasts while nitrous is held, and ends when it is let go', () => {
+  const w = wrecked();
+  const car = w.state.cars[0];
+  updateDeathRoll(w, 0, input(0, true));
+  updateDeathRoll(w, 0, fire(true));
+  assert.ok(car.deathRoll.blown);
+  updateDeathRoll(w, 0, input(1, true));
+  assert.ok(slowMotion(w) && deathRollLeft(w, 0) > 0, 'nitrous held: still Death Rolling, in slow motion');
+  const before = heading(car.vel);
+  updateDeathRoll(w, 0, input(1, true));
+  assert.ok(heading(car.vel) > before, 'still steers');
+  updateDeathRoll(w, 0, input(1));
+  assert.ok(!slowMotion(w) && deathRollLeft(w, 0) === 0 && !deathRollLive(w, 0), 'let go: over');
+  updateDeathRoll(w, 0, input(1, true));
+  assert.equal(deathRollLeft(w, 0), 0, 'nitrous again: stays over');
 });

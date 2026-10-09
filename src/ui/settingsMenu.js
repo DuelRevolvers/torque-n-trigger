@@ -1,5 +1,5 @@
 import { saveSettings } from '../settings.js';
-import { ACTIONS, PAD_ACTIONS, keyBinds, padBinds, withKey, keyName, padName } from '../input/bindings.js';
+import { ACTIONS, PAD_ACTIONS, keyBinds, padBinds, withKey, keyName, padName, sameGroup } from '../input/bindings.js';
 
 // Pause menu and settings: Gameplay, Video, Audio and Controls tabs (with
 // rebinding), plus Save / Load views while a campaign is running.
@@ -255,7 +255,7 @@ export class SettingsMenu {
     const all = (this.settings.bindings ||= {});
     if (device === 'pad') {
       const cur = padBinds(this.settings);
-      const other = Object.keys(cur).find((a) => a !== action && cur[a] === value);
+      const other = Object.keys(cur).find((a) => a !== action && cur[a] === value && sameGroup(a, action));
       const next = { ...cur, [action]: value };
       if (other) next[other] = cur[action]; // swap
       all.pad = next;

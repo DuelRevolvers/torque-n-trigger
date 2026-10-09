@@ -2,9 +2,9 @@
 // human's car is wrecked, steering turns the wreck's velocity about world up,
 // keeping its speed, so it can be aimed into a rival. In single player it only
 // steers while slow motion (the nitrous button) is held; with more than one
-// human there's no slow motion and it steers faster. Pressing fire secondary
-// (T&T, not B3) detonates the wreck once, for a nitrous charge, and ends the
-// Death Roll. All state is plain data on car.deathRoll.
+// human there's no slow motion and it steers faster. The detonate button
+// (T&T, not B3) blows the wreck up once, for a nitrous charge; the Death Roll
+// then lasts only while nitrous is held. All state is plain data on car.deathRoll.
 
 import { SIM_HZ, SIM_DT } from '../config.js';
 import { quatIntegrate } from './math.js';
@@ -16,10 +16,12 @@ const RAD = Math.PI / 180;
 // Seconds since car i was wrecked.
 const since = (world, car) => (world.state.tick - car.wreckTick) / SIM_HZ;
 
-// Inside the Death Roll window (a wrecked human, under 5 s since the wreck)?
+// Inside the Death Roll window (a wrecked human, under 5 s since the wreck, not
+// ended by letting go of nitrous after a detonation)?
 export function inWindow(world, i) {
   const car = world.state.cars[i];
-  return !!car.wrecked && i < (world.humans || 0) && since(world, car) < DEATH_ROLL.window;
+  const over = car.deathRoll?.over && car.deathRoll.tick === car.wreckTick;
+  return !!car.wrecked && i < (world.humans || 0) && since(world, car) < DEATH_ROLL.window && !over;
 }
 
 // The share of car i's Death Roll window left (1 just wrecked, 0 over or not a
@@ -46,7 +48,6 @@ function detonate(world, i) {
   const car = world.state.cars[i];
   const B = DEATH_ROLL.blast;
   car.deathRoll.blown = true;
-  car.deathRoll.slow = false;
   car.nitro.charges = Math.max(0, car.nitro.charges - B.cost);
   world.state.cars.forEach((t, j) => {
     const dx = t.pos.x - car.pos.x;
@@ -69,13 +70,17 @@ export function slowMotion(world) {
 // Once a tick, for a wrecked human, with its raw (unneutralised) input.
 export function updateDeathRoll(world, i, input) {
   const car = world.state.cars[i];
-  if (car.deathRoll?.tick !== car.wreckTick) car.deathRoll = { tick: car.wreckTick, steered: false, slow: false, swing: 0, blown: false, fire: !!input.fire2 };
+  if (car.deathRoll?.tick !== car.wreckTick) car.deathRoll = { tick: car.wreckTick, steered: false, slow: false, swing: 0, blown: false, over: false, fire: !!input.detonate };
   const dr = car.deathRoll;
   // (Only a fresh press detonates: a button held through the wreck doesn't.)
-  const press = !!input.fire2 && !dr.fire;
-  dr.fire = !!input.fire2;
-  if (dr.blown) return;
-  if (press && canDetonate(world, i)) return detonate(world, i);
+  const press = !!input.detonate && !dr.fire;
+  dr.fire = !!input.detonate;
+  if (dr.blown && !input.nitro) dr.over = true; // (after a blast, the Death Roll lasts while nitrous is held)
+  if (dr.over) {
+    dr.slow = false;
+    return;
+  }
+  if (press && canDetonate(world, i)) detonate(world, i);
   const speed = Math.hypot(car.vel.x, car.vel.z);
   const live = inWindow(world, i) && speed > DEATH_ROLL.minSpeed;
   dr.slow = live && !!world.slowmo && !!input.nitro;
