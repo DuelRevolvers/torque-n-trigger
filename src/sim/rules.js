@@ -115,6 +115,8 @@ export const DEATH_ROLL = {
   rate: 24, rateMulti: 45, // °/s of velocity turn at the crash, ÷ (t + 1); without slow motion (B3 split-screen)
   swing: -0.5, swingMax: 72, swingCap: 17, // body yaw per turn, °/s cap, ° total (B3 LIKELY)
   slowmo: 5, // sim runs at 1/N while slow motion is held (B3 races)
+  // Detonate (T&T, not B3): fire secondary blows the wreck up, once, for a nitrous charge. All GUESS.
+  blast: { cost: 1, radius: 7, damage: 60, push: 12, lift: 6 }, // charges; m; HP at the centre; m/s outward at the centre; m/s up for the wreck
 };
 
 // Rush hour traffic (phase 6): B3's lane traffic (docs/systems/traffic.md,

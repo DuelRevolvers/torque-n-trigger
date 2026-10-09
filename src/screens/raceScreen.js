@@ -3,7 +3,8 @@ import { buildTrack } from '../sim/track.js';
 import { buildArena } from '../sim/arena.js';
 import { getVenue } from '../sim/tracks/venues.js';
 import { createWorld, stepWorld } from '../sim/world.js';
-import { slowMotion, deathRollLeft } from '../sim/deathRoll.js';
+import { slowMotion, deathRollLeft, canDetonate } from '../sim/deathRoll.js';
+import { keyBinds, padBinds, keyName, padName } from '../input/bindings.js';
 import { DEATH_ROLL } from '../sim/rules.js';
 import { createEventState, gridPoses, standings, resolvePit, initEventCar } from '../sim/event.js';
 import { districtMap } from '../sim/city.js';
@@ -613,6 +614,15 @@ export class RaceScreen {
     if (v >= 0) this.rigs[v]?.kick(preset);
   }
 
+  // Death Roll detonation for the HUD: can human p blow the wreck up, has it, and the button (fire secondary).
+  detonateInfo(p) {
+    const dr = this.world.state.cars[p].deathRoll;
+    const s = this.app.settings;
+    const key = keyBinds(s).fire2?.[0];
+    const button = [key && keyName(key), padBinds(s).fire2 >= 0 && padName(padBinds(s).fire2)].filter(Boolean).join(' / ') || 'FIRE 2';
+    return { canBlow: canDetonate(this.world, p), blown: !!dr?.blown && dr.tick === this.world.state.cars[p].wreckTick, button };
+  }
+
   // While human p Death Rolls: the nearest live rival up to 30 m ahead of the
   // wreck's travel (within 45°), for the crash camera to frame too.
   deathRollFocus(p) {
@@ -674,7 +684,7 @@ export class RaceScreen {
       wrongWay: this.wrongWays[p] > 1,
       popups: this.popupsBy[p],
       deathRoll: deathRollLeft(this.world, p) > 0
-        ? { left: deathRollLeft(this.world, p), slow: p === 0 && slowMotion(this.world), canSlow: !!this.world.slowmo }
+        ? { left: deathRollLeft(this.world, p), slow: p === 0 && slowMotion(this.world), canSlow: !!this.world.slowmo, ...this.detonateInfo(p) }
         : null,
     };
   }

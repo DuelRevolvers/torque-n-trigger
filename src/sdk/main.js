@@ -4838,7 +4838,7 @@ const FIXED_KEYS = [
   ['No snapping while moving, turning or placing (roads, runs: any angle)', 'Hold Alt'], ['Finer turns (1°) and nudges (the fine amount)', 'Hold Shift'],
   ['A typed slider number: set it', 'Enter'], ['A typed slider number: keep the old one', 'Esc'],
   ['Customize Car: close it (the car stays as you left it)', 'Esc'],
-  ['Test drive: wreck your car, to try a Death Roll (hold nitrous to slow time, steer to aim)', 'K'],
+  ['Test drive: wreck your car, to try a Death Roll (hold nitrous to slow time, steer to aim; fire secondary, RMB or Y, detonates it for a nitrous charge)', 'K'],
 ];
 // [what, button]: in the key column, like the keys.
 const MOUSE = [
