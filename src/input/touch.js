@@ -95,6 +95,7 @@ export class TouchControls {
     frame.reset ||= this.held.has('reset');
     frame.fire1 ||= this.held.has('fire1');
     frame.fire2 ||= this.held.has('fire2');
+    frame.detonate ||= this.held.has('fire2'); // (ALT detonates a Death Roll)
     frame.utility ||= this.held.has('utility');
     frame.shiftUp ||= this.held.has('shiftUp');
   }
