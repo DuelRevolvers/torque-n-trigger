@@ -97,6 +97,83 @@ function rand(ai) {
 
 const profiles = new WeakMap(); // world -> per-car speed profiles
 
+// How much a car wants each kind of pickup, 0 (not at all) to 1.
+function pickupNeed(world, i) {
+  const { state, params } = world;
+  const car = state.cars[i];
+  const p = params[i];
+  const hp = car.hp / car.maxHp;
+  let ammo = car.overheated ? 0.5 : 0;
+  for (const slot of ['primary', 'secondary']) {
+    const w = p.weapons?.[slot];
+    const ws = car.weapons[slot];
+    if (!w || !ws || w.ammo === null) continue;
+    ammo = Math.max(ammo, ws.reload > 0 ? 0.4 : (1 - ws.ammo / w.ammo) * 0.6);
+  }
+  const nitroOk = p.nitro?.charges && !state.event.modifiers?.includes('noNitro');
+  return {
+    health: hp < 0.8 ? clamp((0.8 - hp) / 0.5, 0.2, 1) : 0,
+    ammo: ammo >= 0.3 ? ammo : 0,
+    nitro: nitroOk && car.nitro.charges < p.nitro.charges ? 0.3 : 0,
+  };
+}
+
+// Where a pickup sits on the route (main-line s and lateral), worked out once.
+const onRoad = new WeakMap();
+function pickupOnRoad(track, pk) {
+  if (!onRoad.has(pk)) {
+    const g = track.queryMain(pk.x, pk.z);
+    onRoad.set(pk, { s: g.s, lat: g.trueLateral ?? g.lateral, off: Math.abs(g.height - pk.y) > 3 });
+  }
+  return onRoad.get(pk);
+}
+
+// Races: the pickup ahead worth the least detour for what the car needs, as
+// { lat, want }, or null.
+function pickupAhead(world, i) {
+  const { track, state } = world;
+  const car = state.cars[i];
+  const pickups = state.event?.pickups;
+  if (!pickups?.length) return null;
+  const need = pickupNeed(world, i);
+  let best = null;
+  let bestScore = 0.1;
+  for (const pk of pickups) {
+    const want = need[pk.type] || 0;
+    if (!pk.active || !want) continue;
+    const at = pickupOnRoad(track, pk);
+    let gap = at.s - car.trackS;
+    if (track.closed) gap = ((gap % track.length) + track.length) % track.length;
+    const wall = track.localWall ? track.localWall(at.s) : track.wallDist;
+    if (at.off || gap < 3 || gap > 120 || Math.abs(at.lat) > wall - 1) continue;
+    const score = want * (1 - gap / 160) - Math.abs(at.lat - car.lateral) * 0.02;
+    if (score > bestScore) {
+      bestScore = score;
+      best = { lat: clamp(at.lat, -wall + 1.5, wall - 1.5), want };
+    }
+  }
+  return best;
+}
+
+// Arenas: the nearest pickup worth driving to for what the car needs, or null.
+function pickupNear(world, i) {
+  const car = world.state.cars[i];
+  const pickups = world.state.event?.pickups;
+  if (!pickups?.length) return null;
+  const need = pickupNeed(world, i);
+  let best = null;
+  let bestScore = Infinity;
+  for (const pk of pickups) {
+    const want = need[pk.type] || 0;
+    if (!pk.active || !want || Math.abs(pk.y - car.pos.y) > 5) continue;
+    const d = Math.hypot(pk.x - car.pos.x, pk.z - car.pos.z);
+    if (d > 30 + want * want * 300 || d / want >= bestScore) continue; // (badly hurt: right across the arena)
+    bestScore = d / want;
+    best = pk;
+  }
+  return best;
+}
+
 
 // Arena AI: hunt a target (or flee when hurt and cautious), steer around walls
 // and obstacles, and use weapons as they bear.
@@ -131,6 +208,12 @@ function arenaInput(world, i, dt, input) {
       gx = car.pos.x * 2 - gx;
       gz = car.pos.z * 2 - gz;
     }
+  }
+  // A pickup it needs, close enough: go and get it instead.
+  const grab = pickupNear(world, i);
+  if (grab) {
+    gx = grab.x;
+    gz = grab.z;
   }
   const tx = gx - car.pos.x;
   const tz = gz - car.pos.z;
@@ -265,6 +348,9 @@ export function aiInput(world, i, dt) {
   }
   const pitting = ev?.pit && car.hp < car.maxHp * 0.4 && car.trackS > ev.pit.s0 - 120 && car.trackS < ev.pit.s1;
   if (pitting) wantOffset = ev.pit.lateral + 2.5;
+  // A pickup ahead that it needs: over to it (badly needed: no attacking on the way).
+  const grab = !pitting && ev?.type !== 'drag' ? pickupAhead(world, i) : null;
+  if (grab) wantOffset = grab.lat;
   if (blocker && !pitting && ev?.type !== 'drag') {
     const passRight = blocker.c.lateral < line.offset[idx] ? true : blocker.c.lateral <= 0;
     wantOffset = clamp(blocker.c.lateral + (passRight ? 3.6 : -3.6), -halfHere + 1.5, halfHere - 1.5);
@@ -273,7 +359,7 @@ export function aiInput(world, i, dt) {
   const heatCap = p.combat?.heatCapacity || 70;
   const coolEnough = car.heat < heatCap * (0.9 - ai.caution * 0.2);
   const primary = p.weapons?.primary;
-  const fight = !pitting && (ev?.type === 'sprint' || ev?.type === 'circuit');
+  const fight = !pitting && !(grab?.want >= 0.6) && (ev?.type === 'sprint' || ev?.type === 'circuit');
   const plan = fight ? updateAttack(world, i, !!primary && (!primary.heatPerShot || coolEnough)) : null;
   if (plan?.offset !== undefined) wantOffset = plan.offset;
   // Rush hour: traffic about to be reached comes first, unless mid-slam: round
@@ -289,7 +375,9 @@ export function aiInput(world, i, dt) {
     if (way !== undefined) [wantOffset, dodging] = [way, true];
     else trafficBrake = true;
   }
-  wantOffset = clamp(wantOffset, -halfHere + 1.2, halfHere - 1.2);
+  // (A pickup tucked in toward the wall: as far over as it is, not the line's limit.)
+  const reach = grab && wantOffset === grab.lat ? Math.max(halfHere - 1.2, Math.abs(grab.lat)) : halfHere - 1.2;
+  wantOffset = clamp(wantOffset, -reach, reach);
   // A median (the Strip's): keep to one side of it, switching only at a gap.
   if (track.medians) {
     if (track.medianAt(car.trackS)) ai.side = Math.sign(car.lateral) || ai.side || 1;
@@ -303,7 +391,9 @@ export function aiInput(world, i, dt) {
   // (Swerving for an attack: a short look-ahead, so the car really moves over.)
   const look = plan?.rate > 4 || dodging ? 4 + speed * 0.15 : 8 + speed * 0.55;
   const ti = track.indexAtDistance(car.trackS + look);
-  const lat = track.medians ? keepSide(track, ai, ai.offset + (line.offset[ti] - line.offset[idx]), track.s[ti]) : ai.offset + (line.offset[ti] - line.offset[idx]);
+  // (Heading for a pickup: its own lateral, not bent by the racing line.)
+  const ahead = grab && wantOffset === grab.lat ? ai.offset : ai.offset + (line.offset[ti] - line.offset[idx]);
+  const lat = track.medians ? keepSide(track, ai, ahead, track.s[ti]) : ahead;
   // Slamming: steer straight at the victim's position just ahead.
   const tx = plan?.point ? plan.point.x - car.pos.x : track.x[ti] + track.rx[ti] * lat - car.pos.x;
   const tz = plan?.point ? plan.point.z - car.pos.z : track.z[ti] + track.rz[ti] * lat - car.pos.z;

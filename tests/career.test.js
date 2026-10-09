@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildTrack } from '../src/sim/track.js';
 import { buildArena } from '../src/sim/arena.js';
 import { getVenue } from '../src/sim/tracks/venues.js';
-import { createWorld, stepWorld } from '../src/sim/world.js';
+import { createWorld, stepWorld, respawnCar } from '../src/sim/world.js';
 import { createEventState, gridPoses, standings } from '../src/sim/event.js';
 import { initAi, aiInput } from '../src/sim/ai.js';
 import { neutralInput } from '../src/sim/input.js';
@@ -156,6 +156,22 @@ test('pickups heal and respawn', () => {
   car.pos = { x: pk.x + 50, y: pk.y, z: pk.z };
   for (let t = 0; t < 20 * 60; t++) stepWorld(world, [neutralInput()]);
   assert.equal(pk.active, true);
+});
+
+test('AI: a hurt car crosses the road for a health pickup ahead', () => {
+  const rust = districtEvents(DISTRICTS[0]);
+  const { world, track } = aiEvent(rust.find((e) => e.id === 'rustline-circuit'), 1);
+  world.state.event.phase = 'racing';
+  world.state.event.time = 5;
+  const pk = world.state.event.pickups.find((p) => p.type === 'health' && Math.abs(track.queryMain(p.x, p.z).trueLateral) > 1.5);
+  const at = track.queryMain(pk.x, pk.z);
+  const car = world.state.cars[0];
+  car.lateral = -Math.sign(at.trueLateral); // (starts on the far side)
+  respawnCar(world, 0, { index: track.indexAtDistance(at.s - 70) });
+  car.hp = car.maxHp * 0.3;
+  run(world, 6);
+  assert.equal(pk.active, false, 'the pickup was left');
+  assert.ok(car.hp > car.maxHp * 0.5);
 });
 
 test('shops: stock is stable, buying and selling move cash and parts, repairs cost', () => {

@@ -37,6 +37,14 @@ export function loadSettings() {
       // Look back moved from R3 to L3 when R3 became the camera button.
       const pad = b.pad;
       if (pad && !('camera' in pad) && pad.lookBack === 11 && !Object.values(pad).includes(10)) pad.lookBack = 10;
+      // Shifting moved to the D-pad (up and down) and look back to RB: saved
+      // bindings still on the old defaults (shift up RB, look back L3) follow.
+      if (pad && !('shiftDown' in pad) && pad.shiftUp === 5 && pad.lookBack === 10) {
+        const used = new Set(Object.values(pad));
+        pad.shiftUp = used.has(12) ? -1 : 12;
+        pad.shiftDown = used.has(13) ? -1 : 13;
+        pad.lookBack = 5;
+      }
     }
     return { ...DEFAULT_SETTINGS, ...saved };
   } catch {

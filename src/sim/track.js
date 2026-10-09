@@ -424,6 +424,13 @@ class Track {
 
   // Track sample i, or the nearest before it (up to 80 m back) that isn't
   // inside something solid: where to put a car back.
+  // Is anything solid standing at (x, z), around height y (a respawn spot)?
+  blockedAt(x, z, y, m = 1.6) {
+    const near = [];
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) near.push(...(this.obstacleGrid?.get((Math.floor(x / 16) + a) * 100003 + Math.floor(z / 16) + b) || []));
+    return near.some((o) => o.y < y + 1.5 && o.y + o.h > y + 0.3 && [[0, 0], [m, 0], [-m, 0], [0, m], [0, -m]].some(([dx, dz]) => onFoot(o, x + dx, z + dz)));
+  }
+
   clearIndex(i) {
     const blocked = (k) => {
       const [x, z, y] = [this.x[k], this.z[k], this.y[k]];

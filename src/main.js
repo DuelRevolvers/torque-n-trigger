@@ -118,7 +118,8 @@ window.addEventListener('resize', onResize);
 // (free roam) and Exit (back to the editor).
 const testDriving = new URLSearchParams(window.location.search).has('testdrive');
 const MAX_BOTS = 7;
-const roaming = () => testDriving && app.current instanceof RaceScreen && app.current.def.type === 'free';
+const racing = () => app.current instanceof RaceScreen;
+const roaming = () => testDriving && racing() && app.current.def.type === 'free';
 
 // --- Pause menu ---
 const menu = new SettingsMenu(
@@ -133,31 +134,39 @@ const menu = new SettingsMenu(
   },
   [
     {
-      label: 'LEAVE RACE',
-      visible: () => !testDriving && app.current instanceof RaceScreen,
-      onClick: () => {
+      // (Any race event, from the start again: not free roam, not online.)
+      label: 'RESTART RACE',
+      visible: () => racing() && app.current.def.type !== 'free' && !app.current.net,
+      onClick: () => menu.ask('Restart the race from the start?', 'RESTART', () => {
+        menu.setOpen(false);
+        app.go('race', { ...app.current.args, restart: true });
+      }),
+    },
+    {
+      label: () => (app.current.def?.type === 'free' ? 'LEAVE FREE ROAM' : 'LEAVE RACE'),
+      visible: () => !testDriving && racing(),
+      onClick: () => menu.ask(app.current.def.type === 'free' ? 'Leave free roam?' : 'Leave the race?', 'LEAVE', () => {
         menu.setOpen(false);
         app.go(app.current.mp ? 'lobby' : 'garage');
-      },
+      }),
     },
     {
       label: 'NEW CAMPAIGN',
       visible: () => !testDriving && app.current instanceof GarageScreen,
-      onClick: () => {
-        if (!window.confirm('Start a new campaign? Your garage will be lost unless it is in a save slot.')) return;
+      onClick: () => menu.ask('Start a new campaign? Your garage is lost unless it is in a save slot.', 'START OVER', () => {
         clearCareer();
         app.career = null;
         menu.setOpen(false);
         app.go('starter');
-      },
+      }),
     },
     {
       label: 'MAIN MENU',
       visible: () => !testDriving && !(app.current instanceof MenuScreen),
-      onClick: () => {
+      onClick: () => menu.ask(racing() ? 'Quit to the main menu? The race in progress is lost.' : 'Quit to the main menu?', 'QUIT', () => {
         menu.setOpen(false);
         app.go('menu');
-      },
+      }),
     },
     {
       // (A test drive's bots: other cars, out on the streets with you.)
@@ -180,10 +189,10 @@ const menu = new SettingsMenu(
       // (A test drive: closing its tab puts you back in the editor.)
       label: 'EXIT',
       visible: () => testDriving,
-      onClick: () => {
+      onClick: () => menu.ask('Exit the test drive?', 'EXIT', () => {
         window.opener?.focus();
         window.close();
-      },
+      }),
     },
   ],
   testDriving ? null : {
@@ -205,7 +214,8 @@ app.loadSlot = (n) => {
 menu.setOpen(false);
 // (Open: it always closes.)
 const togglePause = () => {
-  if (menu.open || canPause()) menu.toggle();
+  if (menu.asking) menu.cancelAsk();
+  else if (menu.open || canPause()) menu.toggle();
 };
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' || e.code === 'KeyP') togglePause();

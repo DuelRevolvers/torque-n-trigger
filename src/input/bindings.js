@@ -8,17 +8,17 @@ export const ACTIONS = [
   ['left', 'Steer left'], ['right', 'Steer right'], ['throttle', 'Throttle'], ['brake', 'Brake / reverse'],
   ['handbrake', 'Handbrake / drift'], ['nitro', 'Nitro'], ['fire1', 'Fire primary'], ['fire2', 'Fire secondary'],
   ['utility', 'Utility'], ['lookBack', 'Look back'], ['camera', 'Change camera'], ['reset', 'Reset car'], ['shiftUp', 'Shift up (drag)'],
-  ['detonate', 'Detonate (Death Roll)'],
+  ['shiftDown', 'Shift down (drag)'],   ['detonate', 'Detonate (Death Roll)'],
 ];
 export const PAD_ACTIONS = ACTIONS.filter(([a]) => a !== 'left' && a !== 'right');
 
 export const KEY_DEFAULTS = {
   left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'], throttle: ['KeyW', 'ArrowUp'], brake: ['KeyS', 'ArrowDown'],
   handbrake: ['Space'], nitro: ['ShiftLeft', 'ShiftRight'], utility: ['KeyE'], lookBack: ['KeyQ'], camera: ['KeyV'], reset: ['KeyR'],
-  fire1: ['Mouse0'], fire2: ['Mouse2'], shiftUp: ['KeyF'], detonate: ['Mouse2'],
+  fire1: ['Mouse0'], fire2: ['Mouse2'], shiftUp: ['KeyF'], shiftDown: ['KeyC'], detonate: ['Mouse2'],
 };
 
-export const PAD_DEFAULTS = { throttle: 7, brake: 6, handbrake: 0, nitro: 1, fire1: 2, fire2: 3, utility: 4, shiftUp: 5, lookBack: 10, camera: 11, reset: 8, detonate: 5 };
+export const PAD_DEFAULTS = { throttle: 7, brake: 6, handbrake: 0, nitro: 1, fire1: 2, fire2: 3, utility: 4, shiftUp: 12, shiftDown: 13, lookBack: 5, camera: 11, reset: 8, detonate: 5 };
 
 // Actions used only while wrecked: they share keys and buttons with driving
 // actions (a wreck can't drive), so binding one never takes a key from the other group.

@@ -11,8 +11,10 @@ test('bindings: key names are short enough for the main and alt columns', () => 
   assert.equal(keyName('Mouse2'), 'RMB');
 });
 
-test('bindings: look back on L3, the camera on R3 and V, every driving action bound once', () => {
-  assert.equal(PAD_DEFAULTS.lookBack, 10);
+test('bindings: look back on RB, shifting on the D-pad, the camera on R3 and V, every driving action bound once', () => {
+  assert.equal(padName(PAD_DEFAULTS.lookBack), 'RB');
+  assert.equal(padName(PAD_DEFAULTS.shiftUp), 'D-UP');
+  assert.equal(padName(PAD_DEFAULTS.shiftDown), 'D-DOWN');
   assert.equal(PAD_DEFAULTS.camera, 11);
   assert.deepEqual(KEY_DEFAULTS.camera, ['KeyV']);
   assert.deepEqual(KEY_DEFAULTS.lookBack, ['KeyQ']);
@@ -70,7 +72,7 @@ test('bindings: detonate (a wreck action) defaults to RMB and RB, shared with dr
   assert.equal(padName(PAD_DEFAULTS.detonate), 'RB');
   assert.deepEqual(KEY_DEFAULTS.detonate, ['Mouse2']);
   // Saved before detonate existed, with RB still on shift up: detonate gets RB too.
-  const settings = { bindings: { pad: { ...PAD_DEFAULTS, detonate: undefined }, all: { fire2: ['Mouse2'] } } };
+  const settings = { bindings: { pad: { ...PAD_DEFAULTS, shiftUp: 5, lookBack: 10 }, all: { fire2: ['Mouse2'] } } };
   delete settings.bindings.pad.detonate;
   assert.equal(padBinds(settings).detonate, 5);
   assert.equal(padBinds(settings).shiftUp, 5);

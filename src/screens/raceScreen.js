@@ -217,13 +217,14 @@ export class RaceScreen {
 
   // multiplayer: { players: [{ name, carName, build, pr, device }], bots } from the
   // lobby. Players take the first car slots; each gets a split-screen pane.
-  enter({ build, car, event, multiplayer }) {
+  // restart: the same race again from the pause menu (no second entry fee).
+  enter({ build, car, event, multiplayer, restart = false }) {
     this.args = { build, car, event, multiplayer };
     this.mp = multiplayer || null;
     this.net = multiplayer?.online || null;
     this.def = event || EVENTS.find((e) => e.type === 'circuit');
     this.careerCar = car || null;
-    if (this.careerCar && this.def.entryFee && this.app.career) {
+    if (this.careerCar && this.def.entryFee && this.app.career && !restart) {
       this.app.career.cash -= this.def.entryFee;
       saveCareer(this.app.career);
     }

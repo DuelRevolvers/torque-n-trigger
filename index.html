@@ -97,6 +97,7 @@
       }
       .menu-help { margin-top: 12px; font-size: 12px; line-height: 1.5; color: #a89fd0; }
       .menu-help b { color: var(--amber); }
+      .menu-ask { margin: 0 0 10px; font-size: 14px; color: var(--ink); }
 
       /* Touch controls */
       #touch { position: fixed; inset: 0; pointer-events: none; z-index: 2; }
@@ -285,6 +286,18 @@
       .lobby-panel { background: var(--panel); border: 3px solid var(--pink); box-shadow: 6px 6px 0 var(--cyan); padding: 16px; width: min(640px, 100%); box-sizing: border-box; }
       .lobby select { font: bold 13px var(--font); background: #1a1030; color: var(--ink); border: 2px solid #33245a; padding: 4px; max-width: 100%; }
       .ev-row { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--amber); }
+      /* Lobby spacing: room between controls for the focus outline (5 px each side). */
+      .lobby .ev-row { display: grid; grid-template-columns: 56px minmax(0, 380px); gap: 12px; margin-top: 12px; }
+      .lobby select { padding: 6px; }
+      .lobby .row { flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+      .lobby .row:last-child { margin-top: 20px; }
+      .lobby h3 { margin-top: 18px; }
+      .lobby .hint { margin-top: 8px; }
+      .lobby .seat { padding: 10px 12px; margin: 10px 0; }
+      .lobby .seat-top { gap: 12px; }
+      .lobby .add-player { margin-top: 4px; }
+      .lobby .bot { padding: 4px 0; }
+      .lobby .rank + .seat-pr { margin-left: 6px; }
       .seat { border: 2px solid #33245a; padding: 6px 8px; margin: 6px 0; }
       .seat-top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
       .seat .pn { color: var(--cyan); font-size: 16px; }
@@ -306,6 +319,7 @@
       #menu .menu-panel { max-height: 90vh; overflow-y: auto; }
       .menu-wait { color: var(--pink) !important; }
       .bind-row { display: grid; grid-template-columns: minmax(0, 1fr) 92px 92px; gap: 4px; align-items: center; margin-bottom: 4px; color: var(--ink); font: bold 13px var(--font); text-transform: uppercase; }
+      .bind-one { grid-template-columns: minmax(0, 1fr) 188px; }
       .bind-head { margin: 6px 0 2px; color: #a89fd0; font-size: 11px; }
       .bind-head span + span { text-align: center; }
       .bind-key { display: block; margin: 0; padding: 7px 4px; font-size: 13px; text-align: center; color: var(--cyan); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

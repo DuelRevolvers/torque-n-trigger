@@ -141,12 +141,14 @@ function pick(sel, d) {
   }
 }
 
-// The closest element in a direction: distance along it, plus a penalty for
-// being off to the side.
-function nearest(from, items, dir) {
+// The closest element in a direction: the edge-to-edge gap along it, plus a
+// penalty for the gap off to the side (none when the two line up), so a wide
+// dropdown under a small button counts as straight below it.
+export function nearest(from, items, dir) {
   const a = from.getBoundingClientRect();
   const ax = a.left + a.width / 2;
   const ay = a.top + a.height / 2;
+  const vert = dir === 'up' || dir === 'down';
   let best = null;
   let bestScore = Infinity;
   for (const el of items) {
@@ -154,9 +156,14 @@ function nearest(from, items, dir) {
     const b = el.getBoundingClientRect();
     const dx = b.left + b.width / 2 - ax;
     const dy = b.top + b.height / 2 - ay;
-    const [along, side] = dir === 'up' ? [-dy, dx] : dir === 'down' ? [dy, dx] : dir === 'left' ? [-dx, dy] : [dx, dy];
-    if (along <= 2) continue;
-    const score = along + Math.abs(side) * 2.5;
+    const centre = dir === 'up' ? -dy : dir === 'down' ? dy : dir === 'left' ? -dx : dx;
+    if (centre <= 2) continue;
+    const along = Math.max(0, dir === 'up' ? a.top - b.bottom : dir === 'down' ? b.top - a.bottom
+      : dir === 'left' ? a.left - b.right : b.left - a.right);
+    const side = vert ? Math.max(0, b.left - a.right, a.left - b.right) : Math.max(0, b.top - a.bottom, a.top - b.bottom);
+    // (Left / right stay on roughly the same row, not a far corner.)
+    if (!vert && side > Math.max(along, 8)) continue;
+    const score = along + side * 2.5 + Math.abs(vert ? dx : dy) * 0.05;
     if (score < bestScore) {
       bestScore = score;
       best = el;

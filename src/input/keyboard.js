@@ -36,6 +36,6 @@ export class Keyboard {
     if (Math.abs(steer) > Math.abs(frame.steer)) frame.steer = steer;
     if (this.held(k.throttle)) frame.throttle = 1;
     if (this.held(k.brake)) frame.brake = 1;
-    for (const a of ['handbrake', 'nitro', 'utility', 'lookBack', 'camera', 'reset', 'fire1', 'fire2', 'shiftUp', 'detonate']) frame[a] ||= this.held(k[a]);
+    for (const a of ['handbrake', 'nitro', 'utility', 'lookBack', 'camera', 'reset', 'fire1', 'fire2', 'shiftUp', 'shiftDown', 'detonate']) frame[a] ||= this.held(k[a]);
   }
 }

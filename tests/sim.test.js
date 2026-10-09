@@ -131,12 +131,13 @@ test('snapshot and restore reproduce the same future', () => {
   assert.equal(JSON.stringify(JSON.parse(JSON.stringify(snap))), JSON.stringify(snap), 'state must be JSON-safe');
 });
 
-test('reset respawns the car upright on the centreline', () => {
+test('reset respawns the car upright, out of the way at the edge of the road', () => {
   const w = makeWorld(loop);
   run(w, 4, () => ({ throttle: 1, steer: -1 }));
+  const side = Math.sign(car(w).lateral) || 1;
   stepWorld(w, [{ ...neutralInput(), reset: true }]);
   const c = car(w);
-  assert.ok(Math.abs(c.lateral) < 1);
+  assert.ok(Math.abs(c.lateral - side * (w.track.halfWidth - 2.2)) < 1);
   assert.ok(upOf(c).y > 0.999);
   assert.ok(speedOf(c) < 0.5);
 });

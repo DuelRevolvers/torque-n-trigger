@@ -47,7 +47,10 @@ export function buildTrackView(track, tex, opts = {}) {
     const g = b.queryMain(x, z, -1);
     return g.overrun < 1 && Math.abs(g.lateral) < b.wallDist + 1.5;
   });
-  const inMain = (x, z) => Math.abs(track.queryMain(x, z, -1).lateral) < track.wallDist - 0.5;
+  const inMain = (x, z) => {
+    const q = track.queryMain(x, z, -1);
+    return q.overrun < 1 && Math.abs(q.lateral) < (track.sections || track.narrows ? track.localWall(q.s) : track.wallDist) - 0.5;
+  };
 
   // A suburb's route is its own streets and lawns: no road laid over them, no
   // barriers (the property lines are the walls).
@@ -57,8 +60,10 @@ export function buildTrackView(track, tex, opts = {}) {
   if (!suburb) buildRoad(group, track, mats, groundY, { wallSkip: branches.length ? inBranch : null });
   group.add(endPens(track, mats.barrier));
   for (const br of branches) {
-    if (!suburb) buildRoad(group, br.track, mats, groundY, { lift: 0.03, wallSkip: inMain, roadMat: branchMaterial(br.kind, tex, mats) });
-    group.add(beacons(br.track));
+    // (A shortcut starts and ends on the main road's centreline: none of it is
+    // drawn over the main road, and its beacons stand at its mouths.)
+    if (!suburb) buildRoad(group, br.track, mats, groundY, { lift: 0.03, wallSkip: inMain, roadSkip: inMain, roadMat: branchMaterial(br.kind, tex, mats) });
+    group.add(beacons(br.track, inMain));
   }
 
   const groundSize = 3000;
@@ -1103,7 +1108,8 @@ function endPens(track, material) {
   return parts.length ? new THREE.Mesh(mergeGeometries(parts), material) : new THREE.Group();
 }
 
-function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roadMat = null } = {}) {
+// roadSkip(x, z): true where another road is (a shortcut's mouth on the main road): nothing laid there.
+function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roadSkip = null, roadMat = null } = {}) {
   const hw = track.halfWidth;
   const curbOuter = hw + track.curbWidth;
   const wall = track.wallDist;
@@ -1122,7 +1128,8 @@ function buildRoad(group, track, mats, groundY, { lift = 0, wallSkip = null, roa
   // ground there, just the barriers; and no barrier through what stands on
   // its line (that's the edge there: the barrier stops at it, either side).
   const free = freeSamples(track);
-  const bare = inGap || free ? (i) => (inGap && inGap(i)) || (free && free[i] === 1) : null;
+  const covered = roadSkip ? (i) => roadSkip(track.x[i], track.z[i]) : null;
+  const bare = inGap || free || covered ? (i) => (inGap && inGap(i)) || (free && free[i] === 1) || (covered && covered(i)) : null;
   const through = free ? thingsOnWalls(track, free, at, wallAt) : null;
   add(ribbon(track, (i) => at(i, -hwAt(i), lift), (i) => at(i, hwAt(i), lift), { vLength: 16, skip: bare }), roadMat || mats.road);
   add(ribbon(track, (i) => at(i, -curbAt(i), lift), (i) => at(i, -hwAt(i), lift), { vLength: 3, skip: bare }), mats.curb);
@@ -1284,10 +1291,17 @@ function branchMaterial(kind, tex, mats) {
 }
 
 // Flashing amber beacons either side of a shortcut's entrance and exit.
-function beacons(track) {
+// inMain(x, z): on the main road; the beacons stand where the shortcut leaves it.
+function beacons(track, inMain = null) {
   const geos = [];
   const at = pointAt(track);
-  for (const i of [Math.min(4, track.count - 1), Math.max(0, track.count - 5)]) {
+  const n = track.count;
+  const clear = (i) => !inMain || ![-1, 1].some((side) => { const p = at(i, side * (track.wallDist + 0.4), 0); return inMain(p[0], p[2]); });
+  let first = Math.min(4, n - 1);
+  while (first < n / 2 && !clear(first)) first++;
+  let last = Math.max(0, n - 5);
+  while (last > n / 2 && !clear(last)) last--;
+  for (const i of [first, last]) {
     for (const side of [-1, 1]) {
       const p = at(i, side * (track.wallDist + 0.4), 0); // (behind the wall)
       geos.push(new THREE.BoxGeometry(0.2, 1.4, 0.2).translate(p[0], p[1] + 0.7, p[2]));

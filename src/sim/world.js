@@ -170,9 +170,17 @@ export function respawnCar(world, id, { back = 0, index = null } = {}) {
   if (gap) i = track.indexAtDistance(Math.max(0, gap.s0 - gap.len - 60));
   // (Never inside something solid, off the streets.)
   if (track.tops) i = track.clearIndex(i);
-  // On the centreline, or beside the median where there is one (on the side the car was on).
+  // Out of the way, at the far edge of the road on the side the car was on (the
+  // other side if something stands there; else beside the median, or the centreline).
   const median = track.medianAt?.(track.s[i]) || 0;
-  const lateral = median ? (Math.sign(car.lateral) || 1) * (median + 3) : 0;
+  const edge = (track.localHalf ? track.localHalf(track.s[i]) : track.halfWidth) - 2.2;
+  const side = Math.sign(car.lateral) || 1;
+  const fallback = median ? side * (median + 3) : 0;
+  const clear = (lat) => {
+    const p = poseAt(track, i, lat).pos;
+    return !track.blockedAt?.(p.x, p.z, p.y);
+  };
+  const lateral = [side * edge, -side * edge].find((lat) => edge > median + 2.5 && clear(lat)) ?? fallback;
   placeCar(car, params, poseAt(track, i, lateral));
   car.trackIndex = i;
   car.trackS = track.s[i];

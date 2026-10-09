@@ -44,6 +44,7 @@ export class SettingsMenu {
     this.view = 'gameplay';
     this.device = 'all'; // controls tab: 'all' (keyboard + mouse) | 'pad'
     this.capture = null; // { device, action, slot } while waiting for a key/button
+    this.asking = null; // { text, yes, onYes } while a confirmation is up
     this.note = '';
     root.innerHTML = `<div class="menu-panel"><h1 class="menu-title"></h1>
       <button class="menu-resume"></button>
@@ -59,6 +60,7 @@ export class SettingsMenu {
   setOpen(open, mode = 'pause') {
     this.open = open;
     this.root.hidden = !open;
+    this.asking = null;
     this.cancelCapture();
     if (!open) return;
     this.mode = mode;
@@ -70,6 +72,18 @@ export class SettingsMenu {
     this.setOpen(!this.open);
   }
 
+  // A confirmation in the panel (mouse, keyboard or gamepad; B or ESC is No):
+  // yes runs onYes.
+  ask(text, yes, onYes) {
+    this.asking = { text, yes, onYes };
+    this.render();
+  }
+
+  cancelAsk() {
+    this.asking = null;
+    this.render();
+  }
+
   showView(view) {
     this.view = view;
     this.note = '';
@@ -79,10 +93,32 @@ export class SettingsMenu {
   render() {
     const pause = this.mode === 'pause';
     this.root.querySelector('.menu-title').textContent = pause ? 'PAUSED' : 'SETTINGS';
-    this.root.querySelector('.menu-resume').textContent = pause ? 'RESUME' : 'BACK';
+    const resume = this.root.querySelector('.menu-resume');
+    resume.textContent = pause ? 'RESUME' : 'BACK';
 
     const box = this.root.querySelector('.menu-actions');
     box.innerHTML = '';
+    resume.style.display = this.asking ? 'none' : '';
+    if (this.asking) {
+      const { text, yes, onYes } = this.asking;
+      this.root.querySelector('.menu-title').textContent = 'ARE YOU SURE?';
+      this.root.querySelector('.menu-tabs').innerHTML = '';
+      this.body.innerHTML = '';
+      box.innerHTML = `<div class="menu-help menu-ask">${text}</div>`;
+      const no = document.createElement('button');
+      no.className = 'menu-row menu-action cancel';
+      no.textContent = 'NO';
+      no.addEventListener('click', () => this.cancelAsk());
+      const ok = document.createElement('button');
+      ok.className = 'menu-row menu-action';
+      ok.textContent = yes;
+      ok.addEventListener('click', () => {
+        this.asking = null;
+        onYes();
+      });
+      box.append(no, ok);
+      return;
+    }
     const button = (label, fn, cls = 'menu-row menu-action') => {
       const b = document.createElement('button');
       b.className = cls;
@@ -152,12 +188,17 @@ export class SettingsMenu {
       row.innerHTML = `<span>SLOT ${s.slot}</span><span class="menu-value">${s.label}</span>`;
       row.addEventListener('click', () => {
         if (save) {
-          if (!s.empty && !window.confirm(`Overwrite slot ${s.slot}?`)) return;
-          this.note = this.saves.save(s.slot) ? `Saved to slot ${s.slot}.` : 'Could not save (storage full or disabled).';
-          this.render();
-        } else if (window.confirm(`Load slot ${s.slot}? Unsaved progress in the current campaign is lost.`)) {
-          this.setOpen(false);
-          this.saves.load(s.slot);
+          const write = () => {
+            this.note = this.saves.save(s.slot) ? `Saved to slot ${s.slot}.` : 'Could not save (storage full or disabled).';
+            this.render();
+          };
+          if (s.empty) write();
+          else this.ask(`Overwrite slot ${s.slot}?`, 'OVERWRITE', write);
+        } else {
+          this.ask(`Load slot ${s.slot}? Unsaved progress in the current campaign is lost.`, 'LOAD', () => {
+            this.setOpen(false);
+            this.saves.load(s.slot);
+          });
         }
       });
       this.body.appendChild(row);
@@ -174,13 +215,19 @@ export class SettingsMenu {
       this.render();
     }));
     if (pad) {
+      // Gamepad: laid out like the keyboard's, one button per action.
       const binds = padBinds(this.settings);
+      this.body.insertAdjacentHTML('beforeend', '<div class="bind-row bind-one bind-head"><span>ACTION</span><span>BUTTON</span></div>');
       for (const [action, label] of PAD_ACTIONS) {
-        const row = document.createElement('button');
-        row.className = 'menu-row';
+        const row = document.createElement('div');
+        row.className = 'bind-row bind-one';
+        row.innerHTML = `<span>${label}</span>`;
+        const cell = document.createElement('button');
         const waiting = this.capture?.action === action;
-        row.innerHTML = `<span>${label}</span><span class="menu-value ${waiting ? 'menu-wait' : ''}">${waiting ? 'PRESS A BUTTON' : padName(binds[action])}</span>`;
-        row.addEventListener('click', () => this.startCapture(action));
+        cell.className = `menu-row bind-key${waiting ? ' menu-wait' : ''}`;
+        cell.textContent = waiting ? 'PRESS...' : padName(binds[action]);
+        cell.addEventListener('click', () => this.startCapture(action));
+        row.appendChild(cell);
         this.body.appendChild(row);
       }
     } else {
@@ -213,7 +260,7 @@ export class SettingsMenu {
     });
     this.body.appendChild(reset);
     this.body.insertAdjacentHTML('beforeend', pad
-      ? '<div class="menu-help">Click a control, then press the new button. ESC cancels. A button already used elsewhere swaps with it. Steering is always the left stick / D-pad; START pauses. Extra split-screen players use gamepads, with these bindings.</div>'
+      ? '<div class="menu-help">Click a control, then press the new button. ESC cancels. A button already used elsewhere swaps with it. Steering is always the left stick or D-pad left and right; START pauses. Extra split-screen players use gamepads, with these bindings.</div>'
       : '<div class="menu-help">Click a main or alt slot, then press the new key or mouse button. ESC cancels; DELETE clears the slot. A key already used elsewhere moves here.</div>');
   }
 
