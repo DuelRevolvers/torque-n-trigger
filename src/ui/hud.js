@@ -414,9 +414,12 @@ export class Hud {
       if (dr) {
         // Death Roll: the prompt, and a bar for the time left to aim the wreck.
         text('DEATH ROLL', W / 2, y + 32, { color: PALETTE.amber, align: 'center', scale: 2 });
-        text(dr.canSlow ? 'HOLD NITROUS TO SLOW TIME, STEER TO AIM' : 'STEER TO AIM YOUR WRECK', W / 2, y + 50, { color: '#ffffff', align: 'center' });
+        if (dr.blown) text('DETONATED!', W / 2, y + 50, { color: PALETTE.pink, align: 'center' });
+        else text(dr.canSlow ? 'HOLD NITROUS TO SLOW TIME, STEER TO AIM' : 'STEER TO AIM YOUR WRECK', W / 2, y + 50, { color: '#ffffff', align: 'center' });
         rect(W / 2 - 40, y + 62, 80, 3, 'rgba(0, 0, 0, 0.5)');
         rect(W / 2 - 40, y + 62, Math.round(80 * dr.left), 3, PALETTE.amber);
+        // (Detonating costs a nitrous charge: the prompt shows only with one left.)
+        if (dr.canBlow) text(`${dr.button}: DETONATE`, W / 2, y + 72, { color: PALETTE.amber, align: 'center' });
       }
     }
 

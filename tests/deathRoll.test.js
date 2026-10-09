@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PAD } from './helpers.js';
 import { createWorld, stepWorld } from '../src/sim/world.js';
 import { collideCars, wreckPhysical, applyDamage } from '../src/sim/combat.js';
-import { updateDeathRoll, deathRollLive, slowMotion, deathRollLeft } from '../src/sim/deathRoll.js';
+import { updateDeathRoll, deathRollLive, slowMotion, deathRollLeft, canDetonate } from '../src/sim/deathRoll.js';
 import { DEATH_ROLL } from '../src/sim/rules.js';
 import { neutralInput } from '../src/sim/input.js';
 import { TEST_CAR } from '../src/sim/carParams.js';
@@ -127,5 +127,37 @@ test('ram damage from a steered wreck that finishes a rival is a Death Roll', ()
   updateDeathRoll(w, 0, input(1, true));
   w.events = [];
   applyDamage(w, 1, 10 * w.state.cars[1].maxHp, w.state.cars[1].pos, 0, false, true);
+  assert.equal(w.events.find((e) => e.type === 'takedown')?.cause, 'deathRoll');
+});
+
+const fire = () => ({ ...neutralInput(), fire2: true });
+
+test('fire secondary detonates the wreck once, for a nitrous charge, only on a fresh press', () => {
+  const w = wrecked();
+  const car = w.state.cars[0];
+  updateDeathRoll(w, 0, fire());
+  assert.ok(!car.deathRoll.blown, 'held through the wreck: no blast');
+  updateDeathRoll(w, 0, neutralInput());
+  car.nitro.charges = 0;
+  updateDeathRoll(w, 0, fire());
+  assert.ok(!car.deathRoll.blown, 'no nitrous: no blast');
+  updateDeathRoll(w, 0, neutralInput());
+  car.nitro.charges = 2;
+  updateDeathRoll(w, 0, fire());
+  assert.ok(car.deathRoll.blown);
+  assert.equal(car.nitro.charges, 1, 'one charge spent');
+  assert.ok(!canDetonate(w, 0), 'once per wreck');
+});
+
+test('the blast throws a near rival clear, and a wreck from it is a Death Roll', () => {
+  const w = wrecked();
+  const v = w.state.cars[1];
+  place(w, 1, [4, 0], [0, 0]);
+  v.hp = 1;
+  w.events = [];
+  updateDeathRoll(w, 0, neutralInput());
+  updateDeathRoll(w, 0, fire());
+  assert.ok(v.vel.x > 0, 'pushed away from the blast');
+  assert.equal(v.wrecked, true);
   assert.equal(w.events.find((e) => e.type === 'takedown')?.cause, 'deathRoll');
 });
