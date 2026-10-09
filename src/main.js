@@ -18,6 +18,7 @@ import { loadCareer, clearCareer, saveCareer, unlockAll, relockAll } from './car
 import { roamEvent, districtEvents } from './career/districts.js';
 import { districtFromDoc, migrateDoc } from './content/mapDoc.js';
 import { sdkGet, sdkPut } from './content/library.js';
+import { wreckPhysical } from './sim/combat.js';
 import { getVenue } from './sim/tracks/venues.js';
 import { generateStarters } from './parts/starters.js';
 import { TEST_CAR, customBuild } from './parts/customCar.js';
@@ -285,6 +286,11 @@ const drive = testDrive();
 if (drive) {
   app.go('race', drive);
   recordPlaytest(drive.event.district);
+  // Test drives only: K wrecks your car, to try a Death Roll (listed in the SDK's Controls).
+  window.addEventListener('keydown', (e) => {
+    const race = app.screens.race;
+    if (e.code === 'KeyK' && !e.repeat && app.current === race && race.world) wreckPhysical(race.world, 0, 'test');
+  });
 }
 else app.go('menu');
 

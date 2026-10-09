@@ -3,6 +3,8 @@ import { buildTrack } from '../sim/track.js';
 import { buildArena } from '../sim/arena.js';
 import { getVenue } from '../sim/tracks/venues.js';
 import { createWorld, stepWorld } from '../sim/world.js';
+import { slowMotion, deathRollLeft } from '../sim/deathRoll.js';
+import { DEATH_ROLL } from '../sim/rules.js';
 import { createEventState, gridPoses, standings, resolvePit, initEventCar } from '../sim/event.js';
 import { districtMap } from '../sim/city.js';
 import { InputQueue, neutralInput, sanitizeInput } from '../sim/input.js';
@@ -294,7 +296,10 @@ export class RaceScreen {
       poses: gridPoses(this.track, this.def, n),
       event: createEventState(this.def, this.track),
       respawnOnWreck: !(this.def.type === 'arena' && this.def.mode === 'lastStanding'),
+      humans: H,
+      slowmo: H === 1 && !this.net, // (Death Roll slow motion: one human, not online)
     });
+    this.slowK = 0; // calls since the last real step, in slow motion
     entries.forEach((e, k) => initAi(this.world.state.cars[k + H], e.personality, seed + 31 * k, this.app.settings.difficulty));
     this.queues = humans.map(() => new InputQueue());
     this.lastFrames = humans.map(() => neutralInput());
@@ -494,6 +499,9 @@ export class RaceScreen {
   }
 
   step() {
+    // Slow motion (a single player's Death Roll): the sim steps once every N calls (B3).
+    if (slowMotion(this.world) && ++this.slowK < DEATH_ROLL.slowmo) return;
+    this.slowK = 0;
     const net = this.net;
     if (net?.role === 'client' && this.pendingSnap) this.reconcile();
     const { state } = this.world;
@@ -596,6 +604,32 @@ export class RaceScreen {
     this.popup(CAMERA_NAMES[next], PALETTE.cyan, p);
   }
 
+  // A camera kick for human p's view, if it's shown here.
+  kick(p, preset) {
+    const v = this.viewers.indexOf(p);
+    if (v >= 0) this.rigs[v]?.kick(preset);
+  }
+
+  // While human p Death Rolls: the nearest live rival up to 30 m ahead of the
+  // wreck's travel (within 45°), for the crash camera to frame too.
+  deathRollFocus(p) {
+    const { cars } = this.world.state;
+    const W = cars[p];
+    const speed = Math.hypot(W.vel.x, W.vel.z);
+    if (deathRollLeft(this.world, p) <= 0 || speed < 1) return null;
+    let best = null;
+    let near = 30;
+    cars.forEach((c, j) => {
+      if (j === p || c.wrecked) return;
+      const dx = c.pos.x - W.pos.x;
+      const dz = c.pos.z - W.pos.z;
+      const along = (dx * W.vel.x + dz * W.vel.z) / speed;
+      const d = Math.hypot(dx, dz);
+      if (along > 0 && d < near && along > d * Math.SQRT1_2) [best, near] = [j, d];
+    });
+    return best === null ? null : this.poses[best]?.pos ?? null;
+  }
+
   popup(text, color, p = 0) {
     const list = this.popupsBy[p];
     list.unshift({ text, color, age: 0 });
@@ -636,12 +670,16 @@ export class RaceScreen {
       inPit: car.inPit,
       wrongWay: this.wrongWays[p] > 1,
       popups: this.popupsBy[p],
+      deathRoll: deathRollLeft(this.world, p) > 0
+        ? { left: deathRollLeft(this.world, p), slow: p === 0 && slowMotion(this.world), canSlow: !!this.world.slowmo }
+        : null,
     };
   }
 
   render(alpha, dt, paused) {
     const { settings, hud, touch } = this.app;
     this.time += dt;
+    if (!paused && slowMotion(this.world)) alpha = (this.slowK + alpha) / DEATH_ROLL.slowmo; // (between slowed steps)
     const { state } = this.world;
     if (this.venueEntry?.train) updateTrainView(this.venueEntry.train, this.track.train, state.tick - 1 + alpha);
     if (this.venueEntry?.truck) updateTruckView(this.venueEntry.truck, this.track.truck, state.tick - 1 + alpha, this.venueEntry.heightAt);
@@ -669,11 +707,17 @@ export class RaceScreen {
       for (let p = 0; p < this.humans; p++) {
         if ((e.type === 'hit' && e.car === p) || (e.type === 'crash' && (e.a === p || e.b === p))) this.shakes[p] = Math.min(0.5, this.shakes[p] + 0.15);
         if (e.type === 'wreck' || e.type === 'explosion') this.shakes[p] = Math.min(0.6, this.shakes[p] + 0.25);
+        // Camera kicks (B3's impulse presets): your wreck, a slam or shunt you're in, an explosion.
+        if (e.type === 'wreck' && e.car === p) this.kick(p, 'burnout');
+        if (e.type === 'explosion') this.kick(p, 'shake');
+        if (e.type === 'contact' && (e.label === 'slam' || e.label === 'huge') && (e.attacker === p || e.victim === p)) {
+          this.kick(p, e.geo !== 'shunt' ? 'slam' : e.attacker === p ? 'shunt' : 'shunted');
+        }
         // Takedowns (by guns or physical, once credited), and the bonuses on top.
         if (e.type === 'takedown' && e.car === p && e.victim !== p) {
           if (!this.mp) this.victims.add(e.victim);
           if (e.signature) this.popup(`SIGNATURE: ${e.signature.toUpperCase()}`, PALETTE.amber, p);
-          else this.popup(`${e.psych ? 'PSYCH OUT' : 'TAKEDOWN'}! ${this.names[e.victim]}`, PALETTE.pink, p);
+          else this.popup(`${e.cause === 'deathRoll' ? 'DEATH ROLL' : e.psych ? 'PSYCH OUT' : 'TAKEDOWN'}! ${this.names[e.victim]}`, PALETTE.pink, p);
           if (e.revenge) this.popup('REVENGE!', PALETTE.pink, p);
           if (e.double) this.popup('DOUBLE TAKEDOWN!', PALETTE.amber, p);
         }
@@ -717,7 +761,12 @@ export class RaceScreen {
       const p = this.viewers[v];
       const cam = this.cameras[v];
       const mode = this.camMode(p);
-      this.rigs[v].update(this.poses[p], state.cars[p], dt, { lookBack: this.lastFrames[p].lookBack, mode, eyes: mode === 'windshield' ? this.views[p].windshieldEyes() : null });
+      this.rigs[v].update(this.poses[p], state.cars[p], dt, {
+        lookBack: this.lastFrames[p].lookBack,
+        mode,
+        eyes: mode === 'windshield' ? this.views[p].windshieldEyes() : null,
+        focus: state.cars[p].wrecked ? this.deathRollFocus(p) : null,
+      });
       if (this.shakes[p] > 0) {
         const k = mode === 'windshield' ? 0.3 : 1; // hits shake less from inside the car
         cam.position.x += (Math.random() - 0.5) * this.shakes[p] * k;
@@ -825,7 +874,7 @@ export class RaceScreen {
       if (this.def.type !== 'free' && this.def.district && !this.def.custom) {
         const second = order[1];
         const margin = ev.type !== 'arena' && place === 1 ? (second?.finished ? second.time - order[0].time : 30) : 0;
-        recordFeats(career, { type: this.def.type, district: this.def.district, place, takedowns: player.takedowns || 0, wrecks: player.wrecks || 0, margin, revenges: player.contact.revenges, signatures: player.contact.signatures.length, rams: player.contact.rams });
+        recordFeats(career, { type: this.def.type, district: this.def.district, place, takedowns: player.takedowns || 0, wrecks: player.wrecks || 0, margin, revenges: player.contact.revenges, signatures: player.contact.signatures.length, rams: player.contact.rams, deathRolls: player.contact.deathRolls || 0 });
       }
       // Signature spots: each one counts once per career (B3's collectibles).
       if (this.def.type !== 'free') {

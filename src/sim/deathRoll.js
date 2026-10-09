@@ -1,0 +1,65 @@
+// Death Roll (B3 integration, phase 5; B3's "Aftertouch"). For 5 s after a
+// human's car is wrecked, steering turns the wreck's velocity about world up,
+// keeping its speed, so it can be aimed into a rival. In single player it only
+// steers while slow motion (the nitrous button) is held; with more than one
+// human there's no slow motion and it steers faster. All state is plain data
+// on car.deathRoll.
+
+import { SIM_HZ, SIM_DT } from '../config.js';
+import { quatIntegrate } from './math.js';
+import { DEATH_ROLL } from './rules.js';
+
+const RAD = Math.PI / 180;
+
+// Seconds since car i was wrecked.
+const since = (world, car) => (world.state.tick - car.wreckTick) / SIM_HZ;
+
+// Inside the Death Roll window (a wrecked human, under 5 s since the wreck)?
+export function inWindow(world, i) {
+  const car = world.state.cars[i];
+  return !!car.wrecked && i < (world.humans || 0) && since(world, car) < DEATH_ROLL.window;
+}
+
+// The share of car i's Death Roll window left (1 just wrecked, 0 over or not a
+// Death Roll), for the HUD.
+export function deathRollLeft(world, i) {
+  return inWindow(world, i) ? 1 - since(world, world.state.cars[i]) / DEATH_ROLL.window : 0;
+}
+
+// Can car i's wreck be credited with a takedown: in its window, and steered at least once?
+export function deathRollLive(world, i) {
+  return inWindow(world, i) && !!world.state.cars[i].deathRoll?.steered && world.state.cars[i].deathRoll.tick === world.state.cars[i].wreckTick;
+}
+
+// Is the single-player slow motion on (car 0 holding it)?
+export function slowMotion(world) {
+  const car = world.state.cars[0];
+  return !!world.slowmo && !!car?.wrecked && !!car.deathRoll?.slow && car.deathRoll.tick === car.wreckTick;
+}
+
+// Once a tick, for a wrecked human, with its raw (unneutralised) input.
+export function updateDeathRoll(world, i, input) {
+  const car = world.state.cars[i];
+  if (car.deathRoll?.tick !== car.wreckTick) car.deathRoll = { tick: car.wreckTick, steered: false, slow: false, swing: 0 };
+  const dr = car.deathRoll;
+  const speed = Math.hypot(car.vel.x, car.vel.z);
+  const live = inWindow(world, i) && speed > DEATH_ROLL.minSpeed;
+  dr.slow = live && !!world.slowmo && !!input.nitro;
+  if (!live || Math.abs(input.steer) <= DEATH_ROLL.steerMin) return;
+  if (world.slowmo && !dr.slow) return; // (single player: steering needs slow motion)
+  const rate = world.slowmo ? DEATH_ROLL.rate : DEATH_ROLL.rateMulti;
+  // Right is a turn clockwise seen from above: negative about +y.
+  const turn = -Math.sign(input.steer) * (rate / (since(world, car) + 1)) * SIM_DT * RAD;
+  const c = Math.cos(turn);
+  const s = Math.sin(turn);
+  car.vel = { x: car.vel.x * c + car.vel.z * s, y: car.vel.y, z: -car.vel.x * s + car.vel.z * c };
+  dr.steered = true;
+  // The body swings the other way a little, up to a total cap (B3 LIKELY).
+  const max = DEATH_ROLL.swingMax * SIM_DT * RAD;
+  const cap = DEATH_ROLL.swingCap * RAD;
+  const swing = Math.max(-cap - dr.swing, Math.min(cap - dr.swing, Math.max(-max, Math.min(max, DEATH_ROLL.swing * turn))));
+  if (swing) {
+    car.quat = quatIntegrate(car.quat, { x: 0, y: swing, z: 0 }, 1);
+    dr.swing += swing;
+  }
+}

@@ -8,6 +8,7 @@ import { onOil, rainGrip } from './gadgets.js';
 import { newContact, touchContact, noteContact, damageMul } from './contact.js';
 import { crashes, queueCredit, ringOutCredit, award, checkLucky } from './takedown.js';
 import { earnNitro } from './nitro.js';
+import { deathRollLive } from './deathRoll.js';
 import { NITRO } from './rules.js';
 
 const DEFAULT_COMBAT = {
@@ -192,7 +193,7 @@ function wreck(world, j, source) {
   earnNitro(world, j, NITRO.wrecked);
   car.vel = add(car.vel, v3(0, 5, 0));
   car.angVel = add(car.angVel, quatRotate(car.quat, v3(0, 0, 1.5)));
-  if (source >= 0 && source !== j) award(world, source, j, 'hp');
+  if (source >= 0 && source !== j) award(world, source, j, deathRollLive(world, source) ? 'deathRoll' : 'hp');
   world.events.push({ type: 'wreck', car: j, pos: { ...car.pos }, by: source });
 }
 

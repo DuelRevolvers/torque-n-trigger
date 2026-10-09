@@ -10,6 +10,7 @@ import { SIM_HZ, SIM_DT } from '../config.js';
 import { CRASH, CREDIT, NITRO } from './rules.js';
 import { earnNitro } from './nitro.js';
 import { rubTime, updateReaction } from './contact.js';
+import { deathRollLive } from './deathRoll.js';
 
 const FWD = { x: 0, y: 0, z: -1 };
 const UP = { x: 0, y: 1, z: 0 };
@@ -41,8 +42,9 @@ function candidates(world, v) {
   const out = [];
   const add = (x, psych = false) => {
     if (x < 0 || x === v || out.some((o) => o.by === x)) return;
-    if (cars[x].wrecked || dist(cars[x].pos, V.pos) > CREDIT.maxDist) return;
-    out.push({ by: x, psych });
+    // (A wreck counts only while it's being Death Rolled.)
+    if ((cars[x].wrecked && !deathRollLive(world, x)) || dist(cars[x].pos, V.pos) > CREDIT.maxDist) return;
+    out.push({ by: x, psych, deathRoll: cars[x].wrecked });
   };
   // 1. The last slam partner, either way round: whoever slammed v, or whoever v slammed.
   const slams = [];
@@ -64,6 +66,8 @@ function candidates(world, v) {
 export function queueCredit(world, v, cause) {
   const cands = candidates(world, v);
   if (!cands.length) return;
+  // A Death Roll pays at once: the wreck can't be wrecked any more (B3).
+  if (cands[0].deathRoll) return award(world, cands[0].by, v, 'deathRoll');
   // (s: where it crashed along the route, for signature spots.)
   (world.state.credits ||= []).push({ victim: v, tick: world.state.tick, cause, cands, s: world.state.cars[v].trackS });
 }
@@ -77,7 +81,7 @@ export function ringOutCredit(world, v) {
   return cars[v].lastHitBy >= 0 && within(tick, cars[v].lastHitTick ?? -1, CREDIT.weaponWindow) ? cars[v].lastHitBy : -1;
 }
 
-const RAMS = new Set(['wall', 'car', 'tipOver']); // physical takedowns
+const RAMS = new Set(['wall', 'car', 'tipOver', 'deathRoll']); // physical takedowns
 
 // The signature spot (a named stretch of the route) at track position s, or null.
 // A spot whose start is past its end runs over the lap line.
@@ -95,6 +99,7 @@ export function award(world, x, v, cause, psych = false, s = world.state.cars[v]
   const double = within(tick, X.lastVictimTick, CREDIT.doubleWindow);
   if (double) X.doubles++;
   if (RAMS.has(cause)) X.rams++;
+  if (cause === 'deathRoll') X.deathRolls = (X.deathRolls || 0) + 1;
   const spot = cause === 'wall' && s !== undefined ? signatureAt(world.state.event, s) : null;
   if (spot) X.signatures.push(spot.name);
   const revenge = !!X.grudge[v];

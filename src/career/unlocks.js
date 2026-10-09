@@ -60,6 +60,7 @@ export function recordFeats(career, r) {
   add('revenges', r.revenges || 0);
   add('signatures', r.signatures || 0);
   add('rams', r.rams || 0);
+  add('deathRolls', r.deathRolls || 0);
   if (win && r.margin > 0) for (const k of keys('margin')) T[k] = Math.max(T[k] || 0, r.margin);
 }
 

@@ -100,3 +100,12 @@ export const AI_FIGHT = {
     hard: { ahead: 0, behind: 0.08, aggression: 1.2 },
   },
 };
+
+// Death Roll (B3 "Aftertouch", phase 5): a wrecked human steers the wreck. B3 values are CONFIRMED (takedowns.md §10).
+export const DEATH_ROLL = {
+  window: 5, minSpeed: 1, // s after the wreck; m/s the wreck must still be moving (B3 LIKELY)
+  steerMin: 0.5, // steer input needed (B3: stick deflection)
+  rate: 24, rateMulti: 45, // °/s of velocity turn at the crash, ÷ (t + 1); without slow motion (B3 split-screen)
+  swing: -0.5, swingMax: 72, swingCap: 17, // body yaw per turn, °/s cap, ° total (B3 LIKELY)
+  slowmo: 5, // sim runs at 1/N while slow motion is held (B3 races)
+};

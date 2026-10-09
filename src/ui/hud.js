@@ -405,8 +405,17 @@ export class Hud {
     }
     if (car.shield > 0) text('SHIELD', W / 2, 60, { color: PALETTE.cyan, align: 'center', scale: 2 });
     if (car.wrecked) {
+      const dr = eventInfo?.deathRoll;
+      if (dr?.slow) rect(0, 0, W, H, 'rgba(90, 40, 150, 0.18)'); // slow motion
       text('WRECKED', W / 2, H / 2 - 20, { color: PALETTE.pink, align: 'center', scale: 3 });
       text(`RESPAWN IN ${Math.max(0, Math.ceil(car.wreckTimer))}`, W / 2, H / 2 + 6, { color: '#ffffff', align: 'center' });
+      if (dr) {
+        // Death Roll: the prompt, and a bar for the time left to aim the wreck.
+        text('DEATH ROLL', W / 2, H / 2 + 22, { color: PALETTE.amber, align: 'center', scale: 2 });
+        text(dr.canSlow ? 'HOLD NITROUS TO SLOW TIME, STEER TO AIM' : 'STEER TO AIM YOUR WRECK', W / 2, H / 2 + 42, { color: '#ffffff', align: 'center' });
+        rect(W / 2 - 40, H / 2 + 54, 80, 3, 'rgba(0, 0, 0, 0.5)');
+        rect(W / 2 - 40, H / 2 + 54, Math.round(80 * dr.left), 3, PALETTE.amber);
+      }
     }
 
     if (showFps) text(`${Math.round(fps)} FPS`, W / 2, touchLayout ? H - 10 : 5, { color: '#6a6090', align: 'center' });

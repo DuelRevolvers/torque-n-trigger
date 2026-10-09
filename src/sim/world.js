@@ -16,6 +16,7 @@ import { reactInput } from './contact.js';
 import { updateTakedowns } from './takedown.js';
 import { neutralInput } from './input.js';
 import { initEventCar, eventInput, updateEvent } from './event.js';
+import { updateDeathRoll } from './deathRoll.js';
 
 const NEUTRAL = neutralInput();
 
@@ -25,7 +26,9 @@ const SPAWN_HEIGHT = 0.9; // centre of mass above the road when (re)spawning
 // false (deathmatch elimination). world.events collects visual events for the
 // renderer; it is not part of the snapshot state.
 // poses: optional start pose per car. event: optional createEventState(...) result.
-export function createWorld({ track, cars, respawnOnWreck = true, poses = null, event = null }) {
+// humans: how many cars (the first ones) are people, who can Death Roll their
+// wrecks; slowmo: single player, where holding nitrous while wrecked slows time.
+export function createWorld({ track, cars, respawnOnWreck = true, poses = null, event = null, humans = 0, slowmo = false }) {
   const params = cars.map((c) => c.params);
   const state = {
     tick: 0,
@@ -38,12 +41,12 @@ export function createWorld({ track, cars, respawnOnWreck = true, poses = null, 
     state.event = event;
     state.cars.forEach((car) => initEventCar(car, event));
   }
-  return { track, params, state, respawnOnWreck, events: [] };
+  return { track, params, state, respawnOnWreck, humans, slowmo, events: [] };
 }
 
 // Advances the world one tick. `inputs[i]` is the InputFrame for car i.
 export function stepWorld(world, inputs) {
-  const { track, params, state } = world;
+  const { track, params, state, humans = 0 } = world;
   track.setTime?.(state.tick * SIM_DT); // moving arena parts follow the tick
   if (track.triggers) {
     // (Gates, and the gadgets the pads set running, follow their trigger pads.)
@@ -59,6 +62,7 @@ export function stepWorld(world, inputs) {
   for (let i = 0; i < state.cars.length; i++) {
     const car = state.cars[i];
     const input = effective[i];
+    if (car.wrecked && i < humans) updateDeathRoll(world, i, inputs[i] || NEUTRAL); // (aiming the wreck)
     updateMods(world, i);
     if (car.launchBoost > 0) car.mods.torque *= 1.3;
     stepCar(car, params[i], input, track, SIM_DT);
