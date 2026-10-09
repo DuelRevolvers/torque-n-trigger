@@ -63,6 +63,15 @@ test('last lap out: the blast is the eliminated car\'s takedown', () => {
   assert.ok(w.events.some((e) => e.type === 'takedown' && e.car === 3 && e.victim === 2));
 });
 
+test('last lap out: the blast wrecks a healthy car close by; one farther off only gets shoved', () => {
+  const w = race();
+  laps(w, [1, 1, 1, 0]);
+  run(w, 0);
+  assert.equal(w.state.cars[2].wrecked, true, `within ${LAST_LAP_OUT.blast.wreck} m: wrecked at full health`);
+  assert.equal(w.state.cars[1].wrecked, false, '20 m off: still racing');
+  assert.equal(w.state.cars[3].takedowns, 1);
+});
+
 test('last lap out: an eliminated car never respawns, and its wreck is cleared after 5 s', () => {
   const w = race();
   laps(w, [1, 1, 1, 0]);

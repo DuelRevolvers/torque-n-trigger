@@ -64,6 +64,11 @@ function eliminate(world, i) {
   // (A human's Death Roll counts the blast as its detonation: no second one.)
   if (car.deathRoll?.tick !== car.wreckTick) car.deathRoll = { tick: car.wreckTick, steered: false, slow: false, swing: 0, blown: false, over: false, fire: true };
   car.deathRoll.blown = true;
-  blast(world, i);
+  const B = LAST_LAP_OUT.blast;
+  world.state.cars.forEach((t, j) => {
+    if (j === i || t.wrecked || t.gone || t.out || t.invulnerable || t.spawnGuard > 0) return;
+    if (Math.hypot(t.pos.x - car.pos.x, t.pos.y - car.pos.y, t.pos.z - car.pos.z) <= B.wreck) wreck(world, j, i);
+  });
+  blast(world, i, B);
   world.events.push({ type: 'eliminated', car: i, lap: car.outLap });
 }
