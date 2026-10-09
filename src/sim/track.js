@@ -38,6 +38,11 @@ const MIN_RISE = 1;
 // (a top, a deck, a ramp's side) is a wall unless the car's lowest point (a
 // query's foot) is already up level with it: the way up is a ramp.
 export const STEP_UP = 0.25;
+// A wall or fence thinner than this is THIN_MIN thick to what hits it (the
+// body's edge points are no further apart), and pushes back to the side the
+// body's middle is on: a fast corner can't come out the far side.
+const THIN = 0.5;
+const THIN_MIN = 0.25;
 
 // Is a ramp's surface at (x, z) a wall for something whose lowest point is at
 // foot? Then how far into the ramp's footprint (p) and the way in (rx, rz),
@@ -358,11 +363,12 @@ class Track {
   // positions keep working, and a lateral scaled to the main wall distance.
   // y: the height asking; foot: the lowest point of what's asking (a wheel's
   // bottom, the body's lowest corner), for what it can stand on (STEP_UP).
-  query(x, z, hint = -1, y, foot = y) {
+  // from: the middle of the body asking (which side of a thin wall it's on).
+  query(x, z, hint = -1, y, foot = y, from) {
     const r = this.queryMain(x, z, hint);
     let best = this.branches ? this.queryBranches(x, z, r) : r;
     if (!this.closed && !best.onBranch && (r.index === 0 || r.index === this.count - 1)) best = this.endCap(best, x, z);
-    return this.obstacles || this.sprinklers || this.patches || this.flood || this.lockdown || this.ramps ? this.solidAt(x, z, y, best, foot) : best;
+    return this.obstacles || this.sprinklers || this.patches || this.flood || this.lockdown || this.ramps ? this.solidAt(x, z, y, best, foot, from) : best;
   }
 
   // An open track's ends (a sprint's start and finish): where the barrier
@@ -448,7 +454,7 @@ class Track {
   }
 
   // The lawns under a sprinkler are wet; an obstacle inside the walls is a wall.
-  solidAt(x, z, y, g, foot = y) {
+  solidAt(x, z, y, g, foot = y, from) {
     let out = g;
     if (this.patches && (g.surface === SURFACE.OFFROAD || g.offRoad)) {
       const p = this.patchAt(x, z);
@@ -495,14 +501,30 @@ class Track {
       const dz = Math.cos(o.yaw || 0);
       const u = (x - o.x) * dz - (z - o.z) * dx;
       const v = (x - o.x) * dx + (z - o.z) * dz;
-      const du = Math.abs(u) - o.hw;
-      const dv = Math.abs(v) - o.hd;
+      const hw = o.hw < THIN ? Math.max(o.hw, THIN_MIN) : o.hw;
+      const hd = o.hd < THIN ? Math.max(o.hd, THIN_MIN) : o.hd;
+      let du = Math.abs(u) - hw;
+      let dv = Math.abs(v) - hd;
+      // Into the obstacle, across whichever face is nearer.
+      let su = u < 0 ? 1 : -1;
+      let sv = v < 0 ? 1 : -1;
+      if (from && (hw < THIN || hd < THIN)) {
+        // A thin wall alongside the body's middle: the face on its side.
+        const fu = (from.x - o.x) * dz - (from.z - o.z) * dx;
+        const fv = (from.x - o.x) * dx + (from.z - o.z) * dz;
+        if (hw < THIN && Math.abs(fu) > hw && Math.abs(fv) <= hd && Math.abs(v) <= hd) {
+          su = -Math.sign(fu);
+          du = Math.sign(fu) * u - hw;
+          dv = -Infinity;
+        } else if (hd < THIN && Math.abs(fv) > hd && Math.abs(fu) <= hw && Math.abs(u) <= hw) {
+          sv = -Math.sign(fv);
+          dv = Math.sign(fv) * v - hd;
+          du = -Infinity;
+        }
+      }
       const p = -Math.max(du, dv);
       if (p <= pen) continue;
       pen = p;
-      // Into the obstacle, across whichever face is nearer.
-      const su = u < 0 ? 1 : -1;
-      const sv = v < 0 ? 1 : -1;
       hit = du > dv ? [dz * su, -dx * su] : [dx * sv, dz * sv];
     }
     if (stand !== null && stand > out.height) out = { ...out, height: stand, nx: 0, ny: 1, nz: 0, surface: SURFACE.ROAD };

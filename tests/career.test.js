@@ -7,6 +7,8 @@ import { createWorld, stepWorld, respawnCar } from '../src/sim/world.js';
 import { createEventState, gridPoses, standings } from '../src/sim/event.js';
 import { initAi, aiInput } from '../src/sim/ai.js';
 import { neutralInput } from '../src/sim/input.js';
+import { placeCar } from '../src/sim/vehicle.js';
+import { yawFromDirection } from '../src/sim/math.js';
 import { SIM_DT } from '../src/config.js';
 import { computeBuild } from '../src/parts/build.js';
 import { DRIVERS, buildDriver } from '../src/parts/drivers.js';
@@ -76,6 +78,56 @@ test('open routes: no invisible walls off the road, unless the event has barrier
   const walled = venueTrack(sprint.venue, { ...sprint, barriers: true });
   assert.equal(walled.reach, null);
   assert.ok(Math.abs(walled.query(track.x[i] + track.rx[i] * 25, track.z[i] + track.rz[i] * 25, i).lateral) > walled.wallDist);
+});
+
+test('open routes: a car driven into a fence stays on its side of it', () => {
+  const dash = districtEvents(DISTRICTS[0]).find((e) => e.name === 'Dockside Dash');
+  const { world, track } = aiEvent(dash, 1);
+  world.state.event.phase = 'racing';
+  const car = world.state.cars[0];
+  // Drives at it from (px, pz) along dir at 30 m/s for 1.5 s: the body's
+  // middle never ends up alongside the fence within 0.5 m of it.
+  const drive = (o, ax, az, nx, nz, y, px, pz, dir) => {
+    placeCar(car, world.params[0], { pos: { x: px, y: y + 0.6, z: pz }, yaw: yawFromDirection(dir[0], dir[1]) });
+    car.vel = { x: dir[0] * 30, y: 0, z: dir[1] * 30 };
+    for (let t = 0, last = { ...car.pos }; t < 90; t++) {
+      run(world, 1 / 60, { throttle: 1 });
+      if (Math.hypot(car.pos.x - last.x, car.pos.z - last.z) > 3) break; // (put back on the road)
+      last = { ...car.pos };
+      const side = (car.pos.x - o.x) * nx + (car.pos.z - o.z) * nz;
+      const along = (car.pos.x - o.x) * ax + (car.pos.z - o.z) * az;
+      if (Math.abs(along) < Math.max(o.hw, o.hd)) assert.ok(Math.abs(side) > 0.5, `into the fence at ${o.x.toFixed(1)}, ${o.z.toFixed(1)} (${side.toFixed(2)} m)`);
+    }
+  };
+  const clear = (x, z, y) => !track.blockedAt(x, z, y, 1.2) && Math.abs(track.query(x, z).height - y) < 0.3;
+  let sides = 0;
+  let ends = 0;
+  for (const o of track.obstacles) {
+    if (Math.min(o.hw, o.hd) > 0.2 || Math.max(o.hw, o.hd) < 2 || o.h < 2) continue;
+    const L = Math.max(o.hw, o.hd);
+    const yaw = o.yaw || 0;
+    const [ax, az] = o.hd >= o.hw ? [Math.sin(yaw), Math.cos(yaw)] : [Math.cos(yaw), -Math.sin(yaw)];
+    const [nx, nz] = [az, -ax];
+    const y = track.query(o.x, o.z).height;
+    // Side on, at 30 and 70 degrees, with open ground 8 m either side.
+    if (sides < 3 && [-8, -4, 4, 8].every((d) => clear(o.x + nx * d, o.z + nz * d, y))) {
+      for (const lean of [0.5, 1.2]) {
+        const dir = [-nx * Math.sin(lean) + ax * Math.cos(lean), -nz * Math.sin(lean) + az * Math.cos(lean)];
+        drive(o, ax, az, nx, nz, y, o.x + nx * 7 - dir[0] * 4, o.z + nz * 7 - dir[1] * 4, dir);
+      }
+      sides++;
+    }
+    // End on, where the fence stops (a gap, a corner): straight at its end, a little off its line.
+    for (const sg of [-1, 1]) {
+      if (ends >= 3 || ![2, 5, 8, 11].every((d) => clear(o.x + ax * sg * (L + d), o.z + az * sg * (L + d), y))) continue;
+      for (const off of [0.2, 0.5, 0.8]) {
+        drive(o, ax, az, nx, nz, y, o.x + ax * sg * (L + 9) + nx * off, o.z + az * sg * (L + 9) + nz * off, [-ax * sg, -az * sg]);
+      }
+      ends++;
+    }
+    if (sides >= 3 && ends >= 3) break;
+  }
+  assert.ok(sides > 0 && ends > 0, 'found fences to drive into');
 });
 
 test('districts: long sprints, and shortcuts through side streets and special lots', () => {

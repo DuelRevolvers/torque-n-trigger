@@ -479,22 +479,29 @@ function resolveBodyContacts(car, p, track) {
     for (const k in foot) foot[k] += groundN.y * groundPen;
   }
 
+  // Round the body's edge, not just its corners, where things stand off the
+  // road: a thin fence can't slip in between them (sim/track.js THIN_MIN).
+  const edge = [];
+  const across = track.obstacles ? [-1, -0.6, -0.2, 0.2, 0.6, 1] : [-1, 1];
+  for (const sz of [-1, 1]) for (const sx of across) edge.push([sx, sz]);
+  if (track.obstacles) for (const sx of [-1, 1]) for (const sz of [-0.5, 0, 0.5]) edge.push([sx, sz]);
+  const from = { x: car.pos.x, z: car.pos.z };
   let wallPen = 0;
   let wallN = null;
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      const r = quatRotate(car.quat, v3(sx * hx, offsetY, sz * hz));
-      const pt = add(car.pos, r);
-      const g = track.query(pt.x, pt.z, car.trackIndex, pt.y, foot[sx * 2 + sz]);
-      const excess = Math.abs(g.lateral) - track.wallDist;
-      if (excess > 0) {
-        const side = -Math.sign(g.lateral);
-        const n = v3(g.rx * side, 0, g.rz * side);
-        car.impact = Math.max(car.impact || 0, -applyContactImpulse(car, p, r, n, 0.25, 0.3));
-        if (excess > wallPen) {
-          wallPen = excess;
-          wallN = n;
-        }
+  for (const [sx, sz] of edge) {
+    const r = quatRotate(car.quat, v3(sx * hx, offsetY, sz * hz));
+    const pt = add(car.pos, r);
+    const k = sx < 0 ? -2 : 2;
+    const f = sz < 0 ? foot[k - 1] : sz > 0 ? foot[k + 1] : Math.min(foot[k - 1], foot[k + 1]);
+    const g = track.query(pt.x, pt.z, car.trackIndex, pt.y, f, from);
+    const excess = Math.abs(g.lateral) - track.wallDist;
+    if (excess > 0) {
+      const side = -Math.sign(g.lateral);
+      const n = v3(g.rx * side, 0, g.rz * side);
+      car.impact = Math.max(car.impact || 0, -applyContactImpulse(car, p, r, n, 0.25, 0.3));
+      if (excess > wallPen) {
+        wallPen = excess;
+        wallN = n;
       }
     }
   }
