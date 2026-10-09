@@ -18,6 +18,7 @@ import { neutralInput } from './input.js';
 import { initEventCar, eventInput, updateEvent } from './event.js';
 import { updateDeathRoll } from './deathRoll.js';
 import { updateRampage } from './rampage.js';
+import { updateLastLapOut } from './lastLapOut.js';
 import { initTraffic, stepTraffic, clearTraffic } from './traffic.js';
 
 const NEUTRAL = neutralInput();
@@ -65,6 +66,7 @@ export function stepWorld(world, inputs) {
   for (let i = 0; i < state.cars.length; i++) {
     const car = state.cars[i];
     const input = effective[i];
+    if (car.gone) continue; // (Last Lap Out: a cleared wreck)
     if (car.wrecked && i < humans) updateDeathRoll(world, i, inputs[i] || NEUTRAL); // (aiming the wreck)
     updateMods(world, i);
     if (car.launchBoost > 0) car.mods.torque *= 1.3;
@@ -85,6 +87,7 @@ export function stepWorld(world, inputs) {
   if (state.event) updateEvent(world, SIM_DT);
   updateTakedowns(world, wreckPhysical);
   if (state.event?.mode === 'rampage') updateRampage(world, SIM_DT, respawnCar);
+  if (state.event?.mode === 'lastLapOut') updateLastLapOut(world, SIM_DT);
   state.tick++;
 }
 

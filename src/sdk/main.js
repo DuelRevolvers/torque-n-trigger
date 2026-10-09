@@ -1704,7 +1704,7 @@ function renderEvents() {
   const panel = $('events-panel');
   if (!session || (tool !== 'events' && tool !== 'arena')) return;
   const list = allEvents();
-  const row = (e) => `<div class="evrow${e.key === evKey ? ' on' : ''}" data-key="${esc(e.key)}"><span>${esc(e.name)}</span><i>${e.key === 'boss' ? 'boss' : TYPES[e.mode === 'rampage' ? 'rampage' : e.type] || e.type}${e.rival ? ', rival' : ''}</i></div>`;
+  const row = (e) => `<div class="evrow${e.key === evKey ? ' on' : ''}" data-key="${esc(e.key)}"><span>${esc(e.name)}</span><i>${e.key === 'boss' ? 'boss' : TYPES[e.mode === 'rampage' || e.mode === 'lastLapOut' ? e.mode : e.type] || e.type}${e.rival ? ', rival' : ''}</i></div>`;
   $('events-list').innerHTML = `<h4>This district's events</h4>${list.map(row).join('') || '<p class="note">None yet.</p>'}
     <h4>New event</h4><div class="toolgrid">${Object.entries(TYPES).map(([t, n]) => `<button data-new="${t}">+ ${n}</button>`).join('')}</div>`;
   let html = evDraft ? '' : '<h3>Events</h3><p class="note">Pick an event on the left to edit it here, or make a new one.</p>';
@@ -1715,12 +1715,13 @@ function renderEvents() {
     const RANGE = { 'ev-cars': [2, 8, ''], 'ev-purse': [0, 20000, ' $'], 'ev-laps': [1, 10, ''], 'ev-finish': [100, 2000, ' m'], 'ev-time': [30, 600, ' s'] };
     const field = (id, label, value, type = 'number', step = 1) => (type === 'number' && RANGE[id] ? sliderPair(id, label, Math.min(RANGE[id][0], Number(value)), Math.max(RANGE[id][1], Number(value)), step, RANGE[id][2], value) : `<label for="${id}">${label}</label><input id="${id}" type="${type}" step="${step}" value="${esc(value ?? '')}" />`);
     html += `
-      <h3>${evKey && savedEvent(evKey) ? 'Editing' : 'New'}: ${esc(TYPES[d.mode === 'rampage' ? 'rampage' : d.type] || d.type)}</h3>
+      <h3>${evKey && savedEvent(evKey) ? 'Editing' : 'New'}: ${esc(TYPES[d.mode === 'rampage' || d.mode === 'lastLapOut' ? d.mode : d.type] || d.type)}</h3>
       <div class="grid">
         ${field('ev-name', 'name', d.name, 'text')}
         ${field('ev-cars', 'cars', d.cars)}
         ${CREATOR ? '' : field('ev-purse', 'purse ($)', d.purse, 'number', 50)}
-        ${d.type === 'circuit' && d.mode !== 'rampage' ? field('ev-laps', 'laps', d.laps) : ''}
+        ${d.type === 'circuit' && !d.mode ? field('ev-laps', 'laps', d.laps) : ''}
+        ${d.mode === 'lastLapOut' ? `<label for="ev-laps">laps (cars - 1)</label><input id="ev-laps" type="number" value="${d.cars - 1}" disabled />` : ''}
         ${d.mode === 'rampage' ? field('ev-time', 'time (s)', d.timeLimit, 'number', 10) + field('ev-targets', 'targets (bronze, silver, gold)', (d.targets || []).join(', '), 'text') : ''}
         ${d.type === 'drag' ? field('ev-finish', 'length (m)', d.finishS ?? 414, 'number', 10) : ''}
         ${d.type === 'arena' ? `<label for="ev-mode">mode</label><select id="ev-mode">${Object.entries(MODES).map(([k, n]) => `<option value="${k}"${d.mode === k ? ' selected' : ''}>${n}</option>`).join('')}</select>${field('ev-time', 'time (s)', d.timeLimit, 'number', 10)}<label for="ev-site">ground</label><select id="ev-site">${arenaSites(session).map((a) => `<option value="${a.site}"${r.site === a.site ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
@@ -1790,7 +1791,8 @@ function readEvent() {
     else delete d.barrierStyle;
   }
   d.purse = Math.max(0, Math.round(num('ev-purse', d.purse)));
-  if (d.type === 'circuit' && d.mode !== 'rampage') d.laps = Math.max(1, Math.round(num('ev-laps', d.laps)));
+  if (d.type === 'circuit' && !d.mode) d.laps = Math.max(1, Math.round(num('ev-laps', d.laps)));
+  if (d.mode === 'lastLapOut') d.laps = d.cars - 1; // (always one lap for each car but the winner)
   if (d.mode === 'rampage') {
     d.timeLimit = Math.max(30, Math.round(num('ev-time', d.timeLimit)));
     const t = $('ev-targets').value.split(/[\s,/]+/).map(Number).filter((v) => v > 0).slice(0, 3).sort((a, b) => a - b);

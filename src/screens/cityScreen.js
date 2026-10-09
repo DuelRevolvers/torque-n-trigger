@@ -13,9 +13,9 @@ import { listMaps, customEvents } from '../content/library.js';
 
 const MAP_W = 400;
 const MAP_H = 300;
-const TYPE_COLOR = { free: '#ffffff', circuit: '#05d9e8', sprint: '#ff2a6d', arena: '#ffb000', drag: '#39ff14', rampage: '#ff3c3c' };
-const TYPE_LABEL = { free: 'FREE DRIVE', sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG', rampage: 'RAMPAGE' };
-const kindOf = (e) => (e.mode === 'rampage' ? 'rampage' : e.type); // (a Rampage is a circuit mode)
+const TYPE_COLOR = { free: '#ffffff', circuit: '#05d9e8', sprint: '#ff2a6d', arena: '#ffb000', drag: '#39ff14', rampage: '#ff3c3c', lastLapOut: '#ff8a00' };
+const TYPE_LABEL = { free: 'FREE DRIVE', sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG', rampage: 'RAMPAGE', lastLapOut: 'LAST LAP OUT' };
+const kindOf = (e) => (e.mode === 'rampage' || e.mode === 'lastLapOut' ? e.mode : e.type); // (Rampage and Last Lap Out are circuit modes)
 const HOME = { x: 19.5, y: 50 }; // map coords (0-100)
 // On the map but not raced yet (designs in docs/districts). Lobed like its cul-de-sacs.
 const UPCOMING = []; // districts on the map but not in the game yet
@@ -491,7 +491,8 @@ export class CityScreen {
           }
           ctx.setLineDash([]);
         }
-        const pin = e.mode === 'rampage' ? pts[Math.floor(pts.length / 2)] : pts[0]; // (a Rampage shares its circuit's start: pinned halfway round)
+        // (Rampage and Last Lap Out share their circuit's start: pinned halfway and a quarter of the way round.)
+        const pin = e.mode === 'rampage' ? pts[Math.floor(pts.length / 2)] : e.mode === 'lastLapOut' ? pts[Math.floor(pts.length / 4)] : pts[0];
         pins.push([at(pin[0], pin[1]), TYPE_COLOR[kindOf(e)], k + 1]);
       });
       const grid = d.city.grid;

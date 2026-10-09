@@ -117,6 +117,6 @@ test('corporate spire: sixth and last, Static the rival, Nova the champion', () 
   assert.equal(DISTRICTS.indexOf(spire), 5);
   assert.equal(event('Final Run').rivalDriver, 'static');
   assert.equal(event('Nova').driver, 'nova');
-  assert.equal(districtEvents(spire).length, 7); // (with its Rampage, phase 7a)
+  assert.equal(districtEvents(spire).length, 8); // (with its Rampage and Last Lap Out, phase 7)
   assert.deepEqual(event('Boardroom').modifiers, ['weaponsLate']);
 });

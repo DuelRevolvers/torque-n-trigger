@@ -197,7 +197,7 @@ export class Hud {
     }
     const warn = eventInfo?.clockWarn && Math.floor(performance.now() / 350) % 2 === 0; // (Rampage: the last 10 s)
     text(formatTime(eventInfo ? eventInfo.timeTicks : current), W - 6, ty, { color: warn ? PALETTE.pink : '#ffffff', align: 'right' });
-    text(eventInfo?.sub ?? `BEST ${formatTime(r.bestLap)}`, W - 6, ty + 10, { color: PALETTE.amber, align: 'right' });
+    text(eventInfo?.sub ?? `BEST ${formatTime(r.bestLap)}`, W - 6, ty + 10, { color: eventInfo?.subWarn ? PALETTE.pink : PALETTE.amber, align: 'right' }); // (red: Last Lap Out's drop zone)
     if (eventInfo?.chassis != null) {
       // Rampage: the chassis meter (red once a wreck would total the car).
       text('CHASSIS', W - 6, ty + 20, { color: LABEL, align: 'right' });

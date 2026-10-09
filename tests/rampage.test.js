@@ -134,6 +134,6 @@ test('rampage: one per district on its circuit route, counted by the boss gate',
     assert.ok(r && r.type === 'circuit' && r.targets.length === 3 && r.timeLimit === 180, d.id);
     assert.deepEqual(r.route, c.route);
     assert.equal(r.purse, c.purse);
-    assert.equal(bossProgress({ completed: [] }, d).need, Math.ceil(d.events.length * 0.75));
+    assert.equal(bossProgress({ completed: [] }, d).need, Math.round(d.events.length * 0.75));
   }
 });

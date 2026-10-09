@@ -42,18 +42,25 @@ export function canDetonate(world, i) {
   return inWindow(world, i) && !(car.deathRoll?.tick === car.wreckTick && car.deathRoll.blown) && car.nitro.charges > 0;
 }
 
-// Blows car i's wreck up: nearby cars are thrown clear and take blast damage
-// (a wreck from it is a Death Roll takedown), and the wreck jumps.
+// Detonate: the blast, for a nitrous charge.
 function detonate(world, i) {
   const car = world.state.cars[i];
-  const B = DEATH_ROLL.blast;
   car.deathRoll.blown = true;
-  car.nitro.charges = Math.max(0, car.nitro.charges - B.cost);
+  car.nitro.charges = Math.max(0, car.nitro.charges - DEATH_ROLL.blast.cost);
+  blast(world, i);
+}
+
+// Blows car i's wreck up: nearby cars are thrown clear and take blast damage
+// (a wreck from it is car i's takedown), and the wreck jumps. (Detonate, and a
+// Last Lap Out elimination.)
+export function blast(world, i) {
+  const car = world.state.cars[i];
+  const B = DEATH_ROLL.blast;
   world.state.cars.forEach((t, j) => {
     const dx = t.pos.x - car.pos.x;
     const dz = t.pos.z - car.pos.z;
     const d = Math.hypot(dx, dz);
-    if (j === i || d > B.radius || d < 1e-3) return;
+    if (j === i || t.gone || d > B.radius || d < 1e-3) return;
     const k = B.push * (1 - d / B.radius);
     t.vel = { x: t.vel.x + (dx / d) * k, y: t.vel.y + k * 0.4, z: t.vel.z + (dz / d) * k };
   });

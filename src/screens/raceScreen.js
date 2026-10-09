@@ -657,6 +657,7 @@ export class RaceScreen {
     const car = state.cars[p];
     const alive = state.cars.filter((c) => !c.wrecked).length;
     const rampage = ev.mode === 'rampage';
+    const llo = ev.mode === 'lastLapOut';
     const title = rampage ? 'RAMPAGE' : {
       free: `LAP ${Math.max(1, car.race.lap)}`,
       circuit: `LAP ${Math.min(Math.max(1, car.race.lap), ev.laps)}/${ev.laps}`,
@@ -678,7 +679,14 @@ export class RaceScreen {
       const next = ev.targets.find((t) => t > n);
       sub = next ? `${GRADES[gradeOf(ev.targets, n) + 1]} AT ${next}` : 'GOLD!';
     }
+    const dropZone = llo && p === ev.dropZone && !car.out;
+    if (llo) {
+      // Cars still in; "DROP ZONE" while you're last on the road.
+      const left = state.cars.filter((c) => !c.out).length;
+      sub = `${dropZone ? 'DROP ZONE - ' : ''}${left} LEFT`;
+    }
     const place = ev.finished.indexOf(p) + 1;
+    const outPlace = llo && car.out ? state.cars.length - ev.eliminated.indexOf(p) : 0;
     return {
       title,
       sub: sub || undefined,
@@ -688,13 +696,14 @@ export class RaceScreen {
       countdown: ev.phase === 'countdown' ? Math.ceil(ev.timer) : null,
       go: ev.phase === 'racing' && ev.time < 0.8,
       manual: car.manual,
-      finishedText: place ? `FINISHED ${ordinal(place)}` : car.wrecked && ev.mode === 'lastStanding' ? 'ELIMINATED' : rampage && car.out ? 'TOTALED' : rampage && ev.done ? 'TIME UP' : null,
+      finishedText: llo && place ? 'SURVIVED' : outPlace ? `ELIMINATED ${ordinal(outPlace)}` : place ? `FINISHED ${ordinal(place)}` : car.wrecked && ev.mode === 'lastStanding' ? 'ELIMINATED' : rampage && car.out ? 'TOTALED' : rampage && ev.done ? 'TIME UP' : null,
       inPit: car.inPit,
       // Rampage: the chassis meter, red under the totaled line; the clock blinks for its last 10 s.
       chassis: rampage ? car.chassis : null,
       chassisLow: rampage && car.chassis < RAMPAGE.totaled,
       clockWarn: rampage && ev.phase === 'racing' && ev.timeLimit - ev.time < 10,
       totaled: rampage && car.out,
+      subWarn: dropZone,
       wrongWay: this.wrongWays[p] > 1,
       popups: this.popupsBy[p],
       deathRoll: deathRollLeft(this.world, p) > 0
@@ -751,6 +760,9 @@ export class RaceScreen {
         if (e.type === 'takedown' && e.victim === p && e.car !== p) this.popup(`WRECKED BY ${this.names[e.car]}`, PALETTE.pink, p);
         if (e.type === 'grade' && e.car === p) this.popup(`${GRADES[e.grade]}!`, PALETTE.amber, p); // (Rampage targets)
         if (e.type === 'totaled' && e.car === p) this.popup('TOTALED!', PALETTE.pink, p);
+        // (Last Lap Out.)
+        if (e.type === 'eliminated') this.popup(e.car === p ? 'ELIMINATED!' : `${this.names[e.car]} ELIMINATED`, e.car === p ? PALETTE.pink : PALETTE.cyan, p);
+        if (e.type === 'finish' && e.car === p && this.world.state.event.mode === 'lastLapOut') this.popup('SURVIVED!', PALETTE.amber, p);
         // A side slam or T-bone dealt (once per 1.5 s per car hit, so trading paint doesn't fill the stack).
         if (e.type === 'contact' && e.attacker === p && (e.label === 'slam' || e.label === 'huge') && e.geo !== 'shunt' && e.geo !== 'headOn') {
           const key = `${p}:${e.victim}`;
@@ -829,7 +841,7 @@ export class RaceScreen {
     if (this.track?.ceilingAt) this.hemi.intensity += ((covered ? this.hemiBase * 0.45 : this.hemiBase) - this.hemi.intensity) * Math.min(1, dt * 3);
 
     // Results a moment after the player finishes, is eliminated, or the event ends.
-    const done = (p) => ev.finishTime[p] !== undefined || (ev.mode === 'lastStanding' && state.cars[p].wrecked) || (ev.mode === 'rampage' && state.cars[p].out);
+    const done = (p) => ev.finishTime[p] !== undefined || (ev.mode === 'lastStanding' && state.cars[p].wrecked) || ((ev.mode === 'rampage' || ev.mode === 'lastLapOut') && state.cars[p].out);
     const playerDone = ev.done || this.viewers.every(done);
     if (playerDone && this.resultsAt === null) this.resultsAt = this.time + 2.5;
     if (this.resultsAt !== null && this.time >= this.resultsAt && !this.resultsShown) this.showResults();
@@ -911,8 +923,8 @@ export class RaceScreen {
       // in a district counts, not the players' own maps.
       if (this.def.type !== 'free' && this.def.district && !this.def.custom) {
         const second = order[1];
-        const margin = ev.type !== 'arena' && ev.mode !== 'rampage' && place === 1 ? (second?.finished ? second.time - order[0].time : 30) : 0;
-        recordFeats(career, { type: ev.mode === 'rampage' ? 'rampage' : this.def.type, district: this.def.district, place, takedowns: player.takedowns || 0, wrecks: player.wrecks || 0, margin, revenges: player.contact.revenges, signatures: player.contact.signatures.length, rams: player.contact.rams, deathRolls: player.contact.deathRolls || 0 });
+        const margin = ev.type !== 'arena' && ev.mode !== 'rampage' && ev.mode !== 'lastLapOut' && place === 1 ? (second?.finished ? second.time - order[0].time : 30) : 0;
+        recordFeats(career, { type: ev.mode === 'rampage' || ev.mode === 'lastLapOut' ? ev.mode : this.def.type, district: this.def.district, place, takedowns: player.takedowns || 0, wrecks: player.wrecks || 0, margin, revenges: player.contact.revenges, signatures: player.contact.signatures.length, rams: player.contact.rams, deathRolls: player.contact.deathRolls || 0 });
       }
       // Signature spots: each one counts once per career (B3's collectibles).
       if (this.def.type !== 'free') {
@@ -944,6 +956,7 @@ export class RaceScreen {
     const rows = order.map((r, k) => {
       let result;
       if (ev.type === 'arena' || ev.mode === 'rampage') result = `KO ${r.takedowns}${ev.mode === 'lastStanding' ? (r.eliminated === -1 ? ' &middot; SURVIVED' : ' &middot; OUT') : ''}`;
+      else if (ev.mode === 'lastLapOut') result = lloResult(state, r);
       else result = r.finished ? formatTime(Math.round(r.time * 60)) : 'DNF';
       return `<tr class="${r.id === 0 ? 'me' : ''}"><td>${k + 1}</td><td>${esc(this.names[r.id])}</td><td>${result}</td></tr>`;
     }).join('');
@@ -954,6 +967,7 @@ export class RaceScreen {
     this.app.ui.innerHTML = `<div class="screen results"><div class="results-panel">
       <h1>${esc(this.def.name)}</h1>
       <h2>${ev.mode === 'rampage' ? GRADES[grade] || 'NO TARGET' : `${ordinal(place)} place`}</h2>
+      ${ev.mode === 'lastLapOut' ? `<div class="boss-banner">LAST LAP OUT: ${ordinal(place).toUpperCase()} &middot; ${player.out ? `OUT ON LAP ${player.outLap}` : 'SURVIVED'}</div>` : ''}
       ${ev.mode === 'rampage' ? `<div class="boss-banner">RAMPAGE: ${player.takedowns || 0} TAKEDOWNS &middot; ${grade ? `${GRADES[grade]} (${ev.targets[grade - 1]})` : `BRONZE NEEDED ${ev.targets[0]}`} &middot; ${player.out ? 'TOTALED' : 'TIME UP'}</div>` : ''}
       ${banner}
       ${newSpots.length ? `<div class="boss-banner">SIGNATURE SPOT${newSpots.length > 1 ? 'S' : ''} FOUND: ${newSpots.map((n) => esc(n.toUpperCase())).join(', ')} (${career.signatures.length} found)</div>` : ''}
@@ -977,6 +991,7 @@ export class RaceScreen {
     const rows = order.map((r, k) => {
       const result = ev.type === 'arena'
         ? `KO ${r.takedowns}${ev.mode === 'lastStanding' ? (r.eliminated === -1 ? ' &middot; SURVIVED' : ' &middot; OUT') : ''}`
+        : ev.mode === 'lastLapOut' ? lloResult(this.world.state, r)
         : r.finished ? formatTime(Math.round(r.time * 60)) : 'DNF';
       const human = r.id < this.humans;
       const name = human ? `${players[r.id].name} &middot; ${esc(players[r.id].carName)}` : `${esc(this.names[r.id])} <span class="hint">BOT</span>`;
@@ -1049,4 +1064,10 @@ function pitZoneMesh(track, pit, tex) {
   const m = new THREE.Mesh(g, additiveMaterial({ color: '#05d9e8', opacity: 0.18 }));
   m.renderOrder = 1;
   return m;
+}
+
+// A Last Lap Out results cell: still in, or the lap the car went out on.
+function lloResult(state, r) {
+  if (r.eliminated !== -1) return `OUT LAP ${state.cars[r.id].outLap}`;
+  return r.finished ? 'SURVIVED' : 'STILL IN';
 }

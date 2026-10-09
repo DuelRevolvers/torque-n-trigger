@@ -232,7 +232,7 @@ function drive(world, tr, cfg, dt) {
     }
     for (const o of tr.loose) if (Math.abs(o.lat - c.lat) < 2.2) consider(dir * rel(track, o.s, c.s), T.halfLength[o.body], along(o.vx, o.vz));
     state.cars.forEach((r, j) => {
-      if (r.wrecked && Math.abs(r.lateral - c.lat) < 2.2) consider(dir * rel(track, r.trackS, c.s), params[j].body.length / 2, along(r.vel.x, r.vel.z));
+      if (r.wrecked && !r.gone && Math.abs(r.lateral - c.lat) < 2.2) consider(dir * rel(track, r.trackS, c.s), params[j].body.length / 2, along(r.vel.x, r.vel.z));
     });
     // A racer or a wreck about to be hit (B3 §5c; closing speed, T&T's own).
     let panic = false;
