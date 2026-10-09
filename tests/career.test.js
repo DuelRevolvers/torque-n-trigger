@@ -61,6 +61,23 @@ test('AI can race a generated circuit and a generated sprint to the finish', () 
   }
 });
 
+test('open routes: no invisible walls off the road, unless the event has barriers', () => {
+  const rust = districtEvents(DISTRICTS[0]);
+  const sprint = rust.find((e) => e.type === 'sprint' && !e.rival);
+  const track = venueTrack(sprint.venue, sprint);
+  assert.ok(track.reach, 'a Rustline sprint is open');
+  const i = track.reach.r.findIndex((r) => r >= 30);
+  assert.ok(i >= 0);
+  // 25 m out: open ground; past the reach: the wall.
+  const at = (lat) => track.query(track.x[i] + track.rx[i] * lat, track.z[i] + track.rz[i] * lat, i);
+  const pen = (lat) => Math.abs(at(lat).lateral) - track.wallDist;
+  if (!track.blockedAt(track.x[i] + track.rx[i] * 25, track.z[i] + track.rz[i] * 25, track.y[i])) assert.ok(pen(25) <= 0);
+  assert.ok(pen(track.reach.r[i] + 1) > 0);
+  const walled = venueTrack(sprint.venue, { ...sprint, barriers: true });
+  assert.equal(walled.reach, null);
+  assert.ok(Math.abs(walled.query(track.x[i] + track.rx[i] * 25, track.z[i] + track.rz[i] * 25, i).lateral) > walled.wallDist);
+});
+
 test('districts: long sprints, and shortcuts through side streets and special lots', () => {
   const kinds = new Set();
   for (const d of DISTRICTS) {

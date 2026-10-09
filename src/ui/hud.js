@@ -229,14 +229,14 @@ export class Hud {
     seg7(String(Math.min(999, speed)), gx - 11, ry + 2, { w: 7, h: 11, t: 2, gap: 1, slots: 3 });
     if (!touchLayout) text(units === 'mph' ? 'MPH' : 'KM/H', gx + 0.5, ry + 14, { color: AMBER[0], align: 'center', shadow: null });
 
-    // Boost: a capsule of LED segments over a red reserve cell, draining while a
+    // Nitrous: a capsule of LED segments over a red reserve cell, draining while a
     // charge burns (its top segment flickers), and beside it a cell per charge.
     const n = car.nitro;
     const bw = 12;
     const bh = touchLayout ? 46 : 64;
     const bx = gx + R + 8;
     const by = gy + R - bh + 2;
-    if (!touchLayout) text('BOOST', bx + bw + 10, by - 10, { color: LABEL, align: 'right' });
+    if (!touchLayout) text('NITROUS', bx + bw + 10, by - 10, { color: LABEL, align: 'right' });
     panel(bx, by, bw, bh, WELL, METAL_HI, METAL_LO, 3);
     outline(bx + 1, by + 1, bw - 2, bh - 2, METAL_LO, METAL, 2);
     const charges = params.nitro.charges;

@@ -24,6 +24,7 @@ import * as G from './geom2d.js';
 import { planTrack, planRoam } from './planRoute.js';
 import { isSpot, spotEnds, placedSolids, RUN_UP, RUN_OFF } from './routePoints.js';
 import { clearRoute } from './raceClear.js';
+import { openRoute } from './openRoute.js';
 
 export const STREET = { halfWidth: 8, curbWidth: 1.2, shoulderWidth: 4 };
 export const SETBACK = STREET.halfWidth + STREET.curbWidth + STREET.shoulderWidth; // centreline to lot edge
@@ -1396,6 +1397,21 @@ function alleyNarrows(map, track, list) {
   return out;
 }
 
+// The container tunnels' roofs (their undersides), for the camera: null if none.
+function tunnelCeiling(map) {
+  const list = map.sites.flatMap((s) => s.tunnels || []);
+  if (!list.length) return null;
+  return (x, z, y) => {
+    for (const t of list) {
+      const [a, c] = t.alongX ? [x - t.x, z - t.z] : [z - t.z, x - t.x];
+      if (Math.abs(a) > t.len / 2 + 0.5 || Math.abs(c) > TUNNEL_HALF + 0.3) continue;
+      const top = (map.authored ? 0 : map.heightAt(t.x, t.z)) + 2.5;
+      if (y < top) return top;
+    }
+    return null;
+  };
+}
+
 // Narrow sections of a route: the container tunnels it drives through.
 function routeNarrows(map, track) {
   const out = [];
@@ -1512,7 +1528,18 @@ function authoredRoute(map, style, route) {
 export function cityVenue(style, route) {
   const venue = cityVenueOf(style, route);
   // A sprint or circuit runs on clear road (sim/raceClear.js).
-  if ((route.kind === 'sprint' || route.kind === 'circuit') && venue.kind === 'track' && !venue.def.cleared) clearRoute(districtMap(style), venue.def);
+  if ((route.kind === 'sprint' || route.kind === 'circuit') && venue.kind === 'track' && !venue.def.cleared) {
+    const map = districtMap(style);
+    clearRoute(map, venue.def);
+    // (No invisible walls off the road, sim/openRoute.js; not where the
+    // district's own edges are the walls: Maple Hollow's property lines, the
+    // rooftops, the Undercity, the Spire.)
+    const P = style.plan;
+    if (!style.rooftop && !(P && (P.suburb || P.spire || map.roof || map.under))) {
+      openRoute(map, venue.def, map.plan ? planRoam(map) : map.authored ? authoredRoam(map) : cityRoam(map));
+    }
+    if (!venue.def.ceilingAt) venue.def.ceilingAt = tunnelCeiling(map);
+  }
   const gadgets = style.edits?.gadgets;
   const atmosphere = style.edits?.atmosphere;
   if (!gadgets?.length && !atmosphere) return venue;

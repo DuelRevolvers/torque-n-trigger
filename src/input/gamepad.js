@@ -8,6 +8,10 @@ const DEADZONE = 0.15;
 // Standard mapping button indices.
 const BTN = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, BACK: 8, START: 9, R3: 11, LEFT: 14, RIGHT: 15 };
 
+const NONE = { pressed: false, value: 0 };
+// Driving input not read for this long (a menu, the pause menu): it's starting again.
+const RESUME_GAP = 150; // ms
+
 const dead = (v) => (Math.abs(v) < DEADZONE ? 0 : Math.sign(v) * ((Math.abs(v) - DEADZONE) / (1 - DEADZONE)));
 
 export class Gamepads {
@@ -15,6 +19,8 @@ export class Gamepads {
     this.settings = settings;
     this.prevStart = false;
     this.active = false;
+    this.held = new Map(); // pad index -> buttons held when driving started again
+    this.lastApply = 0;
   }
 
   // Polled every render frame (even while paused). True once per Start press.
@@ -35,10 +41,22 @@ export class Gamepads {
   // only: a connected-pad number for one split-screen seat; null merges every pad.
   apply(frame, only = null) {
     const pads = this.connected();
+    // Buttons still held as driving starts again (B closing the pause menu, A on
+    // START) count for nothing until they're let go: no nitro, fire or throttle.
+    const now = performance.now();
+    if (now - this.lastApply > RESUME_GAP) this.held = new Map(pads.map((pad) => [pad.index, new Set(pad.buttons.flatMap((x, i) => (x.pressed ? [i] : [])))]));
+    this.lastApply = now;
     if (only === null) this.active = false;
     for (const [n, pad] of pads.entries()) {
       if (only !== null && n !== only) continue;
-      const b = (i) => pad.buttons[i] || { pressed: false, value: 0 };
+      const held = this.held.get(pad.index);
+      const b = (i) => {
+        const x = pad.buttons[i] || NONE;
+        if (!held?.has(i)) return x;
+        if (x.pressed) return NONE;
+        held.delete(i);
+        return x;
+      };
       let steer = dead(pad.axes[0] || 0);
       if (b(BTN.LEFT).pressed) steer = -1;
       if (b(BTN.RIGHT).pressed) steer = 1;

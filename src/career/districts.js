@@ -163,6 +163,7 @@ for (const d of DISTRICTS) {
     desc: `The ${c.name} with no laps and no finish: three minutes to take out as many rivals as you can. They keep coming, and every slam and wreck wears your chassis down.`,
     route: structuredClone(c.route), cars: c.cars, purse: c.purse, timeLimit: 180, targets,
     ...(c.barrierStyle ? { barrierStyle: c.barrierStyle } : {}),
+    ...(c.barriers ? { barriers: true } : {}),
   });
 }
 
@@ -185,6 +186,7 @@ for (const d of DISTRICTS) {
     route: structuredClone(c.route), cars, laps: cars - 1, purse: c.purse,
     ...(c.modifiers ? { modifiers: [...c.modifiers] } : {}),
     ...(c.barrierStyle ? { barrierStyle: c.barrierStyle } : {}),
+    ...(c.barriers ? { barriers: true } : {}),
   });
 }
 

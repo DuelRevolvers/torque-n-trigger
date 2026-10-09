@@ -1725,13 +1725,14 @@ function renderEvents() {
         ${d.mode === 'rampage' ? field('ev-time', 'time (s)', d.timeLimit, 'number', 10) + field('ev-targets', 'targets (bronze, silver, gold)', (d.targets || []).join(', '), 'text') : ''}
         ${d.type === 'drag' ? field('ev-finish', 'length (m)', d.finishS ?? 414, 'number', 10) : ''}
         ${d.type === 'arena' ? `<label for="ev-mode">mode</label><select id="ev-mode">${Object.entries(MODES).map(([k, n]) => `<option value="${k}"${d.mode === k ? ' selected' : ''}>${n}</option>`).join('')}</select>${field('ev-time', 'time (s)', d.timeLimit, 'number', 10)}<label for="ev-site">ground</label><select id="ev-site">${arenaSites(session).map((a) => `<option value="${a.site}"${r.site === a.site ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
-        ${d.type === 'arena' ? '' : `<label for="ev-barrier">barriers</label><select id="ev-barrier" title="How the race's barriers look">${Object.entries(BARRIER_STYLES).map(([k, n]) => `<option value="${k}"${(d.barrierStyle || '') === k ? ' selected' : ''}>${n}</option>`).join('')}</select>`}
+        ${d.type === 'arena' ? '' : `<label for="ev-barrier">barrier look</label><select id="ev-barrier" title="How the race's barriers look, when it has them"${d.barriers ? '' : ' disabled'}>${Object.entries(BARRIER_STYLES).map(([k, n]) => `<option value="${k}"${(d.barrierStyle || '') === k ? ' selected' : ''}>${n}</option>`).join('')}</select>`}
         ${isBoss() ? `<label for="ev-driver">boss</label><select id="ev-driver">${DRIVERS.map((q) => `<option value="${q.id}"${d.driver === q.id ? ' selected' : ''}>${esc(q.name)}</option>`).join('')}</select>` : ''}
       </div>
       <textarea id="ev-desc" placeholder="What the event is, for the event list">${esc(d.desc || '')}</textarea>
       <div class="checks">
         ${isBoss() || CREATOR ? '' : `<label><input type="checkbox" id="ev-rival"${d.rival ? ' checked' : ''} /> Rival race (the district's rival drives it)</label>`}
         ${Object.entries(MODIFIER_LABELS).map(([k, n]) => `<label><input type="checkbox" data-mod="${k}"${(d.modifiers || []).includes(k) ? ' checked' : ''} /> ${esc(n)}</label>`).join('')}
+        ${d.type === 'arena' ? '' : `<label title="Barriers along both sides of the route. Off: only blockades across the streets it doesn't take, and glowing chevrons on the turns."><input type="checkbox" id="ev-barriers"${d.barriers ? ' checked' : ''} /> Barriers along the route</label>`}
         ${d.type === 'drag' ? '' : `<label title="Health, ammo and nitro drops the game puts along the route (or round the arena). The drops placed on the map are there either way."><input type="checkbox" id="ev-autodrops"${d.autoDrops === false ? '' : ' checked'} /> Automatic drops</label>`}
       </div>
       <h4>Route</h4>
@@ -1785,6 +1786,11 @@ function readEvent() {
   if ($('ev-autodrops')) {
     if ($('ev-autodrops').checked) delete d.autoDrops;
     else d.autoDrops = false;
+  }
+  if ($('ev-barriers')) {
+    if ($('ev-barriers').checked) d.barriers = true;
+    else delete d.barriers;
+    $('ev-barrier').disabled = !d.barriers;
   }
   if ($('ev-barrier')) {
     if ($('ev-barrier').value) d.barrierStyle = $('ev-barrier').value;

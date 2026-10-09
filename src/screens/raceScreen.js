@@ -143,7 +143,7 @@ export class RaceScreen {
       if (def.city) {
         const map = districtMap(def.city);
         const view = buildTrackView(track, tex, {
-          city: true, sidewalk: def.city.rooftop ? tex.lot : tex.sidewalk, barrierColor: def.city.look.barrier, barrierStyle: def.barrierStyle, look: def.city.look,
+          city: true, sidewalk: def.city.rooftop ? tex.lot : tex.sidewalk, barrierColor: def.city.look.barrier, barrierStyle: def.barrierStyle, barriers: !!def.barriers, look: def.city.look,
           clear: def.city.authored ? districtClear(map) : null,
           arches: map.plan ? districtLayout(map).items.filter((it) => it.t === 'arch') : null,
           fronts: map.plan ? buildingFronts(map) : null,

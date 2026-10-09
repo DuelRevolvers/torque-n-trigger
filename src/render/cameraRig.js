@@ -145,7 +145,11 @@ export class CameraRig {
       const chase = CHASE[mode] || CHASE.chase;
       const k = chase.dist / CHASE.chase.dist; // the far camera scales the speed pull-back too
       const dist = chase.dist + (s * 0.6 + this.boost * 1.4) * k;
-      const targetY = pose.pos.y + chase.height - s * 0.45;
+      let targetY = pose.pos.y + chase.height - s * 0.45;
+      // The car under something (a container tunnel, the Undercity's deck):
+      // the camera comes down beneath it too.
+      const over = this.track.ceilingAt?.(pose.pos.x, pose.pos.z, pose.pos.y);
+      if (over != null) targetY = Math.min(targetY, Math.max(pose.pos.y + 0.6, over - 0.9));
       this.height = this.height === null ? targetY : this.height + (targetY - this.height) * (1 - Math.exp(-10 * frameDt));
 
       cam.set(pose.pos.x - dir.x * dist, this.height, pose.pos.z - dir.z * dist);

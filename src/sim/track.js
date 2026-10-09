@@ -153,6 +153,10 @@ export function buildTrack(def) {
   track.closures = def.closures || [];
   track.watchCars = def.watchCars || null; // Maple Hollow: the Watch's cars along the edges
   track.narrows = def.narrows?.length ? def.narrows : null; // container tunnels, alleys
+  // A city race with no barriers: how far out each side a car can go, per
+  // sample (sim/openRoute.js), and the barriers funnelling into the narrows.
+  track.reach = def.reach || null;
+  track.funnels = def.funnels || null;
   track.authored = !!def.authored;
   // Shortcut branches: narrow roads that leave the main line at s0 and rejoin at s1.
   if (def.branches?.length) {
@@ -595,6 +599,12 @@ class Track {
     // (Off the road: grass, or a roof deck's concrete where the section says so.)
     const surface = abs <= half ? road : abs <= half + Math.max(this.curbWidth, sec?.walk || 0) ? (this.surfaceAll ?? SURFACE.CURB) : sec?.off ?? SURFACE.OFFROAD;
     let reported = squeeze > 0 ? Math.sign(lateral) * (abs + squeeze) : lateral;
+    // No barriers (track.reach): off the road is open as far as the reach on
+    // that side; past it, the wall. (Out there the lateral reads just inside the walls.)
+    if (this.reach) {
+      const out = abs - (lateral < 0 ? this.reach.l : this.reach.r)[this.indexAtDistance(s)];
+      reported = Math.sign(lateral) * (out > 0 ? this.wallDist + out : Math.min(Math.abs(reported), this.wallDist - 0.01));
+    }
     // A banked cross-section (the storm drain): a flat bed, a trench, sloped walls.
     let lift = 0;
     if (sec?.bank) {

@@ -57,12 +57,17 @@ export function buildTrackView(track, tex, opts = {}) {
   // (The same on the rooftops: the decks, bridges and kickers are the district's.)
   // (And in the Undercity: its streets, cuts, tunnel and drain are the road.)
   const suburb = !!opts.look?.suburb || opts.look?.closures === 'transporters' || !!opts.look?.under || !!opts.look?.spire;
-  if (!suburb) buildRoad(group, track, mats, groundY, { wallSkip: branches.length ? inBranch : null });
+  // A district's race: no barriers along the route unless the event asks
+  // (event.barriers); the blockades across the side streets mark the way.
+  const walls = !opts.city || !!opts.barriers;
+  if (!suburb) buildRoad(group, track, mats, groundY, { wallSkip: !walls ? () => true : branches.length ? inBranch : null });
+  if (!walls && track.funnels?.length) group.add(funnelBarriers(track.funnels, mats.barrier));
+  if (!opts.drag) group.add(turnSigns(track));
   group.add(endPens(track, mats.barrier));
   for (const br of branches) {
     // (A shortcut starts and ends on the main road's centreline: none of it is
     // drawn over the main road, and its beacons stand at its mouths.)
-    if (!suburb) buildRoad(group, br.track, mats, groundY, { lift: 0.03, wallSkip: inMain, roadSkip: inMain, roadMat: branchMaterial(br.kind, tex, mats) });
+    if (!suburb) buildRoad(group, br.track, mats, groundY, { lift: 0.03, wallSkip: walls ? inMain : () => true, roadSkip: inMain, roadMat: branchMaterial(br.kind, tex, mats) });
     group.add(beacons(br.track, inMain));
   }
 
@@ -1309,6 +1314,83 @@ function beacons(track, inMain = null) {
     }
   }
   return new THREE.Mesh(mergeGeometries(geos), glowMaterial({ color: '#ffb000', intensity: 3 }));
+}
+
+// The barriers funnelling an open route into a container tunnel or an alley
+// (sim/openRoute.js): [ax, az, ay, bx, bz, by] each.
+function funnelBarriers(funnels, material) {
+  const parts = funnels.map(([ax, az, ay, bx, bz, by]) => {
+    const len = Math.hypot(bx - ax, bz - az);
+    return new THREE.BoxGeometry(0.6, BARRIER_HEIGHT, len + 0.6).rotateY(Math.atan2(bx - ax, bz - az)).translate((ax + bx) / 2, (ay + by) / 2 + BARRIER_HEIGHT / 2, (az + bz) / 2);
+  });
+  return new THREE.Mesh(mergeGeometries(parts), material);
+}
+
+// Glowing chevron boards on the outside of each turn, pointing the way round,
+// so a driver can see where the route goes (and which streets it doesn't).
+// A turn: the heading swings more than TURN_MIN across TURN_SPAN metres.
+const TURN_SPAN = 24;
+const TURN_MIN = 0.45;
+function turnSigns(track) {
+  const n = track.count;
+  const k = Math.max(1, Math.round(TURN_SPAN / 2 / track.step));
+  const idx = (i) => (track.closed ? track.wrap(i) : Math.max(0, Math.min(n - 1, i)));
+  const swing = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const a = idx(i - k);
+    const b = idx(i + k);
+    swing[i] = Math.atan2(track.tx[a] * track.tz[b] - track.tz[a] * track.tx[b], track.tx[a] * track.tx[b] + track.tz[a] * track.tz[b]);
+  }
+  // Runs of samples turning the same way: one turn each.
+  const turns = [];
+  let run = null;
+  for (let i = 0; i < n; i++) {
+    const dir = Math.abs(swing[i]) > TURN_MIN ? Math.sign(swing[i]) : 0;
+    if (run && dir === run.dir) run.i1 = i;
+    else {
+      if (run) turns.push(run);
+      run = dir ? { dir, i0: i, i1: i } : null;
+    }
+  }
+  if (run) turns.push(run);
+  // (A circuit's turn across its start: one turn.)
+  if (track.closed && turns.length > 1 && turns[0].i0 === 0 && turns[turns.length - 1].i1 === n - 1 && turns[0].dir === turns[turns.length - 1].dir) {
+    const last = turns.pop();
+    turns[0] = { dir: last.dir, i0: last.i0 - n, i1: turns[0].i1 };
+  }
+  const varied = !!(track.sections || track.narrows);
+  const at = pointAt(track);
+  const boards = [];
+  const glows = [];
+  const posts = [];
+  const up = new THREE.Vector3(0, 1, 0);
+  for (const t of turns) {
+    // dir +1: a right turn (inside +lateral). Boards every 4 m, at least three.
+    const len = (t.i1 - t.i0) * track.step;
+    const count = Math.min(12, Math.max(3, Math.round(len / 4) + 1));
+    for (let c = 0; c < count; c++) {
+      const i = idx(Math.round(t.i0 + ((t.i1 - t.i0) * c) / (count - 1)));
+      if (track.gaps?.some((g) => track.s[i] > g.s0 - g.len && track.s[i] < g.s1 + g.len)) continue;
+      const s = track.s[i];
+      const half = varied ? track.localHalf(s) : track.halfWidth;
+      const wall = varied ? track.localWall(s) : track.wallDist;
+      const p = at(i, -t.dir * Math.max(half + 0.6, Math.min(wall - 0.4, half + track.curbWidth + 2.5)));
+      // Local x: the way round (the chevron's point); the board faces along the road.
+      const ax = new THREE.Vector3(track.rx[i] * t.dir, 0, track.rz[i] * t.dir).normalize();
+      const m = new THREE.Matrix4().makeBasis(ax, up, new THREE.Vector3().crossVectors(ax, up)).setPosition(p[0], p[1] + 1.75, p[2]);
+      boards.push(new THREE.BoxGeometry(1.5, 1.1, 0.06).applyMatrix4(m));
+      for (const sy of [1, -1]) {
+        glows.push(new THREE.BoxGeometry(0.75, 0.18, 0.1).rotateZ(-sy * 0.62).translate(0.02, sy * 0.22, 0).applyMatrix4(m));
+      }
+      posts.push(new THREE.BoxGeometry(0.12, 1.2, 0.12).translate(0, -1.15, 0).applyMatrix4(m));
+    }
+  }
+  const group = new THREE.Group();
+  if (!boards.length) return group;
+  group.add(new THREE.Mesh(mergeGeometries(boards), litMaterial({ color: '#16161a' })));
+  group.add(new THREE.Mesh(mergeGeometries(posts), litMaterial({ color: '#50525a' })));
+  group.add(new THREE.Mesh(mergeGeometries(glows), glowMaterial({ color: '#ffc21a', intensity: 2.6 })));
+  return group;
 }
 
 // Wet patches: irregular shapes scattered at random - lots of small ones, a

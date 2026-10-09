@@ -73,7 +73,9 @@ export function getVenue(id, def = null) {
     if (!cityVenues.has(def.city)) cityVenues.set(def.city, new Map());
     const own = cityVenues.get(def.city);
     if (!own.has(id)) own.set(id, cityVenue(def.city, def.route));
-    return own.get(id);
+    const venue = own.get(id);
+    // (An event with barriers along its route: the walls are where they're drawn.)
+    return def.barriers && venue.def.reach ? { ...venue, def: { ...venue.def, reach: null } } : venue;
   }
   if (!generated.has(id)) {
     const [, kind, seedText] = id.split('-');
