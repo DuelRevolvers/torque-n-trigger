@@ -2,8 +2,9 @@
 // buttons (spatially, to the nearest one in that direction), A presses it, B
 // goes back (closes the pause menu, or presses the screen's back button), and
 // LB / RB call the screen's onPadTab(-1 | 1) (e.g. cycle districts on the map).
-// Screens re-render their HTML often, so focus is remembered by position and
-// put back on the element at the same place in the list.
+// A on a dropdown opens it: up / down pick, A keeps the pick, B puts it back.
+// Left / right move a slider. Screens re-render their HTML often, so focus is
+// remembered by position and put back on the element at the same place in the list.
 
 const BTN = { A: 0, B: 1, LB: 4, RB: 5, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
 const FOCUSABLE = 'button:not([disabled]), select, input:not([type=hidden])';
@@ -17,6 +18,8 @@ export class PadNav {
     this.holdTime = 0;
     this.index = 0;
     this.used = false;
+    this.open = null; // the dropdown open now
+    this.openValue = null; // its value before
   }
 
   // root: the element whose buttons are navigable right now (null: none).
@@ -30,8 +33,14 @@ export class PadNav {
       up: pressed(BTN.UP) || axis(1) < -0.5, down: pressed(BTN.DOWN) || axis(1) > 0.5,
       left: pressed(BTN.LEFT) || axis(0) < -0.5, right: pressed(BTN.RIGHT) || axis(0) > 0.5,
     };
-    const edge = (k) => now[k] && !this.prev[k];
+    const prev = this.prev;
+    const edge = (k) => now[k] && !prev[k];
     this.prev = now;
+    // (An open dropdown re-rendered away, or under the pause menu: shut, unchanged.)
+    if (this.open && !root?.contains(this.open)) {
+      if (this.open.isConnected) this.closeDropdown(false);
+      else this.open = null;
+    }
     if (!root || !pads.length) return;
 
     const items = [...root.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el.getClientRects().length);
@@ -56,21 +65,51 @@ export class PadNav {
         step = dir;
       }
     }
-    if (step) {
+    if (this.open) {
+      if (step === 'up' || step === 'down') pick(this.open, step === 'down' ? 1 : -1);
+      if (edge('A')) this.closeDropdown(true);
+      else if (edge('B')) this.closeDropdown(false);
+      return;
+    }
+    if (current?.type === 'range' && (step === 'left' || step === 'right')) {
+      if (step === 'right') current.stepUp();
+      else current.stepDown();
+      current.dispatchEvent(new Event('input', { bubbles: true }));
+      current.dispatchEvent(new Event('change', { bubbles: true }));
+    } else if (step) {
       this.used = true;
       if (!current) this.focus(items[0], items);
       else this.focus(nearest(current, items, step) || current, items);
     }
     if (edge('A') && current) {
       this.used = true;
-      current.click();
+      if (current.tagName === 'SELECT') this.openDropdown(current);
+      else current.click();
     }
     if (edge('B')) {
-      const back = items.find((el) => el.matches('.menu-resume, [data-back], .back, .garage, .cancel') || /^◀/.test(el.textContent.trim()));
+      const back = items.find((el) => el.matches('.menu-resume, [data-back], .back, .garage, .cancel') || /^(◀|BACK\b)/.test(el.textContent.trim()));
       back?.click();
     }
     if (edge('LB')) screen?.onPadTab?.(-1);
     if (edge('RB')) screen?.onPadTab?.(1);
+  }
+
+  // A native dropdown can't be opened from a script, so it's shown as a list in place.
+  openDropdown(sel) {
+    this.open = sel;
+    this.openValue = sel.value;
+    sel.size = Math.max(2, Math.min(sel.options.length, 8));
+    sel.classList.add('pad-open');
+  }
+
+  // keep: the pick stands (a change event if it's new); else the value goes back.
+  closeDropdown(keep) {
+    const sel = this.open;
+    this.open = null;
+    sel.removeAttribute('size');
+    sel.classList.remove('pad-open');
+    if (!keep) sel.value = this.openValue;
+    else if (sel.value !== this.openValue) sel.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
   focus(el, items) {
@@ -79,6 +118,15 @@ export class PadNav {
     el.focus({ preventScroll: true });
     el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     this.index = items.indexOf(el);
+  }
+}
+
+// The next option in a dropdown that isn't disabled, d = 1 down or -1 up.
+function pick(sel, d) {
+  for (let i = sel.selectedIndex + d; i >= 0 && i < sel.options.length; i += d) {
+    if (sel.options[i].disabled) continue;
+    sel.selectedIndex = i;
+    return;
   }
 }
 

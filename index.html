@@ -162,7 +162,7 @@
       /* Screens (starter selection, garage) */
       #ui { position: fixed; inset: 0; pointer-events: none; z-index: 1; font-size: 13px; }
       #ui .screen { position: absolute; inset: 0; }
-      #ui button, #ui .card, #ui .g-slots, #ui .g-side { pointer-events: auto; }
+      #ui button, #ui select, #ui input, #ui textarea, #ui .card, #ui .g-slots, #ui .g-side { pointer-events: auto; }
       #ui h1 { margin: 0; font-size: 26px; letter-spacing: 3px; color: var(--pink); text-shadow: 3px 3px 0 #000; }
       #ui h2 { margin: 0 0 8px; font-size: 17px; color: var(--cyan); text-transform: uppercase; }
       #ui h3 { margin: 12px 0 6px; font-size: 13px; color: var(--amber); text-transform: uppercase; }
@@ -281,7 +281,7 @@
       .shop-row small { display: block; color: #8a82b0; }
       .wide { width: 100%; }
       .boss-banner { background: var(--amber); color: #000; font-weight: bold; padding: 6px 8px; margin: 6px 0; }
-      #ui .lobby { display: flex; align-items: flex-start; justify-content: center; background: rgba(8, 2, 20, 0.7); padding: 16px; overflow-y: auto; }
+      #ui .lobby { display: flex; align-items: flex-start; justify-content: center; background: rgba(8, 2, 20, 0.7); padding: 16px; overflow-y: auto; pointer-events: auto; }
       .lobby-panel { background: var(--panel); border: 3px solid var(--pink); box-shadow: 6px 6px 0 var(--cyan); padding: 16px; width: min(640px, 100%); box-sizing: border-box; }
       .lobby select { font: bold 13px var(--font); background: #1a1030; color: var(--ink); border: 2px solid #33245a; padding: 4px; max-width: 100%; }
       .ev-row { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--amber); }
@@ -330,6 +330,7 @@
         .g-side { top: auto; left: 0; right: 0; bottom: 0; width: auto; max-height: 50vh; }
       }
       .pad-focus { outline: 3px solid #ffe14d !important; outline-offset: 2px; box-shadow: 0 0 12px #ffe14d88; }
+      .pad-open { outline-color: #4de1ff !important; }
     </style>
   </head>
   <body>

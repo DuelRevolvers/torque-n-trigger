@@ -182,7 +182,7 @@ export class GarageScreen {
       <div class="g-head">
         <div><h1>GARAGE</h1><div class="car-name">${esc(car.name)} <span class="tag">${ARCHETYPES[car.archetype]?.name || ''}</span> <span class="cash">$${career.cash ?? 0}</span></div>
           <div class="car-switch">${career.cars.length > 1 ? `<button class="btn small prev-car">&#9664;</button><span>${career.cars.indexOf(car) + 1}/${career.cars.length}</span><button class="btn small next-car">&#9654;</button>` : ''}${career.inventory.some((p) => p.slot === 'chassis') ? '<button class="btn small new-car">NEW CAR</button>' : ''}</div></div>
-        <div class="row"><button class="btn mp">MULTIPLAYER</button><button class="btn primary race">CITY MAP &#9654;</button></div>
+        <div class="row"><button class="btn primary race">CITY MAP &#9654;</button></div>
       </div>
       <div class="g-slots">${slotButtons}</div>
       <div class="g-side">
@@ -194,7 +194,6 @@ export class GarageScreen {
     const on = (sel, fn) => this.root.querySelectorAll(sel).forEach((el) => el.addEventListener('click', () => fn(el)));
     on('.slot-btn', (el) => this.select(el.dataset.slot));
     on('.race', () => this.app.go('city'));
-    on('.mp', () => this.app.go('lobby'));
     on('.repair', () => {
       if (repairParts(career, Object.values(car.build.parts).filter((p) => p && p.condition < 100)).ok) this.save();
       this.refresh();
