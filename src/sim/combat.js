@@ -40,6 +40,7 @@ const REGION_SLOTS = {
 const WEAR = 0.25; // condition % lost per point of damage, split across the region's parts
 
 const WRECK_TIME = 5; // seconds before a wrecked car respawns
+const SPAWN_GUARD = 2; // seconds after a respawn with no damage and no crash wrecks (shown as the shield)
 const MINE_TRIGGER = 2.4;
 const FWD = v3(0, 0, -1);
 const combatOf = (p) => p.combat || DEFAULT_COMBAT;
@@ -125,7 +126,7 @@ function invInertiaWorld(car, p, v) {
 // damage from a car is its weapons', and earns it nitrous.
 export function applyDamage(world, j, amount, point, source, silent = false, ram = false) {
   const car = world.state.cars[j];
-  if (car.wrecked || amount <= 0 || car.invulnerable) return;
+  if (car.wrecked || amount <= 0 || car.invulnerable || car.spawnGuard > 0) return;
   source ??= -1; // (hazards pass null: no one's)
   const p = world.params[j];
   const c = combatOf(p);
@@ -499,6 +500,7 @@ export function updateCombat(world, inputs, dt, respawn) {
     const input = inputs[i] || {};
     if (car.wrecked) {
       car.firing.primary = car.firing.secondary = false;
+      car.impact = 0; // (the wreck's wall hits: never a crash for the respawned car)
       car.wreckTimer -= dt;
       if (car.wreckTimer <= 0 && world.respawnOnWreck && !car.out) { // (out: Rampage's totaled, or a rival not back yet; Last Lap Out's eliminated)
         respawn(world, i, { back: 0, index: car.wreckIndex }); // right where it was wrecked
@@ -508,6 +510,7 @@ export function updateCombat(world, inputs, dt, respawn) {
         car.overheated = false;
         car.burning = 0;
         car.shocked = 0;
+        car.shield = car.spawnGuard = SPAWN_GUARD; // (no spawn kills, even in one-hit events)
         for (const slot of ['primary', 'secondary']) {
           const w = p.weapons?.[slot];
           if (w) car.weapons[slot] = { cooldown: 0, ammo: w.ammo, reload: 0 };
@@ -530,6 +533,7 @@ export function updateCombat(world, inputs, dt, respawn) {
     car.heat = Math.min(c.heatCapacity, car.heat);
 
     if (car.shield > 0) car.shield = Math.max(0, car.shield - dt);
+    if (car.spawnGuard > 0) car.spawnGuard = Math.max(0, car.spawnGuard - dt);
     if (car.repair > 0) {
       car.repair = Math.max(0, car.repair - dt);
       car.hp = Math.min(car.maxHp, car.hp + car.maxHp * 0.125 * dt);
