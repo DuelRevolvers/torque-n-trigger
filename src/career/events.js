@@ -1,8 +1,10 @@
 // Event list and rewards. In M6 these move onto the city map by district; for
 // now the event screen offers one of each type (and both arena modes).
 
-import { makeRng } from '../parts/generate.js';
-import { QUALITIES, QUALITY } from '../parts/catalog.js';
+import { makeRng, makePart } from '../parts/generate.js';
+import { computeBuild } from '../parts/build.js';
+import { DUEL } from '../sim/rules.js';
+import { QUALITIES, QUALITY, partValue } from '../parts/catalog.js';
 
 export const EVENTS = [
   {
@@ -42,7 +44,9 @@ export const tierScale = (tier) => 1 + tier * 0.5;
 export function computeRewards(event, place, playerCar, tier) {
   const scale = tierScale(tier);
   const lines = [];
-  const placeCash = Math.round(event.purse * scale * (PLACE_SHARE[place - 1] || 0));
+  // (A Duel is winner takes all.)
+  const share = event.mode === 'duel' && place > 1 ? 0 : PLACE_SHARE[place - 1] || 0;
+  const placeCash = Math.round(event.purse * scale * share);
   lines.push([`${ordinal(place)} place`, placeCash]);
   if (playerCar.takedowns) lines.push([`Takedowns x${playerCar.takedowns}`, Math.round(playerCar.takedowns * TAKEDOWN_BONUS * scale)]);
   const c = playerCar.contact || {};
@@ -75,6 +79,49 @@ export function rollSalvage(victimBuilds, seed, { chance = 0.6, downgrade = true
     });
   }
   return out;
+}
+
+// Duel stakes (phase 7c). The winner picks one part off the rival's car, at
+// its full quality and as new; paint stays on the car. Most valuable first.
+export function duelPrizes(build) {
+  return Object.values(build.parts).filter((p) => p && p.slot !== 'paint').sort((a, b) => partValue(b) - partValue(a)).map((p) => ({
+    ...p,
+    traits: [...p.traits],
+    condition: DUEL.prizeCondition,
+    uid: `${p.slot}-duel-${Math.floor(Math.random() * 2 ** 32).toString(36)}`,
+  }));
+}
+
+// Cheaper parts: the two lowest qualities any of a district's shops can stock
+// (career/shop.js: the used-parts dealer reaches a tier down).
+export const cheapQualities = (districtTier) => {
+  const lo = Math.max(0, Math.min(QUALITIES.length - 2, districtTier - 1));
+  return [QUALITIES[lo].id, QUALITIES[lo + 1].id];
+};
+const NEEDED = ['engine', 'suspension', 'transmission', 'wheels', 'lights'];
+
+// The loser's forfeit: one of the cheaper parts on its car, at random. Never
+// the chassis or paint, nor a Junk part the car can't run without (it would
+// come straight back as Junk). A part the car needs is swapped for Junk of the
+// same type, so it still runs; anything else leaves its slot empty. Only a
+// swap the car still fits. null: nothing to take.
+export function duelForfeit(build, districtTier, seed) {
+  const cheap = cheapQualities(districtTier);
+  const rng = makeRng(seed);
+  const slots = Object.keys(build.parts).filter((s) => {
+    const p = build.parts[s];
+    return p && s !== 'chassis' && s !== 'paint' && cheap.includes(p.quality) && !(NEEDED.includes(s) && p.quality === 'junk');
+  });
+  while (slots.length) {
+    const slot = slots.splice(Math.floor(rng() * slots.length), 1)[0];
+    const taken = build.parts[slot];
+    const replacement = NEEDED.includes(slot)
+      ? { ...makePart(rng, slot, taken.type, 'junk'), condition: taken.condition, ...(taken.color ? { color: taken.color } : {}) }
+      : null;
+    const after = computeBuild({ ...build, parts: { ...build.parts, [slot]: replacement } });
+    if (after.ok && after.weight <= after.capacity) return { slot, taken, replacement };
+  }
+  return null;
 }
 
 export const ordinal = (n) => `${n}${['th', 'st', 'nd', 'rd'][(n % 100 > 10 && n % 100 < 14) || n % 10 > 3 ? 0 : n % 10]}`;

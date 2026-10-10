@@ -3,7 +3,7 @@
 // syncs with the rest of the state. See rules.js AI_FIGHT for the numbers.
 
 import { clamp, quatRotate } from './math.js';
-import { AI_FIGHT as F, TRAFFIC, RAMPAGE, LAST_LAP_OUT } from './rules.js';
+import { AI_FIGHT as F, TRAFFIC, RAMPAGE, LAST_LAP_OUT, DUEL } from './rules.js';
 import { trafficAhead } from './traffic.js';
 
 const SLAM_STRENGTH = { slam: 1, huge: 1.5, shunt: 0.5 };
@@ -36,7 +36,9 @@ const go = (atk, state, secs, now) => {
   atk.state = state;
   atk.end = now + secs;
 };
-const endAttack = (ai, now) => go(ai.atk, 'cooldown', ai.aggression * F.coolMax, now);
+const endAttack = (ai, now, duel = false) => go(ai.atk, 'cooldown', ai.aggression * F.coolMax * (duel ? DUEL.coolScale : 1), now);
+// How far behind a victim can be (Duel: further, phase 7c).
+const behindOf = (world) => (world.state.event?.mode === 'duel' ? DUEL.windowBehind : F.windowBehind);
 // Swerve: a fixed line steerOut metres from where the car is, away from the victim.
 const swerve = (atk, car, state, secs, now) => {
   atk.out = car.lateral - atk.side * F.steerOut;
@@ -107,7 +109,7 @@ export function pickVictim(world, i) {
   state.cars.forEach((c, j) => {
     if (j === i || c.wrecked) return;
     const gap = trackGap(track, car, c);
-    if (gap > F.windowAhead || gap < -F.windowBehind) return;
+    if (gap > F.windowAhead || gap < -behindOf(world)) return;
     if (Math.hypot(c.vel.x, c.vel.z) < F.minVictimSpeed) return;
     let score = Math.abs(gap);
     if (j === grudge) score *= F.grudgeScore;
@@ -163,10 +165,13 @@ export function updateAttack(world, i, gunReady) {
   const atk = ai.atk;
   const now = state.event?.time ?? 0;
   const done = now >= atk.end;
+  // (Duel, phase 7c: the rival never drops under the Duel's aggression floor.)
+  const duel = state.event?.mode === 'duel';
+  if (duel) ai.aggression = Math.max(ai.aggression, Math.min(1, DUEL.aggression * (F.difficulty[ai.difficulty] || F.difficulty.normal).aggression));
   if (now < F.startDelay || ai.aggression < F.minAggression) return null;
   let v = atk.victim >= 0 ? state.cars[atk.victim] : null;
   if (atk.state !== 'idle' && atk.state !== 'cooldown' && (!v || v.wrecked)) {
-    endAttack(ai, now);
+    endAttack(ai, now, duel);
     return null;
   }
   const gap = v ? trackGap(track, car, v) : 0;
@@ -182,8 +187,8 @@ export function updateAttack(world, i, gunReady) {
     }
     case 'approach': {
       const vs = Math.hypot(v.vel.x, v.vel.z);
-      if (vs < F.minVictimSpeed || done || gap > F.windowAhead || gap < -F.windowBehind) {
-        endAttack(ai, now);
+      if (vs < F.minVictimSpeed || done || gap > F.windowAhead || gap < -behindOf(world)) {
+        endAttack(ai, now, duel);
         return null;
       }
       if (atk.ram && canSlam(world, i, atk.victim, gap)) {
@@ -192,7 +197,8 @@ export function updateAttack(world, i, gunReady) {
         else swerve(atk, car, 'windup', F.windupTime, now);
         return null;
       }
-      if (canBlock(world, i, atk.victim, gap)) {
+      // (Duel: a rammer doesn't block; it drops back alongside to slam, phase 7c.)
+      if (!(duel && atk.ram) && canBlock(world, i, atk.victim, gap)) {
         go(atk, 'block', F.blockMin + ai.aggression * (F.blockMax - F.blockMin), now);
         return null;
       }
@@ -213,7 +219,7 @@ export function updateAttack(world, i, gunReady) {
         return null;
       }
       if (done || side !== atk.side) {
-        endAttack(ai, now);
+        endAttack(ai, now, duel);
         return null;
       }
       const lead = F.slamLead;
@@ -221,7 +227,7 @@ export function updateAttack(world, i, gunReady) {
       return { victim: atk.victim, point: { x: v.pos.x + v.vel.x * lead, z: v.pos.z + v.vel.z * lead }, lock: atk.side, rate: F.swerveRate, ram: true };
     }
     case 'recoil':
-      if (done) endAttack(ai, now);
+      if (done) endAttack(ai, now, duel);
       return { victim: atk.victim, offset: atk.out, rate: F.swerveRate, ram: true };
     case 'block':
       if (atk.ram && canSlam(world, i, atk.victim, gap)) {

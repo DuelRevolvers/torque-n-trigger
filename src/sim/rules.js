@@ -149,6 +149,17 @@ export const LAST_LAP_OUT = {
   blast: { radius: 12, damage: 90, push: 18, lift: 8, wreck: 6 },
 };
 
+// Duel (phase 7c): B3's Face-Off (docs/gameplay/modes.md §2), one rival, the
+// race rules (CONFIRMED). The knockout and the stakes are T&T's own.
+export const DUEL = {
+  knockout: 3, // takedowns on the other car that end it at once (GUESS)
+  // The rival fights harder one on one: an aggression floor (× difficulty),
+  // shorter cooldowns between attacks, and a longer reach back for a victim
+  // behind it. All GUESS, T&T's own.
+  aggression: 0.85, coolScale: 0.4, windowBehind: 100, // -, × AI_FIGHT.coolMax, m
+  prizeCondition: 100, // % condition of the part the winner takes
+};
+
 // Rush hour traffic (phase 6): B3's lane traffic (docs/systems/traffic.md,
 // CONFIRMED unless marked). B3's per-tick values are turned into per-second ones
 // at 60 updates a second (B3's own rate is a GUESS).
