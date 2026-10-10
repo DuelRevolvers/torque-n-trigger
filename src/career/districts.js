@@ -222,6 +222,8 @@ export function districtEvents(district) {
     seed: idx * 1000 + e.key.length * 17 + 5,
     entryFee: Math.round(e.purse * 0.12),
     rivalDriver: e.rival ? RIVALS[idx % RIVALS.length] : null,
+    // (Phase 7c: a rival race is a Duel, one on one with the rival.)
+    ...(e.rival && !e.mode && (e.type === 'sprint' || e.type === 'circuit') ? { mode: 'duel', cars: 2, name: e.name.replace(/^Rival:/, 'Duel:') } : {}),
     pit: e.type === 'circuit' ? { s0: -110, s1: -15, lateral: 3 } : undefined,
     career: true,
   });
