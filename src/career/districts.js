@@ -26,7 +26,7 @@ import { CHROME_CITY } from '../districts/chromeHeights.js';
 import { UNDERCITY_CITY } from '../districts/undercity.js';
 import { SPIRE_CITY } from '../districts/corporateSpire.js';
 import { officialDistrict, playedDistrict } from '../content/store.js';
-import { LAST_LAP_OUT } from '../sim/rules.js';
+import { LAST_LAP_OUT, CUP } from '../sim/rules.js';
 
 // A plan district's outline on the city map: its boundary, scaled into place
 // (centre and metres per map unit), so the map and the district always match.
@@ -166,6 +166,22 @@ for (const d of DISTRICTS) {
   });
 }
 
+// Championship Cup (phase 7d): one per district, its first three races (the
+// rival's route too, as a full race), for their average purse. Added after
+// Last Lap Out, below.
+const addCups = () => {
+  for (const d of DISTRICTS) {
+    const rounds = d.events.filter((e) => (e.type === 'sprint' || e.type === 'circuit') && !e.mode).slice(0, CUP.rounds);
+    if (!rounds.length) continue;
+    d.events.push({
+      key: 'cup', type: 'cup', name: `${d.name} Cup`, cars: CUP.cars,
+      desc: `${rounds.length} races in a row against the same field: ${rounds.map((r) => r.name.replace(/^Rival: /, '')).join(', then ')}. Points for every finish, and a bonus point for the most takedowns in a round. The leader starts the next round at the back.`,
+      rounds: rounds.map((r) => r.key),
+      purse: Math.round(rounds.reduce((s, r) => s + r.purse, 0) / rounds.length / 50) * 50,
+    });
+  }
+};
+
 // Last Lap Out (phase 7b): one per district, on its circuit's route, for its
 // purse, with its modifiers; the field capped so no race runs past 5 laps.
 const LAST_LAP_OUTS = {
@@ -187,6 +203,8 @@ for (const d of DISTRICTS) {
     ...(c.barrierStyle ? { barrierStyle: c.barrierStyle } : {}),
   });
 }
+
+addCups(); // (Championship Cups, after Last Lap Out)
 
 // A district published from the T&T SDK (src/content/maps) plays in place of
 // its district file, everywhere (it's official: the career plays it too).
@@ -227,7 +245,20 @@ export function districtEvents(district) {
     pit: e.type === 'circuit' ? { s0: -110, s1: -15, lateral: 3 } : undefined,
     career: true,
   });
-  return [...district.events.map(make), ...(district.boss ? [make({ ...district.boss, boss: true })] : [])];
+  // A Cup (phase 7d): its rounds are the district's races it names, run as
+  // full-field races (a rival race too), free once the Cup's entry is paid.
+  const cupOf = (e) => {
+    const rounds = (e.rounds || []).map((k) => district.events.find((x) => x.key === k)).filter((r) => r && (r.type === 'sprint' || r.type === 'circuit') && !r.mode);
+    if (!rounds.length) return null;
+    const defs = rounds.map(({ rival: _r, ...r }, k) => ({
+      ...make({ ...r, key: `cup-r${k + 1}`, cars: e.cars || CUP.cars, purse: e.purse, ...(r.laps ? { laps: Math.min(CUP.maxLaps, r.laps) } : {}) }),
+      name: `${e.name}, round ${k + 1}: ${r.name.replace(/^Rival: /, '')}`,
+      entryFee: 0,
+      cupRound: k + 1,
+    }));
+    return { ...make({ ...e, route: rounds[0].route }), cup: { rounds: defs } };
+  };
+  return [...district.events.map((e) => (e.type === 'cup' ? cupOf(e) : make(e))).filter(Boolean), ...(district.boss ? [make({ ...district.boss, boss: true })] : [])];
 }
 
 // Free events from home, on the Rustline streets: never stuck broke.
@@ -264,7 +295,7 @@ export const districtUnlocked = (career, i) => i <= (career.district || 0);
 
 // The boss opens once 75% of the district's other events are completed (a podium finish).
 export function bossProgress(career, district) {
-  const ids = district.events.map((e) => `${district.id}-${e.key}`);
+  const ids = district.events.filter((e) => e.type !== 'cup').map((e) => `${district.id}-${e.key}`); // (not the Cup, phase 7d)
   const done = ids.filter((id) => career.completed?.includes(id)).length;
   const need = Math.round(ids.length * 0.75); // (to the nearest: 5 of 6 or of 7, phase 7b)
   return { done, need, open: done >= need };

@@ -14,7 +14,7 @@ import { computeBuild } from '../parts/build.js';
 import { DRIVERS, buildDriver } from '../parts/drivers.js';
 import * as G from '../sim/geom2d.js';
 
-export const TYPES = { sprint: 'Sprint', circuit: 'Circuit', drag: 'Drag race', arena: 'Arena', rampage: 'Rampage', lastLapOut: 'Last Lap Out', duel: 'Duel (sprint)', duelCircuit: 'Duel (circuit)' }; // (Rampage and Last Lap Out are circuits with that mode; a Duel a sprint or circuit)
+export const TYPES = { sprint: 'Sprint', circuit: 'Circuit', drag: 'Drag race', arena: 'Arena', rampage: 'Rampage', lastLapOut: 'Last Lap Out', duel: 'Duel (sprint)', duelCircuit: 'Duel (circuit)', cup: 'Championship Cup' }; // (Rampage and Last Lap Out are circuits with that mode; a Duel a sprint or circuit; a Cup is rounds of this district's races)
 // The TYPES entry for an event.
 export const typeKey = (e) => (e.mode === 'duel' ? (e.type === 'circuit' ? 'duelCircuit' : 'duel') : e.mode === 'rampage' || e.mode === 'lastLapOut' ? e.mode : e.type);
 export const MODES = { takedowns: 'Most takedowns', lastStanding: 'Last car standing' };
@@ -31,6 +31,7 @@ export function newEvent(type) {
   if (type === 'lastLapOut') return { ...base, type: 'circuit', mode: 'lastLapOut', laps: base.cars - 1, route: { kind: 'circuit', path: [], start: 30 } };
   if (type === 'duel') return { ...base, type: 'sprint', mode: 'duel', cars: 2, route: { kind: 'sprint', path: [] } };
   if (type === 'duelCircuit') return { ...base, type: 'circuit', mode: 'duel', cars: 2, laps: 2, route: { kind: 'circuit', path: [], start: 30 } };
+  if (type === 'cup') return { ...base, cars: 6, rounds: [] }; // (rounds: keys of this district's sprints and circuits)
   if (type === 'rampage') return { ...base, type: 'circuit', mode: 'rampage', timeLimit: 180, targets: [2, 4, 6], route: { kind: 'circuit', path: [], start: 30 } };
   return { ...base, mode: 'takedowns', timeLimit: 120, route: { kind: 'arena', site: 0 } };
 }

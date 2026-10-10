@@ -3,7 +3,7 @@
 
 import { makeRng, makePart } from '../parts/generate.js';
 import { computeBuild } from '../parts/build.js';
-import { DUEL } from '../sim/rules.js';
+import { DUEL, CUP } from '../sim/rules.js';
 import { QUALITIES, QUALITY, partValue } from '../parts/catalog.js';
 
 export const EVENTS = [
@@ -44,10 +44,15 @@ export const tierScale = (tier) => 1 + tier * 0.5;
 export function computeRewards(event, place, playerCar, tier) {
   const scale = tierScale(tier);
   const lines = [];
-  // (A Duel is winner takes all.)
-  const share = event.mode === 'duel' && place > 1 ? 0 : PLACE_SHARE[place - 1] || 0;
-  const placeCash = Math.round(event.purse * scale * share);
-  lines.push([`${ordinal(place)} place`, placeCash]);
+  if (event.cupRound) {
+    // (A Cup round pays no place cash; the Cup's place pays at the end, phase 7d.)
+    lines.push([`Round ${event.cupRound}: ${ordinal(place)}`, 0]);
+    if (event.cupPlace) lines.push([`Cup: ${ordinal(event.cupPlace)} place`, Math.round(event.purse * scale * CUP.purseScale * (PLACE_SHARE[event.cupPlace - 1] || 0))]);
+  } else {
+    // (A Duel is winner takes all.)
+    const share = event.mode === 'duel' && place > 1 ? 0 : PLACE_SHARE[place - 1] || 0;
+    lines.push([`${ordinal(place)} place`, Math.round(event.purse * scale * share)]);
+  }
   if (playerCar.takedowns) lines.push([`Takedowns x${playerCar.takedowns}`, Math.round(playerCar.takedowns * TAKEDOWN_BONUS * scale)]);
   const c = playerCar.contact || {};
   const bonus = (label, n, cash) => n && lines.push([`${label} x${n}`, Math.round(n * cash * scale)]);

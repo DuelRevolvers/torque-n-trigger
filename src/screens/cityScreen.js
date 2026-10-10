@@ -13,8 +13,8 @@ import { listMaps, customEvents } from '../content/library.js';
 
 const MAP_W = 400;
 const MAP_H = 300;
-const TYPE_COLOR = { free: '#ffffff', circuit: '#05d9e8', sprint: '#ff2a6d', arena: '#ffb000', drag: '#39ff14', rampage: '#ff3c3c', lastLapOut: '#ff8a00', duel: '#ff5ec4' };
-const TYPE_LABEL = { free: 'FREE DRIVE', sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG', rampage: 'RAMPAGE', lastLapOut: 'LAST LAP OUT', duel: 'DUEL' };
+const TYPE_COLOR = { free: '#ffffff', circuit: '#05d9e8', sprint: '#ff2a6d', arena: '#ffb000', drag: '#39ff14', rampage: '#ff3c3c', lastLapOut: '#ff8a00', duel: '#ff5ec4', cup: '#ffd700' };
+const TYPE_LABEL = { free: 'FREE DRIVE', sprint: 'SPRINT', circuit: 'CIRCUIT', arena: 'ARENA', drag: 'DRAG', rampage: 'RAMPAGE', lastLapOut: 'LAST LAP OUT', duel: 'DUEL', cup: 'CUP' };
 const kindOf = (e) => (e.mode === 'rampage' || e.mode === 'lastLapOut' || e.mode === 'duel' ? e.mode : e.type); // (Rampage and Last Lap Out are circuit modes; a Duel is a sprint or circuit mode)
 const HOME = { x: 19.5, y: 50 }; // map coords (0-100)
 // On the map but not raced yet (designs in docs/districts). Lobed like its cul-de-sacs.
@@ -159,6 +159,7 @@ export class CityScreen {
       ${mods ? `<span class="mods">${mods}</span>` : ''}
       <span class="event-meta">${meta}</span>
       ${e.mode === 'duel' ? '<span class="event-meta">One on one with the rival. Win: one of their parts &middot; Lose: one of yours</span>' : ''}
+      ${e.cup ? `<span class="event-meta">${e.cup.rounds.length} rounds &middot; points 6/4/3/2/1 &middot; +1 for the most takedowns in a round</span>` : ''}
       ${done ? `<span class="event-result"><span>Best: <b>${ord(done.best)}</b> of ${done.of}${done.runs > 1 ? ` &middot; ${done.runs} runs` : ''}</span><span class="retry">RETRY</span></span>` : ''}
       ${!gate.open ? `<span class="err">Locked: podium ${gate.need - gate.done} more event${gate.need - gate.done > 1 ? 's' : ''} here to face the boss (${gate.done}/${gate.need}).</span>` : !drivable ? '<span class="err">Your car is missing parts.</span>' : !canPay ? '<span class="err">Not enough cash for the entry fee.</span>' : ''}
     </button>`;

@@ -10,6 +10,12 @@ import * as G from '../sim/geom2d.js';
 export function brokenEvents(district) {
   const out = [];
   for (const e of [...(district.events || []), ...(district.boss ? [district.boss] : [])]) {
+    // (A Cup has no route: its rounds have to be this district's races, phase 7d.)
+    if (e.type === 'cup') {
+      const race = (k) => (district.events || []).some((x) => x.key === k && (x.type === 'sprint' || x.type === 'circuit') && !x.mode);
+      if (!e.rounds?.length || !e.rounds.every(race)) out.push({ key: e.key, name: e.name, error: 'Every round has to be one of this district\'s sprints or circuits.' });
+      continue;
+    }
     try {
       cityVenue(district.city, e.route);
       const g = gridProblem(district, e);

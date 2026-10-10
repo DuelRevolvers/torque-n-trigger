@@ -8,6 +8,7 @@ import { keyBinds, padBinds, keyName, padName } from '../input/bindings.js';
 import { DEATH_ROLL, RAMPAGE } from '../sim/rules.js';
 import { GRADES, gradeOf, gradePlace } from '../sim/rampage.js';
 import { duelGap } from '../sim/duel.js';
+import { newCupRun, scoreRound, cupStandings, cupGrid, lastRound } from '../career/cup.js';
 import { createEventState, gridPoses, standings, resolvePit, initEventCar } from '../sim/event.js';
 import { districtMap } from '../sim/city.js';
 import { InputQueue, neutralInput, sanitizeInput } from '../sim/input.js';
@@ -216,14 +217,19 @@ export class RaceScreen {
 
   // multiplayer: { players: [{ name, carName, build, pr, device }], bots } from the
   // lobby. Players take the first car slots; each gets a split-screen pane.
-  enter({ build, car, event, multiplayer }) {
+  enter({ build, car, event, multiplayer, cupRun }) {
     this.args = { build, car, event, multiplayer };
     this.mp = multiplayer || null;
     this.net = multiplayer?.online || null;
-    this.def = event || EVENTS.find((e) => e.type === 'circuit');
+    // Championship Cup (phase 7d): a Cup runs its rounds one at a time; cupRun
+    // carries the series to the next round (none: round 1). Its entry is paid once.
+    this.cupDef = event?.cup && !multiplayer ? event : null;
+    this.cupRun = this.cupDef ? cupRun || newCupRun(this.cupDef, Math.floor(Math.random() * 1e9)) : null;
+    this.def = this.cupDef ? this.cupDef.cup.rounds[this.cupRun.round] : event || EVENTS.find((e) => e.type === 'circuit');
     this.careerCar = car || null;
-    if (this.careerCar && this.def.entryFee && this.app.career) {
-      this.app.career.cash -= this.def.entryFee;
+    const entryFee = this.cupDef ? (this.cupRun.round ? 0 : this.cupDef.entryFee) : this.def.entryFee;
+    if (this.careerCar && entryFee && this.app.career) {
+      this.app.career.cash -= entryFee;
       saveCareer(this.app.career);
     }
     for (const v of this.venues.values()) v.group.visible = false;
@@ -278,10 +284,11 @@ export class RaceScreen {
     } else {
       this.tier = this.def.tier ?? tierForPr(computeBuild(build).pr);
       const special = this.def.driver || this.def.rivalDriver || null;
-      const pool = [...DRIVERS].sort((a, b) => ((hashId(a.id) ^ seed) >>> 0) - ((hashId(b.id) ^ seed) >>> 0)).filter((d) => d.id !== special);
+      const fieldSeed = this.cupRun?.seed ?? seed; // (a Cup: the same field every round)
+      const pool = [...DRIVERS].sort((a, b) => ((hashId(a.id) ^ fieldSeed) >>> 0) - ((hashId(b.id) ^ fieldSeed) >>> 0)).filter((d) => d.id !== special);
       const drivers = [...(special ? [DRIVERS.find((d) => d.id === special)] : []), ...pool].slice(0, this.def.cars - 1);
       const fieldTier = special ? Math.max(0, this.tier - 1) : this.tier;
-      entries = drivers.map((d, k) => buildDriver(d, special && k === 0 ? this.tier : fieldTier, seed + k));
+      entries = drivers.map((d, k) => buildDriver(d, special && k === 0 ? this.tier : fieldTier, fieldSeed + k));
       this.specialIndex = special ? 1 : -1;
       this.names = ['YOU', ...entries.map((e, k) => (special && k === 0 ? `${e.name} ${this.def.boss ? 'BOSS' : 'RIVAL'}` : e.name))];
     }
@@ -292,7 +299,7 @@ export class RaceScreen {
       track: this.track,
       // Multiplayer runs every car fresh; wear isn't written back either.
       cars: this.builds.map((b, i) => ({ params: this.computed[i].params, conditions: conditionsOf(this.mp ? pristine(b) : b) })),
-      poses: gridPoses(this.track, this.def, n),
+      poses: this.cupRun ? cupGrid(this.cupRun, gridPoses(this.track, this.def, n)) : gridPoses(this.track, this.def, n), // (a Cup: reverse order after round 1)
       event: createEventState(this.def, this.track),
       respawnOnWreck: !(this.def.type === 'arena' && this.def.mode === 'lastStanding'),
       humans: H,
@@ -319,6 +326,7 @@ export class RaceScreen {
     this.shakes = humans.map(() => 0); // per human car
     this.wrongWays = humans.map(() => 0);
     this.popupsBy = humans.map(() => []);
+    if (this.cupRun) this.popup(`ROUND ${this.cupRun.round + 1} OF ${this.cupDef.cup.rounds.length}`, PALETTE.amber);
     this.setupNet();
     this.prevPoses = this.capturePoses();
     this.victims = new Set();
@@ -905,7 +913,13 @@ export class RaceScreen {
     // (Rampage: the targets reached set the place: gold 1st, silver 2nd, bronze 3rd.)
     const grade = ev.mode === 'rampage' ? gradeOf(ev.targets, player.takedowns || 0) : 0;
     const place = ev.mode === 'rampage' ? gradePlace(grade, order.length) : order.findIndex((r) => r.id === 0) + 1;
-    const rewards = computeRewards(this.def, place, player, this.tier);
+    // Championship Cup (phase 7d): the round is scored; the last one settles the Cup.
+    const run = this.cupRun;
+    const cupDone = !!run && lastRound(run, this.cupDef);
+    const cupRound = run ? scoreRound(run, order, state.cars.map((c) => c.takedowns || 0), [...this.victims]) : null;
+    const cupOrder = run ? cupStandings(run) : null;
+    const cupPlace = cupDone ? cupOrder.indexOf(0) + 1 : 0;
+    const rewards = computeRewards(run ? { ...this.def, cupPlace } : this.def, place, player, this.tier);
     const career = this.app.career;
     const unlockedBefore = career ? unlockedIds(career) : null;
     // Salvage: normal cars drop worn, downgraded parts; a wrecked rival or boss
@@ -913,7 +927,8 @@ export class RaceScreen {
     // (A Duel has stakes instead.)
     const duel = ev.mode === 'duel';
     const victims = [...this.victims];
-    const salvage = duel ? [] : rollSalvage(victims.filter((i) => i !== this.specialIndex).map((i) => this.builds[i]), this.seed ^ 0xa5a5);
+    // (A Cup: once, at the end, from every car you took down in it.)
+    const salvage = duel || (run && !cupDone) ? [] : rollSalvage((run ? run.victims : victims).filter((i) => i !== this.specialIndex).map((i) => this.builds[i]), this.seed ^ 0xa5a5);
     let bossBeaten = false;
     let unlocked = null;
     const newSpots = [];
@@ -967,16 +982,20 @@ export class RaceScreen {
       }
       career.completed ??= [];
       // Best result per event, shown on its card afterwards.
-      if (this.def.career && place > 0) {
+      // (A Cup: once, at the end, for its place in the Cup.)
+      const recId = run ? (cupDone ? this.cupDef.id : null) : this.def.id;
+      const recPlace = run ? cupPlace : place;
+      const recOf = run ? run.points.length : order.length;
+      if (this.def.career && recId && recPlace > 0) {
         career.results ??= {};
-        const prev = career.results[this.def.id];
-        career.results[this.def.id] = { best: prev ? Math.min(prev.best, place) : place, of: order.length, runs: (prev?.runs || 0) + 1 };
+        const prev = career.results[recId];
+        career.results[recId] = { best: prev ? Math.min(prev.best, recPlace) : recPlace, of: recOf, runs: (prev?.runs || 0) + 1 };
       }
       // (A Duel only counts won.)
-      if (this.def.career && place > 0 && place <= (duel ? 1 : 3) && !career.completed.includes(this.def.id)) career.completed.push(this.def.id);
+      if (this.def.career && recId && recPlace > 0 && recPlace <= (duel ? 1 : 3) && !career.completed.includes(recId)) career.completed.push(recId);
       saveCareer(career);
     }
-    const fee = this.def.entryFee || 0;
+    const fee = (run ? this.cupDef.entryFee : this.def.entryFee) || 0;
     const fresh = unlockedBefore ? SPECIALS.filter((s) => !unlockedBefore.has(s.id) && unlockedIds(career).has(s.id)) : [];
     const banner = bossBeaten
       ? `<div class="boss-banner">BOSS BEATEN! ${unlocked ? `${unlocked.name} is now open.` : this.def.district === 'spire' ? 'You are the champion of Neon Sprawl!' : ''}</div>`
@@ -992,7 +1011,7 @@ export class RaceScreen {
       return `<tr class="${r.id === 0 ? 'me' : ''}"><td>${k + 1}</td><td>${esc(this.names[r.id])}</td><td>${result}</td></tr>`;
     }).join('');
     const lines = rewards.lines.map(([label, v]) => `<div class="reward-line"><span>${label}</span><b>$${v}</b></div>`).join('');
-    const salv = salvage.length
+    const salv = run && !cupDone ? '<div class="hint">Salvage comes at the end of the Cup.</div>' : salvage.length
       ? salvage.map((p) => `<div class="q-${p.quality}">${esc(partName(p))} (${p.condition}%)</div>`).join('')
       : '<div class="hint">No salvage this time.</div>';
     const rival = this.names[1] || 'The rival';
@@ -1001,6 +1020,11 @@ export class RaceScreen {
       : forfeit ? `<h3>Stakes</h3><div class="err">${esc(rival)} took your ${esc(partName(forfeit.taken))}.${forfeit.replacement ? ` A Junk ${esc(partName(forfeit.replacement))} is fitted in its place.` : ''}</div>`
       : `<h3>Stakes</h3><div class="hint">${career && this.careerCar ? (place === 1 ? 'Nothing to take.' : 'Nothing on your car they wanted.') : 'No stakes outside the career.'}</div>`;
     const them = state.cars[1]?.takedowns || 0;
+    const rounds = run ? this.cupDef.cup.rounds.length : 0;
+    const cupHtml = !run ? '' : `<div class="boss-banner">${cupDone ? `CUP: ${ordinal(cupPlace).toUpperCase()} PLACE` : `CUP: ROUND ${run.round + 1} OF ${rounds} DONE`}</div>
+      <h3>${esc(this.cupDef.name)}${cupDone ? ': final standings' : ''}</h3>
+      <table class="standings">${cupOrder.map((i, k) => `<tr class="${i === 0 ? 'me' : ''}"><td>${k + 1}</td><td>${esc(this.names[i])}</td><td>${run.points[i]} PTS (+${cupRound.points[i]}${cupRound.bonus.includes(i) ? ', TAKEDOWN BONUS' : ''}) &middot; KO ${run.takedowns[i]}</td></tr>`).join('')}</table>
+      ${cupDone ? '' : '<div class="hint">The next round starts in reverse order of the Cup: the leader starts last.</div>'}`;
     const duelBanner = duel ? `<div class="boss-banner">DUEL: ${place === 1 ? 'WON' : 'LOST'} ${ev.knockout ? `&middot; ${place === 1 ? 'KNOCKOUT' : 'KNOCKED OUT'} ${player.takedowns || 0}-${them}` : `BY ${duelMargin} M`}</div>` : '';
     this.app.ui.innerHTML = `<div class="screen results"><div class="results-panel">
       <h1>${esc(this.def.name)}</h1>
@@ -1009,12 +1033,14 @@ export class RaceScreen {
       ${ev.mode === 'lastLapOut' ? `<div class="boss-banner">LAST LAP OUT: ${ordinal(place).toUpperCase()} &middot; ${player.out ? `OUT ON LAP ${player.outLap}` : 'SURVIVED'}</div>` : ''}
       ${ev.mode === 'rampage' ? `<div class="boss-banner">RAMPAGE: ${player.takedowns || 0} TAKEDOWNS &middot; ${grade ? `${GRADES[grade]} (${ev.targets[grade - 1]})` : `BRONZE NEEDED ${ev.targets[0]}`} &middot; ${player.out ? 'TOTALED' : 'TIME UP'}</div>` : ''}
       ${banner}
+      ${cupHtml}
       ${newSpots.length ? `<div class="boss-banner">SIGNATURE SPOT${newSpots.length > 1 ? 'S' : ''} FOUND: ${newSpots.map((n) => esc(n.toUpperCase())).join(', ')} (${career.signatures.length} found)</div>` : ''}
       ${fresh.length ? `<div class="boss-banner">NEW IN THE CREATOR: ${fresh.map((s) => esc(s.name)).join(', ')}</div>` : ''}
       <table class="standings">${rows}</table>
       <h3>Winnings</h3>${lines}<div class="reward-line total"><span>Total</span><b>$${rewards.total}</b></div>
       ${duel ? stakes : `<h3>Salvage</h3>${salv}`}
-      <div class="row"><button class="btn primary again" ${fee > (career?.cash ?? 0) ? 'disabled' : ''}>RACE AGAIN${fee ? ` ($${fee})` : ''}</button><button class="btn city">CITY MAP</button><button class="btn garage">GARAGE</button></div>
+      ${run && !cupDone ? '<div class="row"><button class="btn primary next">NEXT ROUND</button><button class="btn city">QUIT CUP</button></div><div class="hint">Quit and the Cup starts again from round 1.</div>'
+    : `<div class="row"><button class="btn primary again" ${fee > (career?.cash ?? 0) ? 'disabled' : ''}>${run ? 'RUN THE CUP AGAIN' : 'RACE AGAIN'}${fee ? ` ($${fee})` : ''}</button><button class="btn city">CITY MAP</button><button class="btn garage">GARAGE</button></div>`}
     </div></div>`;
     // (Duel: the prize goes to the inventory once picked; leaving takes the first.)
     let taken = !prizes.length;
@@ -1033,8 +1059,9 @@ export class RaceScreen {
       take(0);
       this.app.go(to, args);
     };
-    this.app.ui.querySelector('.again').addEventListener('click', leave('race', this.args));
-    this.app.ui.querySelector('.garage').addEventListener('click', leave('garage'));
+    this.app.ui.querySelector('.again')?.addEventListener('click', leave('race', this.args));
+    this.app.ui.querySelector('.next')?.addEventListener('click', leave('race', { ...this.args, cupRun: run && { ...run, round: run.round + 1 } }));
+    this.app.ui.querySelector('.garage')?.addEventListener('click', leave('garage'));
     this.app.ui.querySelector('.city').addEventListener('click', leave('city'));
   }
 
