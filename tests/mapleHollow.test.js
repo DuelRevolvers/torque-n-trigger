@@ -246,7 +246,7 @@ test('maple hollow: third in the campaign, Mule the rival, Picket the boss', () 
   assert.deepEqual(RIVALS, ['jackal', 'ghost', 'mule', 'redline', 'vixen', 'static']);
   assert.equal(event('Backyard').rivalDriver, 'mule');
   assert.equal(event('Picket').driver, 'picket');
-  assert.equal(districtEvents(maple).length, 8); // (with its Rampage and Last Lap Out, phase 7)
+  assert.equal(districtEvents(maple).length, 9); // (with its Rampage, Last Lap Out and Cup, phase 7)
   const picket = DRIVERS.find((d) => d.id === 'picket');
   assert.deepEqual([picket.personality.aggression, picket.personality.caution, picket.personality.target], [0.6, 0.5, 'leader']);
   assert.ok(buildDriver(picket, 3, 1).build.look.woodPanels);

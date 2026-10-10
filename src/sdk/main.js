@@ -14,6 +14,7 @@ import { isSpot } from '../sim/routePoints.js';
 import { layoutObstacle, districtMap } from '../sim/city.js';
 import { onFoot } from '../sim/track.js';
 import { TYPES, typeKey, MODES, BARRIER_STYLES, MODIFIER_LABELS, DRIVERS, newEvent, nextKey, routePoint, arenaSites, routePreview, aiTestRun } from './events.js';
+import { CUP } from '../sim/rules.js';
 import { arenasOf, outlineOf, outlineProblem, middleOf } from '../sim/arenaEdits.js';
 import { Session, footBox } from './session.js';
 import { OBJECT_OPTIONS, optionDefault } from './objectOptions.js';
@@ -1706,9 +1707,28 @@ function renderEvents() {
   const list = allEvents();
   const row = (e) => `<div class="evrow${e.key === evKey ? ' on' : ''}" data-key="${esc(e.key)}"><span>${esc(e.name)}</span><i>${e.key === 'boss' ? 'boss' : TYPES[typeKey(e)] || e.type}${e.rival ? ', rival' : ''}</i></div>`;
   $('events-list').innerHTML = `<h4>This district's events</h4>${list.map(row).join('') || '<p class="note">None yet.</p>'}
-    <h4>New event</h4><div class="toolgrid">${Object.entries(TYPES).map(([t, n]) => `<button data-new="${t}">+ ${n}</button>`).join('')}</div>`;
+    <h4>New event</h4><div class="toolgrid">${Object.entries(TYPES).filter(([t]) => t !== 'cup' || !CREATOR).map(([t, n]) => `<button data-new="${t}">+ ${n}</button>`).join('')}</div>`;
   let html = evDraft ? '' : '<h3>Events</h3><p class="note">Pick an event on the left to edit it here, or make a new one.</p>';
   const d = evDraft;
+  if (d?.type === 'cup') {
+    // A Cup (phase 7d): no route of its own, just its rounds, picked from this district's races.
+    const races = list.filter((e) => (e.type === 'sprint' || e.type === 'circuit') && !e.mode);
+    const pick = (k) => `<label for="ev-round${k}">round ${k + 1}</label><select id="ev-round${k}"><option value="">${k ? '(none)' : '(pick a race)'}</option>${races.map((e) => `<option value="${esc(e.key)}"${d.rounds?.[k] === e.key ? ' selected' : ''}>${esc(e.name)}</option>`).join('')}</select>`;
+    panel.innerHTML = `<h3>${savedEvent(evKey) ? 'Editing' : 'New'}: ${TYPES.cup}</h3>
+      <div class="grid">
+        <label for="ev-name">name</label><input id="ev-name" type="text" value="${esc(d.name)}" />
+        ${CREATOR ? '' : `<label for="ev-purse">purse ($)</label><input id="ev-purse" type="number" step="50" value="${d.purse}" />`}
+        ${Array.from({ length: CUP.rounds }, (_, k) => pick(k)).join('')}
+      </div>
+      <textarea id="ev-desc" placeholder="What the event is, for the event list">${esc(d.desc || '')}</textarea>
+      <p class="note">${CUP.cars} cars, the same field every round. Points ${CUP.points.join('/')}, and a bonus point for the most takedowns in a round. Circuits run at most ${CUP.maxLaps} laps. To test it, test its rounds.</p>
+      <div class="row">
+        <button id="ev-save">Save event</button>
+        ${savedEvent(evKey) ? '<button id="ev-revert">Revert</button><button id="ev-del" class="danger">Delete</button>' : ''}
+      </div>`;
+    bindEvents();
+    return;
+  }
   if (d) {
     const r = d.route;
     // (Its numbers: sliders with their number boxes, each between its sensible ends.)
@@ -1791,6 +1811,11 @@ function readEvent() {
     else delete d.barrierStyle;
   }
   d.purse = Math.max(0, Math.round(num('ev-purse', d.purse)));
+  if (d.type === 'cup') {
+    d.rounds = Array.from({ length: CUP.rounds }, (_, k) => $(`ev-round${k}`)?.value).filter(Boolean);
+    d.cars = CUP.cars;
+    return;
+  }
   if (d.mode === 'duel') d.cars = 2; // (one on one)
   if (d.type === 'circuit' && (!d.mode || d.mode === 'duel')) d.laps = Math.max(1, Math.round(num('ev-laps', d.laps)));
   if (d.mode === 'lastLapOut') d.laps = d.cars - 1; // (always one lap for each car but the winner)
@@ -1931,8 +1956,8 @@ function bindEvents() {
     editEvent(null, null);
     changed(false);
   });
-  $('ev-test').addEventListener('click', testEvent);
-  $('ev-ai').addEventListener('click', runAi);
+  $('ev-test')?.addEventListener('click', testEvent); // (not on a Cup)
+  $('ev-ai')?.addEventListener('click', runAi);
 }
 
 // Saves the draft if it's changed, then checks it can be set up.
@@ -1948,10 +1973,12 @@ function readyEvent() {
 }
 
 function testEvent() {
+  if (evDraft?.type === 'cup') return toast('A Cup has no route of its own: test its rounds.');
   if (evDraft && readyEvent()) testDrive(evKey);
 }
 
 function runAi() {
+  if (evDraft?.type === 'cup') return toast('A Cup has no route of its own: test its rounds.');
   if (!readyEvent() || evRun?.progress !== undefined) return;
   clearGroup(stuckMarks);
   evRun = { progress: 0 };

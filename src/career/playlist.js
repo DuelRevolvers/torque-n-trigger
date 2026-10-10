@@ -23,7 +23,7 @@ export const modeName = (e) =>
 export function maps({ solo = false } = {}) {
   const out = [];
   const add = (id, name, events) => {
-    const list = events.filter((e) => solo || e.type !== 'free');
+    const list = events.filter((e) => (solo || e.type !== 'free') && e.type !== 'cup'); // (Cups: career only, phase 7d)
     if (list.length) out.push({ id, name, events: list });
   };
   for (const d of DISTRICTS) add(d.id, d.name, districtEvents(d));
@@ -38,5 +38,5 @@ export function maps({ solo = false } = {}) {
 // Campaign events from the districts this career has opened.
 export function campaignEvents(career) {
   const open = DISTRICTS.filter((_, i) => (career ? districtUnlocked(career, i) : i === 0));
-  return [...HOME_EVENTS.filter((e) => e.type !== 'free'), ...open.flatMap((d) => districtEvents(d))].filter((e) => e.type !== 'free' && e.mode !== 'rampage' && e.mode !== 'lastLapOut' && e.mode !== 'duel'); // (Rampage, Last Lap Out and Duels: career only for now, phase 7)
+  return [...HOME_EVENTS.filter((e) => e.type !== 'free'), ...open.flatMap((d) => districtEvents(d))].filter((e) => e.type !== 'free' && e.type !== 'cup' && e.mode !== 'rampage' && e.mode !== 'lastLapOut' && e.mode !== 'duel'); // (Rampage, Last Lap Out, Duels and Cups: career only for now, phase 7)
 }
