@@ -19,6 +19,7 @@ import { initEventCar, eventInput, updateEvent } from './event.js';
 import { updateDeathRoll } from './deathRoll.js';
 import { updateRampage } from './rampage.js';
 import { updateLastLapOut } from './lastLapOut.js';
+import { updateDuel } from './duel.js';
 import { initTraffic, stepTraffic, clearTraffic } from './traffic.js';
 
 const NEUTRAL = neutralInput();
@@ -88,6 +89,7 @@ export function stepWorld(world, inputs) {
   updateTakedowns(world, wreckPhysical);
   if (state.event?.mode === 'rampage') updateRampage(world, SIM_DT, respawnCar);
   if (state.event?.mode === 'lastLapOut') updateLastLapOut(world, SIM_DT);
+  if (state.event?.mode === 'duel') updateDuel(world);
   state.tick++;
 }
 

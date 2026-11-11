@@ -7,6 +7,8 @@ import { slowMotion, deathRollLeft, canDetonate } from '../sim/deathRoll.js';
 import { keyBinds, padBinds, keyName, padName } from '../input/bindings.js';
 import { DEATH_ROLL, RAMPAGE } from '../sim/rules.js';
 import { GRADES, gradeOf, gradePlace } from '../sim/rampage.js';
+import { duelGap } from '../sim/duel.js';
+import { newCupRun, scoreRound, cupStandings, cupGrid, lastRound } from '../career/cup.js';
 import { createEventState, gridPoses, standings, resolvePit, initEventCar } from '../sim/event.js';
 import { districtMap } from '../sim/city.js';
 import { InputQueue, neutralInput, sanitizeInput } from '../sim/input.js';
@@ -20,7 +22,7 @@ import { DRIVERS, buildDriver, tierForPr } from '../parts/drivers.js';
 import { partType, partName } from '../parts/catalog.js';
 import { saveCareer, recordResult, recordText } from '../career/career.js';
 import { DISTRICTS } from '../career/districts.js';
-import { EVENTS, computeRewards, rollSalvage, ordinal, BONUS, tierScale } from '../career/events.js';
+import { EVENTS, computeRewards, rollSalvage, ordinal, BONUS, tierScale, duelPrizes, duelForfeit } from '../career/events.js';
 import { PALETTE } from '../render/textures.js';
 import { buildTrackView } from '../render/trackView.js';
 import { buildCityView } from '../render/cityView.js';
@@ -218,14 +220,21 @@ export class RaceScreen {
   // multiplayer: { players: [{ name, carName, build, pr, device }], bots } from the
   // lobby. Players take the first car slots; each gets a split-screen pane.
   // restart: the same race again from the pause menu (no second entry fee).
-  enter({ build, car, event, multiplayer, restart = false }) {
+  enter({ build, car, event, multiplayer, cupRun, restart = false }) {
     this.args = { build, car, event, multiplayer };
     this.mp = multiplayer || null;
     this.net = multiplayer?.online || null;
-    this.def = event || EVENTS.find((e) => e.type === 'circuit');
+    // Championship Cup (phase 7d): a Cup runs its rounds one at a time; cupRun
+    // carries the series to the next round (none: round 1). Its entry is paid once.
+    this.cupDef = event?.cup && !multiplayer ? event : null;
+    this.cupRun = this.cupDef ? cupRun || newCupRun(this.cupDef, Math.floor(Math.random() * 1e9)) : null;
+    this.def = this.cupDef ? this.cupDef.cup.rounds[this.cupRun.round] : event || EVENTS.find((e) => e.type === 'circuit');
+    // A restart replays this Cup round from the standings it started with.
+    if (this.cupRun) this.args.cupRun = structuredClone(this.cupRun);
     this.careerCar = car || null;
-    if (this.careerCar && this.def.entryFee && this.app.career && !restart) {
-      this.app.career.cash -= this.def.entryFee;
+    const entryFee = this.cupDef ? (this.cupRun.round ? 0 : this.cupDef.entryFee) : this.def.entryFee;
+    if (this.careerCar && entryFee && this.app.career && !restart) {
+      this.app.career.cash -= entryFee;
       saveCareer(this.app.career);
     }
     for (const v of this.venues.values()) v.group.visible = false;
@@ -280,10 +289,11 @@ export class RaceScreen {
     } else {
       this.tier = this.def.tier ?? tierForPr(computeBuild(build).pr);
       const special = this.def.driver || this.def.rivalDriver || null;
-      const pool = [...DRIVERS].sort((a, b) => ((hashId(a.id) ^ seed) >>> 0) - ((hashId(b.id) ^ seed) >>> 0)).filter((d) => d.id !== special);
+      const fieldSeed = this.cupRun?.seed ?? seed; // (a Cup: the same field every round)
+      const pool = [...DRIVERS].sort((a, b) => ((hashId(a.id) ^ fieldSeed) >>> 0) - ((hashId(b.id) ^ fieldSeed) >>> 0)).filter((d) => d.id !== special);
       const drivers = [...(special ? [DRIVERS.find((d) => d.id === special)] : []), ...pool].slice(0, this.def.cars - 1);
       const fieldTier = special ? Math.max(0, this.tier - 1) : this.tier;
-      entries = drivers.map((d, k) => buildDriver(d, special && k === 0 ? this.tier : fieldTier, seed + k));
+      entries = drivers.map((d, k) => buildDriver(d, special && k === 0 ? this.tier : fieldTier, fieldSeed + k));
       this.specialIndex = special ? 1 : -1;
       this.names = ['YOU', ...entries.map((e, k) => (special && k === 0 ? `${e.name} ${this.def.boss ? 'BOSS' : 'RIVAL'}` : e.name))];
     }
@@ -294,7 +304,7 @@ export class RaceScreen {
       track: this.track,
       // Multiplayer runs every car fresh; wear isn't written back either.
       cars: this.builds.map((b, i) => ({ params: this.computed[i].params, conditions: conditionsOf(this.mp ? pristine(b) : b) })),
-      poses: gridPoses(this.track, this.def, n),
+      poses: this.cupRun ? cupGrid(this.cupRun, gridPoses(this.track, this.def, n)) : gridPoses(this.track, this.def, n), // (a Cup: reverse order after round 1)
       event: createEventState(this.def, this.track),
       respawnOnWreck: !(this.def.type === 'arena' && this.def.mode === 'lastStanding'),
       humans: H,
@@ -321,6 +331,7 @@ export class RaceScreen {
     this.shakes = humans.map(() => 0); // per human car
     this.wrongWays = humans.map(() => 0);
     this.popupsBy = humans.map(() => []);
+    if (this.cupRun) this.popup(`ROUND ${this.cupRun.round + 1} OF ${this.cupDef.cup.rounds.length}`, PALETTE.amber);
     this.setupNet();
     this.prevPoses = this.capturePoses();
     this.victims = new Set();
@@ -661,7 +672,8 @@ export class RaceScreen {
     const alive = state.cars.filter((c) => !c.wrecked).length;
     const rampage = ev.mode === 'rampage';
     const llo = ev.mode === 'lastLapOut';
-    const title = rampage ? 'RAMPAGE' : {
+    const duel = ev.mode === 'duel';
+    const title = rampage ? 'RAMPAGE' : duel && ev.type === 'sprint' ? 'DUEL' : {
       free: `LAP ${Math.max(1, car.race.lap)}`,
       circuit: `LAP ${Math.min(Math.max(1, car.race.lap), ev.laps)}/${ev.laps}`,
       sprint: 'SPRINT',
@@ -688,6 +700,14 @@ export class RaceScreen {
       const left = state.cars.filter((c) => !c.out).length;
       sub = `${dropZone ? 'DROP ZONE - ' : ''}${left} LEFT`;
     }
+    let behind = false;
+    if (duel) {
+      // The gap on the road, red while you're behind; and the knockout count, yours first.
+      const gap = Math.round(duelGap(this.world, p));
+      const them = state.cars.find((_, j) => j !== p);
+      behind = gap < 0;
+      sub = `${behind ? 'BEHIND' : 'AHEAD'} ${Math.abs(gap)}M - KO ${car.takedowns || 0}-${them?.takedowns || 0}`;
+    }
     const place = ev.finished.indexOf(p) + 1;
     const outPlace = llo && car.out ? state.cars.length - ev.eliminated.indexOf(p) : 0;
     return {
@@ -699,14 +719,14 @@ export class RaceScreen {
       countdown: ev.phase === 'countdown' ? Math.ceil(ev.timer) : null,
       go: ev.phase === 'racing' && ev.time < 0.8,
       manual: car.manual,
-      finishedText: llo && place ? 'SURVIVED' : outPlace ? `ELIMINATED ${ordinal(outPlace)}` : place ? `FINISHED ${ordinal(place)}` : car.wrecked && ev.mode === 'lastStanding' ? 'ELIMINATED' : rampage && car.out ? 'TOTALED' : rampage && ev.done ? 'TIME UP' : null,
+      finishedText: duel ? (ev.done ? (ev.finished[0] === p ? 'DUEL WON' : 'DUEL LOST') : null) : llo && place ? 'SURVIVED' : outPlace ? `ELIMINATED ${ordinal(outPlace)}` : place ? `FINISHED ${ordinal(place)}` : car.wrecked && ev.mode === 'lastStanding' ? 'ELIMINATED' : rampage && car.out ? 'TOTALED' : rampage && ev.done ? 'TIME UP' : null,
       inPit: car.inPit,
       // Rampage: the chassis meter, red under the totaled line; the clock blinks for its last 10 s.
       chassis: rampage ? car.chassis : null,
       chassisLow: rampage && car.chassis < RAMPAGE.totaled,
       clockWarn: rampage && ev.phase === 'racing' && ev.timeLimit - ev.time < 10,
       totaled: rampage && car.out,
-      subWarn: dropZone,
+      subWarn: dropZone || behind,
       wrongWay: this.wrongWays[p] > 1,
       popups: this.popupsBy[p],
       deathRoll: deathRollLeft(this.world, p) > 0
@@ -766,6 +786,12 @@ export class RaceScreen {
         // (Last Lap Out.)
         if (e.type === 'eliminated') this.popup(e.car === p ? 'ELIMINATED!' : `${this.names[e.car]} ELIMINATED`, e.car === p ? PALETTE.pink : PALETTE.cyan, p);
         if (e.type === 'finish' && e.car === p && this.world.state.event.mode === 'lastLapOut') this.popup('SURVIVED!', PALETTE.amber, p);
+        // (Duel: the stakes at the start; a knockout; the first car home.)
+        if (this.world.state.event.mode === 'duel') {
+          if (e.type === 'go' && this.careerCar) this.popup('WIN THEIR PART - LOSE ONE OF YOURS', PALETTE.cyan, p);
+          if (e.type === 'knockout') this.popup(e.car === p ? 'KNOCKOUT!' : 'KNOCKED OUT!', e.car === p ? PALETTE.amber : PALETTE.pink, p);
+          if (e.type === 'finish' && !this.world.state.event.knockout) this.popup(e.car === p ? 'DUEL WON!' : 'DUEL LOST', e.car === p ? PALETTE.amber : PALETTE.pink, p);
+        }
         // A side slam or T-bone dealt (once per 1.5 s per car hit, so trading paint doesn't fill the stack).
         if (e.type === 'contact' && e.attacker === p && (e.label === 'slam' || e.label === 'huge') && e.geo !== 'shunt' && e.geo !== 'headOn') {
           const key = `${p}:${e.victim}`;
@@ -892,13 +918,22 @@ export class RaceScreen {
     // (Rampage: the targets reached set the place: gold 1st, silver 2nd, bronze 3rd.)
     const grade = ev.mode === 'rampage' ? gradeOf(ev.targets, player.takedowns || 0) : 0;
     const place = ev.mode === 'rampage' ? gradePlace(grade, order.length) : order.findIndex((r) => r.id === 0) + 1;
-    const rewards = computeRewards(this.def, place, player, this.tier);
+    // Championship Cup (phase 7d): the round is scored; the last one settles the Cup.
+    const run = this.cupRun;
+    const cupDone = !!run && lastRound(run, this.cupDef);
+    const cupRound = run ? scoreRound(run, order, state.cars.map((c) => c.takedowns || 0), [...this.victims]) : null;
+    const cupOrder = run ? cupStandings(run) : null;
+    const cupPlace = cupDone ? cupOrder.indexOf(0) + 1 : 0;
+    const rewards = computeRewards(run ? { ...this.def, cupPlace } : this.def, place, player, this.tier);
     const career = this.app.career;
     const unlockedBefore = career ? unlockedIds(career) : null;
     // Salvage: normal cars drop worn, downgraded parts; a wrecked rival or boss
     // drops a full-quality part, and beating a boss always pays one.
+    // (A Duel has stakes instead.)
+    const duel = ev.mode === 'duel';
     const victims = [...this.victims];
-    const salvage = rollSalvage(victims.filter((i) => i !== this.specialIndex).map((i) => this.builds[i]), this.seed ^ 0xa5a5);
+    // (A Cup: once, at the end, from every car you took down in it.)
+    const salvage = duel || (run && !cupDone) ? [] : rollSalvage((run ? run.victims : victims).filter((i) => i !== this.specialIndex).map((i) => this.builds[i]), this.seed ^ 0xa5a5);
     let bossBeaten = false;
     let unlocked = null;
     const newSpots = [];
@@ -914,8 +949,18 @@ export class RaceScreen {
         }
       }
     }
-    if (this.specialIndex > 0 && (bossBeaten || victims.includes(this.specialIndex))) {
+    if (!duel && this.specialIndex > 0 && (bossBeaten || victims.includes(this.specialIndex))) {
       salvage.push(...rollSalvage([this.builds[this.specialIndex]], this.seed ^ 0x5a5a, { chance: 1, downgrade: false }));
+    }
+    // Duel stakes (phase 7c): the winner picks a part off the rival's car (below);
+    // the loser forfeits one of its cheaper parts.
+    let prizes = [];
+    let forfeit = null;
+    if (duel && career && this.careerCar) {
+      const district = DISTRICTS.find((x) => x.id === this.def.district);
+      if (place === 1) prizes = duelPrizes(this.builds[1]);
+      else if (district) forfeit = duelForfeit(this.careerCar.build, district.tier, this.seed ^ 0x3c3c);
+      if (forfeit) this.careerCar.build.parts[forfeit.slot] = forfeit.replacement;
     }
     if (career && this.careerCar) {
       career.cash = (career.cash || 0) + rewards.total;
@@ -942,47 +987,87 @@ export class RaceScreen {
       }
       career.completed ??= [];
       // Best result per event, shown on its card afterwards.
-      if (this.def.career && place > 0) {
+      // (A Cup: once, at the end, for its place in the Cup.)
+      const recId = run ? (cupDone ? this.cupDef.id : null) : this.def.id;
+      const recPlace = run ? cupPlace : place;
+      const recOf = run ? run.points.length : order.length;
+      if (this.def.career && recId && recPlace > 0) {
         career.results ??= {};
-        const prev = career.results[this.def.id];
-        career.results[this.def.id] = { best: prev ? Math.min(prev.best, place) : place, of: order.length, runs: (prev?.runs || 0) + 1 };
+        const prev = career.results[recId];
+        career.results[recId] = { best: prev ? Math.min(prev.best, recPlace) : recPlace, of: recOf, runs: (prev?.runs || 0) + 1 };
       }
-      if (this.def.career && place > 0 && place <= 3 && !career.completed.includes(this.def.id)) career.completed.push(this.def.id);
+      // (A Duel only counts won.)
+      if (this.def.career && recId && recPlace > 0 && recPlace <= (duel ? 1 : 3) && !career.completed.includes(recId)) career.completed.push(recId);
       saveCareer(career);
     }
-    const fee = this.def.entryFee || 0;
+    const fee = (run ? this.cupDef.entryFee : this.def.entryFee) || 0;
     const fresh = unlockedBefore ? SPECIALS.filter((s) => !unlockedBefore.has(s.id) && unlockedIds(career).has(s.id)) : [];
     const banner = bossBeaten
       ? `<div class="boss-banner">BOSS BEATEN! ${unlocked ? `${unlocked.name} is now open.` : this.def.district === 'spire' ? 'You are the champion of Neon Sprawl!' : ''}</div>`
       : this.def.boss ? '<div class="err">Finish ahead of the boss to open the next district.</div>' : '';
 
+    const duelMargin = duel ? Math.round(Math.abs(order[0].progress - (order[1]?.progress ?? order[0].progress))) : 0;
     const rows = order.map((r, k) => {
       let result;
       if (ev.type === 'arena' || ev.mode === 'rampage') result = `KO ${r.takedowns}${ev.mode === 'lastStanding' ? (r.eliminated === -1 ? ' &middot; SURVIVED' : ' &middot; OUT') : ''}`;
       else if (ev.mode === 'lastLapOut') result = lloResult(state, r);
+      else if (duel && !r.finished) result = ev.knockout?.loser === r.id ? 'KNOCKED OUT' : `${duelMargin} M BACK`;
       else result = r.finished ? formatTime(Math.round(r.time * 60)) : 'DNF';
       return `<tr class="${r.id === 0 ? 'me' : ''}"><td>${k + 1}</td><td>${esc(this.names[r.id])}</td><td>${result}</td></tr>`;
     }).join('');
     const lines = rewards.lines.map(([label, v]) => `<div class="reward-line"><span>${label}</span><b>$${v}</b></div>`).join('');
-    const salv = salvage.length
+    const salv = run && !cupDone ? '<div class="hint">Salvage comes at the end of the Cup.</div>' : salvage.length
       ? salvage.map((p) => `<div class="q-${p.quality}">${esc(partName(p))} (${p.condition}%)</div>`).join('')
       : '<div class="hint">No salvage this time.</div>';
+    const rival = this.names[1] || 'The rival';
+    const stakes = !duel ? ''
+      : prizes.length ? `<h3>Take one of their parts</h3><div class="row prizes">${prizes.map((p, k) => `<button class="btn prize q-${p.quality}" data-k="${k}">${esc(partName(p))}</button>`).join('')}</div><div class="hint">Pick one. Leave without picking and you get the first, the most valuable.</div>`
+      : forfeit ? `<h3>Stakes</h3><div class="err">${esc(rival)} took your ${esc(partName(forfeit.taken))}.${forfeit.replacement ? ` A Junk ${esc(partName(forfeit.replacement))} is fitted in its place.` : ''}</div>`
+      : `<h3>Stakes</h3><div class="hint">${career && this.careerCar ? (place === 1 ? 'Nothing to take.' : 'Nothing on your car they wanted.') : 'No stakes outside the career.'}</div>`;
+    const them = state.cars[1]?.takedowns || 0;
+    const rounds = run ? this.cupDef.cup.rounds.length : 0;
+    const cupHtml = !run ? '' : `<div class="boss-banner">${cupDone ? `CUP: ${ordinal(cupPlace).toUpperCase()} PLACE` : `CUP: ROUND ${run.round + 1} OF ${rounds} DONE`}</div>
+      <h3>${esc(this.cupDef.name)}${cupDone ? ': final standings' : ''}</h3>
+      <table class="standings">${cupOrder.map((i, k) => `<tr class="${i === 0 ? 'me' : ''}"><td>${k + 1}</td><td>${esc(this.names[i])}</td><td>${run.points[i]} PTS (+${cupRound.points[i]}${cupRound.bonus.includes(i) ? ', TAKEDOWN BONUS' : ''}) &middot; KO ${run.takedowns[i]}</td></tr>`).join('')}</table>
+      ${cupDone ? '' : '<div class="hint">The next round starts in reverse order of the Cup: the leader starts last.</div>'}`;
+    const duelBanner = duel ? `<div class="boss-banner">DUEL: ${place === 1 ? 'WON' : 'LOST'} ${ev.knockout ? `&middot; ${place === 1 ? 'KNOCKOUT' : 'KNOCKED OUT'} ${player.takedowns || 0}-${them}` : `BY ${duelMargin} M`}</div>` : '';
     this.app.ui.innerHTML = `<div class="screen results"><div class="results-panel">
       <h1>${esc(this.def.name)}</h1>
       <h2>${ev.mode === 'rampage' ? GRADES[grade] || 'NO TARGET' : `${ordinal(place)} place`}</h2>
+      ${duelBanner}
       ${ev.mode === 'lastLapOut' ? `<div class="boss-banner">LAST LAP OUT: ${ordinal(place).toUpperCase()} &middot; ${player.out ? `OUT ON LAP ${player.outLap}` : 'SURVIVED'}</div>` : ''}
       ${ev.mode === 'rampage' ? `<div class="boss-banner">RAMPAGE: ${player.takedowns || 0} TAKEDOWNS &middot; ${grade ? `${GRADES[grade]} (${ev.targets[grade - 1]})` : `BRONZE NEEDED ${ev.targets[0]}`} &middot; ${player.out ? 'TOTALED' : 'TIME UP'}</div>` : ''}
       ${banner}
+      ${cupHtml}
       ${newSpots.length ? `<div class="boss-banner">SIGNATURE SPOT${newSpots.length > 1 ? 'S' : ''} FOUND: ${newSpots.map((n) => esc(n.toUpperCase())).join(', ')} (${career.signatures.length} found)</div>` : ''}
       ${fresh.length ? `<div class="boss-banner">NEW IN THE CREATOR: ${fresh.map((s) => esc(s.name)).join(', ')}</div>` : ''}
       <table class="standings">${rows}</table>
       <h3>Winnings</h3>${lines}<div class="reward-line total"><span>Total</span><b>$${rewards.total}</b></div>
-      <h3>Salvage</h3>${salv}
-      <div class="row"><button class="btn primary again" ${fee > (career?.cash ?? 0) ? 'disabled' : ''}>RACE AGAIN${fee ? ` ($${fee})` : ''}</button><button class="btn city">CITY MAP</button><button class="btn garage">GARAGE</button></div>
+      ${duel ? stakes : `<h3>Salvage</h3>${salv}`}
+      ${run && !cupDone ? '<div class="row"><button class="btn primary next">NEXT ROUND</button><button class="btn city">QUIT CUP</button></div><div class="hint">Quit and the Cup starts again from round 1.</div>'
+    : `<div class="row"><button class="btn primary again" ${fee > (career?.cash ?? 0) ? 'disabled' : ''}>${run ? 'RUN THE CUP AGAIN' : 'RACE AGAIN'}${fee ? ` ($${fee})` : ''}</button><button class="btn city">CITY MAP</button><button class="btn garage">GARAGE</button></div>`}
     </div></div>`;
-    this.app.ui.querySelector('.again').addEventListener('click', () => this.app.go('race', this.args));
-    this.app.ui.querySelector('.garage').addEventListener('click', () => this.app.go('garage'));
-    this.app.ui.querySelector('.city').addEventListener('click', () => this.app.go('city'));
+    // (Duel: the prize goes to the inventory once picked; leaving takes the first.)
+    let taken = !prizes.length;
+    const take = (k) => {
+      if (taken) return;
+      taken = true;
+      career.inventory.push(prizes[k]);
+      saveCareer(career);
+      this.app.ui.querySelectorAll('.prize').forEach((b, j) => {
+        b.disabled = true;
+        if (j === k) b.textContent += ' - TAKEN';
+      });
+    };
+    this.app.ui.querySelectorAll('.prize').forEach((b) => b.addEventListener('click', () => take(Number(b.dataset.k))));
+    const leave = (to, args) => () => {
+      take(0);
+      this.app.go(to, args);
+    };
+    this.app.ui.querySelector('.again')?.addEventListener('click', leave('race', this.args));
+    this.app.ui.querySelector('.next')?.addEventListener('click', leave('race', { ...this.args, cupRun: run && { ...run, round: run.round + 1 } }));
+    this.app.ui.querySelector('.garage')?.addEventListener('click', leave('garage'));
+    this.app.ui.querySelector('.city').addEventListener('click', leave('city'));
   }
 
   // Multiplayer results: standings only. No cash, salvage or career record changes.

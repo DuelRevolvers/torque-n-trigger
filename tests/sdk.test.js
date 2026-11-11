@@ -285,7 +285,7 @@ test('sdk: a race starts and finishes anywhere: up on a roof, off the streets, u
   const { Session } = await import('../src/sdk/session.js');
   // Every official race is built as before: no spots, nothing up on anything.
   for (const d of DISTRICTS) {
-    for (const e of [...d.events, d.boss].filter((q) => q.route.kind !== 'arena')) {
+    for (const e of [...d.events, d.boss].filter((q) => q.route && q.route.kind !== 'arena')) { // (a Cup has no route)
       const t = buildTrack(cityVenue(d.city, e.route).def);
       assert.ok(!t.tops && t.startS === null && t.startY === null && t.finishY === null, `${d.id} ${e.key}`);
     }

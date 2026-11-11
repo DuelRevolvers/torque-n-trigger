@@ -30,6 +30,7 @@ const STYLE = { driftPerSecond: 25, airPerSecond: 60, nearMiss: 40, oncomingPerM
 // def: { type: 'sprint'|'circuit'|'arena'|'drag', laps?, mode?, timeLimit?, targets?, pit?, startS?, finishS?, rubberBand? }
 // (mode 'rampage' on a circuit: no laps or finish, a clock and takedown targets; sim/rampage.js.)
 // (mode 'lastLapOut' on a circuit: cars − 1 laps, last place out each lap; sim/lastLapOut.js.)
+// (mode 'duel' on a sprint or circuit: two cars, first home or a knockout wins; sim/duel.js.)
 export function createEventState(def, track) {
   return {
     type: def.type,
@@ -58,6 +59,7 @@ export function createEventState(def, track) {
     finished: [],
     finishTime: {},
     eliminated: [],
+    knockout: null, // (Duel: { winner, loser })
     done: false,
   };
 }
@@ -242,6 +244,10 @@ export function updateEvent(world, dt) {
     const humans = state.cars.slice(0, world.humans || 0);
     if (alive.length === 1) finish(world, alive[0]);
     if (alive.length <= 1 || (humans.length && humans.every((c) => c.out))) ev.done = true;
+  } else if (ev.mode === 'duel') {
+    // (Duel: the first car home, or a knockout, ends it.)
+    if (ev.knockout) finish(world, ev.knockout.winner);
+    if (ev.finished.length || (ev.timeLimit && ev.time >= ev.timeLimit)) ev.done = true;
   } else if (ev.finished.length === n || (ev.timeLimit && ev.time >= ev.timeLimit)) {
     ev.done = true;
   }

@@ -147,6 +147,6 @@ test('chrome heights: fourth in the campaign, Redline the rival, Static the boss
   assert.equal(DISTRICTS.indexOf(chrome), 3);
   assert.equal(event('Tower Run').rivalDriver, 'redline');
   assert.equal(event('Static').driver, 'static');
-  assert.equal(districtEvents(chrome).length, 8); // (with its Rampage and Last Lap Out, phase 7)
+  assert.equal(districtEvents(chrome).length, 9); // (with its Rampage, Last Lap Out and Cup, phase 7)
   assert.deepEqual(event('Sprint').modifiers, ['weaponsLate']);
 });
