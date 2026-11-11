@@ -22,7 +22,7 @@ import { arenasOf, middleOf, reachIn } from './arenaEdits.js';
 import { buildArena } from './arena.js';
 import * as G from './geom2d.js';
 import { planTrack, planRoam } from './planRoute.js';
-import { isSpot, spotEnds, placedSolids, RUN_UP, RUN_OFF } from './routePoints.js';
+import { isSpot, spotEnds, placedSolids, RUN_UP, RUN_OFF, DRAG_GRID } from './routePoints.js';
 import { clearRoute } from './raceClear.js';
 import { openRoute } from './openRoute.js';
 
@@ -1244,11 +1244,28 @@ function pathNodes(map, names) {
         ((Math.abs(q.z - p.z) < 1 && Math.abs(q.z - n.z) < 1 && (q.x - p.x) * (q.x - n.x) < 0) ||
           (Math.abs(q.x - p.x) < 1 && Math.abs(q.x - n.x) < 1 && (q.z - p.z) * (q.z - n.z) < 0)))
       .sort((u, v) => Math.hypot(u.x - p.x, u.z - p.z) - Math.hypot(v.x - p.x, v.z - p.z));
+  // Two spots on one way through, one after the other (the T&T SDK's clicks
+  // along it): the stretch of it between them, or null.
+  const wayBetween = (p, q) => {
+    for (const c of map.corridors) {
+      if (!c.id || !c.points?.length) continue;
+      const [a, b] = [G.nearestOnLine(c.points, p.x, p.z), G.nearestOnLine(c.points, q.x, q.z)];
+      if (a.d > 2 || b.d > 2 || Math.abs(a.s - b.s) < 1) continue;
+      const run = G.subLine(c.points, Math.min(a.s, b.s), Math.max(a.s, b.s)).slice(1, -1);
+      return { id: c.id, pts: (a.s < b.s ? run : run.reverse()).map(([x, z]) => ({ x, z, corridor: c.id })) };
+    }
+    return null;
+  };
   const out = [];
   for (const name of names) {
     const seq = resolve(name, out[out.length - 1]);
     const p = out[out.length - 1];
-    if (p) out.push(...along(p, seq[0]));
+    const run = p?.spot && seq[0].spot ? wayBetween(p, seq[0]) : null;
+    if (run) {
+      // (The race follows the way between them: not straight across what's beside it.)
+      p.corridor = seq[0].corridor = run.id;
+      out.push(...run.pts);
+    } else if (p) out.push(...along(p, seq[0]));
     // One way through straight into the next (alley to alley across a street) shares a point.
     if (p && Math.hypot(seq[0].x - p.x, seq[0].z - p.z) < 0.5) seq.shift();
     out.push(...seq);
@@ -1497,7 +1514,8 @@ function authoredRoute(map, style, route) {
   const zones = [];
   list.forEach((p, k) => {
     const q = list[(k + 1) % list.length];
-    if ((k + 1 < list.length || circuit) && (p.off || q.off)) zones.push([[p.x, p.z], [q.x, q.z]]);
+    // (Not along a way through between two spots on it: that's the way's own road.)
+    if ((k + 1 < list.length || circuit) && (p.off || q.off) && !(p.corridor && p.corridor === q.corridor)) zones.push([[p.x, p.z], [q.x, q.z]]);
   });
   const ground = map.authored ? () => 0 : map.heightAt;
   const def = { name: `${style.name} ${route.kind}`, closed: circuit, ...STREET, points: roundedPoints(list, circuit, CORNER_R, ground) };
@@ -1609,6 +1627,23 @@ function cityVenueOf(style, route) {
     const line = [];
     for (let i = 0; i < style.cols; i++) line.push(map.nodes[map.nid(i, map.avenue)]);
     const def = { name, closed: false, ...STREET, points: roundedPoints(line, false, CORNER_R, map.heightAt), jumps: [] };
+    if (route.placed && Array.isArray(route.from) && Array.isArray(route.to)) {
+      // Placed in the T&T SDK: along the street its start is on, from its start
+      // line to its finish line, with street behind the grid and past the finish.
+      const on = map.nodes.filter((q) => q.i >= 0 && !q.stub);
+      const near = on.reduce((b, q) => (Math.hypot(q.x - route.from[0], q.z - route.from[1]) < Math.hypot(b.x - route.from[0], b.z - route.from[1]) ? q : b));
+      const [u, v] = Math.abs(route.to[0] - route.from[0]) >= Math.abs(route.to[1] - route.from[1]) ? ['x', 'z'] : ['z', 'x'];
+      const [k, fixed] = [u === 'x' ? 0 : 1, near[v]];
+      const row = on.filter((q) => Math.abs(q[v] - fixed) < 1).map((q) => q[u]);
+      const [lo, hi] = [Math.min(...row), Math.max(...row)];
+      const dir = route.to[k] >= route.from[k] ? 1 : -1;
+      const clamp = (t) => Math.max(lo, Math.min(hi, t));
+      const [a, b] = [clamp(route.from[k]), clamp(route.to[k])];
+      const [a0, b0] = [clamp(a - dir * DRAG_GRID), clamp(b + dir * RUN_OFF)];
+      const at = (t) => (u === 'x' ? { x: t, z: fixed } : { x: fixed, z: t });
+      def.points = roundedPoints([at(a0), at(b0)], false, CORNER_R, map.heightAt);
+      Object.assign(def, { startS: Math.max(6, Math.abs(a - a0)), finishS: Math.min(Math.abs(a - a0) + Math.abs(b - a), Math.abs(b0 - a0) - 4) });
+    }
     placedSolids(def, map); // (what's placed in the T&T SDK is solid)
     return { kind: 'track', def };
   }

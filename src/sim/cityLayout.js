@@ -110,8 +110,11 @@ function clearDrawnStreets(streets, items) {
   };
   const reachOf = (it) => (it.obb ? it.obb.hw + it.obb.hd : Array.isArray(it.r) ? (it.r[1] - it.r[0] + it.r[3] - it.r[2]) / 2 : 2);
   // Off the carriageway; buildings (and anything as big) off the sidewalks too, lamps and the like kept.
-  const big = (it) => it.t === 'bldg' || (it.solid && reachOf(it) > 3);
-  const kept = items.filter((it) => !near(it, reachOf(it)) || !samples.some((p) => footDistance(it, p.x, p.z) < (big(it) ? p.edge : p.half)));
+  // (A rooftop road's own crossings stay: its bridges, a gap's overhangs and
+  // kickers, and the balustrades along their sides, sim/planRoof.js.)
+  const own = (it) => it.t === 'bridge' || it.t === 'cantilever' || it.t === 'gapJump' || it.t === 'kicker';
+  const big = (it) => it.t === 'bldg' || (it.solid && reachOf(it) > 3 && it.t !== 'balustrade');
+  const kept = items.filter((it) => own(it) || !near(it, reachOf(it)) || !samples.some((p) => footDistance(it, p.x, p.z) < (big(it) ? p.edge : p.half)));
   // Buildings beside the street that overlap one another: the bigger stays.
   const beside = kept.filter((it) => it.t === 'bldg' && footCorners(it) && near(it, reachOf(it) + 60)).sort((a, b) => reachOf(b) - reachOf(a));
   const gone = new Set();

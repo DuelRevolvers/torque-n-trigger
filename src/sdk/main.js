@@ -9,7 +9,7 @@ import { docFromDistrict, districtFromDoc, serializeDoc, parseDoc, baseChanged, 
 import { canMove, LINKED, itemCentre, longSide, withSet } from '../sim/layoutEdits.js';
 import { runnable, runPieces } from './runs.js';
 import { baseLayout } from '../sim/cityLayout.js';
-import { brokenEvents, gridProblem, wayProblem } from './checks.js';
+import { brokenEvents, gridProblem, wayProblem, routeProblem } from './checks.js';
 import { isSpot } from '../sim/routePoints.js';
 import { layoutObstacle, districtMap } from '../sim/city.js';
 import { onFoot } from '../sim/track.js';
@@ -258,6 +258,7 @@ let evDraft = null;
 let evPreview = null;
 let evGrid = null; // the draft's grid, if it doesn't fit (gridProblem)
 let evWay = null; // where the draft runs into something off the streets (wayProblem)
+let evBad = null; // where the draft turns too sharply, or crosses or runs over itself (routeProblem)
 let evRun = null; // an AI test run: { progress } while it runs, then its results
 let rebuildTimer = 0;
 const cam = { x: 0, y: 300, z: 400, yaw: Math.PI, pitch: -0.6, top: null };
@@ -1635,6 +1636,7 @@ function previewEvent() {
     const built = evPreview && !evPreview.error && evPreview.pts;
     evGrid = built ? gridProblem(session.withEvents(), evDraft) : null;
     evWay = built ? wayProblem(session.withEvents(), evDraft) : null;
+    evBad = built && r.path ? routeProblem(evPreview.pts, evPreview.closed, { ...routeRules(r), heights: evPreview.ys }) : null;
     showEventLine();
     const box = $('ev-preview');
     if (box) box.innerHTML = previewText();
@@ -1659,9 +1661,12 @@ function previewText() {
   const laps = evDraft.type === 'circuit' ? evDraft.laps || 1 : 1;
   // (A start or finish up on top of something.)
   const up = (y, p, what) => (y !== null && y !== undefined ? `<p class="note">${what} is ${(y - H(p[0], p[1])).toFixed(1)} m up, on top of something${what === 'The finish' ? ': a car has to get up there to finish' : ''}.</p>` : '');
-  return `<p class="note ok">${(evPreview.length / 1000).toFixed(2)} km${evPreview.closed ? ` a lap × ${laps} = ${((evPreview.length * laps) / 1000).toFixed(2)} km` : ''}; ${evPreview.shortcuts} shortcut${evPreview.shortcuts === 1 ? '' : 's'} open.</p>
+  // (A drag placed here: from its start line to its finish line.)
+  const length = r.kind === 'drag' && r.placed ? evPreview.finishS - evPreview.startS : evPreview.length;
+  return `<p class="note ok">${(length / 1000).toFixed(2)} km${evPreview.closed ? ` a lap × ${laps} = ${((evPreview.length * laps) / 1000).toFixed(2)} km` : ''}; ${evPreview.shortcuts} shortcut${evPreview.shortcuts === 1 ? '' : 's'} open.</p>
     ${evGrid ? `<p class="note warn">${esc(evGrid.text.replace('something', thing(evGrid.key)))}</p>` : ''}
     ${evWay ? `<p class="note warn">${esc(evWay.text.replace('something', thing(evWay.key)))}</p>` : ''}
+    ${evBad && evStage !== 'placing' ? `<p class="note warn">${esc(evBad.text)}</p>` : ''}
     ${up(evPreview.startY, r.path[0], 'The start')}${evPreview.closed ? '' : up(evPreview.finishY, r.path[r.path.length - 1], 'The finish')}`;
 }
 
@@ -1674,11 +1679,11 @@ function routeClick(g) {
     if (evStage === 'start') {
       const s = raceSpot();
       if (s.why) return toast(s.why);
-      placeStart(s.at);
+      tryRoute(() => placeStart(s.at));
     } else if (evStage === 'placing') {
       const p = routeAdd();
       if (p.why) return toast(p.why);
-      if (JSON.stringify(r.path[r.path.length - 1]) !== JSON.stringify(p.point)) r.path.push(p.point);
+      if (JSON.stringify(r.path[r.path.length - 1]) !== JSON.stringify(p.point)) tryRoute(() => r.path.push(p.point));
     }
   } else if (r.kind === 'drag') {
     // A drag: its start on a street, then its finish (one click) further along it.
@@ -1690,10 +1695,13 @@ function routeClick(g) {
       if (!street) return toast('Put the start on a street.');
       const keep = r.along === street && r.to !== null && r.to !== undefined && r.along;
       Object.assign(r, { along: street, from: at, to: keep ? r.to : null });
+      placedDrag();
       evStage = keep ? 'editing' : 'placing';
     } else if (evStage === 'placing') {
       if (street !== r.along) return toast(`Put the finish on ${r.along}, the street it starts on.`);
+      if (Math.hypot(at[0] - r.from[0], at[1] - r.from[1]) < DRAG_MIN) return toast(`A drag race needs at least ${DRAG_MIN} m: put the finish further along ${r.along}.`);
       r.to = at;
+      placedDrag();
       evStage = 'editing';
     } else return;
   } else return;
@@ -1743,7 +1751,7 @@ function renderEvents() {
         ${d.type === 'circuit' && (!d.mode || d.mode === 'duel') ? field('ev-laps', 'laps', d.laps) : ''}
         ${d.mode === 'lastLapOut' ? `<label for="ev-laps">laps (cars - 1)</label><input id="ev-laps" type="number" value="${d.cars - 1}" disabled />` : ''}
         ${d.mode === 'rampage' ? field('ev-time', 'time (s)', d.timeLimit, 'number', 10) + field('ev-targets', 'targets (bronze, silver, gold)', (d.targets || []).join(', '), 'text') : ''}
-        ${d.type === 'drag' ? field('ev-finish', 'length (m)', d.finishS ?? 414, 'number', 10) : ''}
+        ${d.type === 'drag' && !d.route?.placed ? field('ev-finish', 'length (m)', d.finishS ?? 414, 'number', 10) : ''}
         ${d.type === 'arena' ? `<label for="ev-mode">mode</label><select id="ev-mode">${Object.entries(MODES).map(([k, n]) => `<option value="${k}"${d.mode === k ? ' selected' : ''}>${n}</option>`).join('')}</select>${field('ev-time', 'time (s)', d.timeLimit, 'number', 10)}<label for="ev-site">ground</label><select id="ev-site">${arenaSites(session).map((a) => `<option value="${a.site}"${r.site === a.site ? ' selected' : ''}>${esc(a.name)}</option>`).join('')}</select>` : ''}
         ${d.type === 'arena' ? '' : `<label for="ev-barrier">barrier look</label><select id="ev-barrier" title="How the race's barriers look, when it has them"${d.barriers ? '' : ' disabled'}>${Object.entries(BARRIER_STYLES).map(([k, n]) => `<option value="${k}"${(d.barrierStyle || '') === k ? ' selected' : ''}>${n}</option>`).join('')}</select>`}
         ${isBoss() ? `<label for="ev-driver">boss</label><select id="ev-driver">${DRIVERS.map((q) => `<option value="${q.id}"${d.driver === q.id ? ' selected' : ''}>${esc(q.name)}</option>`).join('')}</select>` : ''}
@@ -1830,7 +1838,7 @@ function readEvent() {
     const t = $('ev-targets').value.split(/[\s,/]+/).map(Number).filter((v) => v > 0).slice(0, 3).sort((a, b) => a - b);
     if (t.length === 3) d.targets = t; // (three counts, or the old ones stay)
   }
-  if (d.type === 'drag') d.finishS = Math.max(100, num('ev-finish', d.finishS));
+  if (d.type === 'drag' && !d.route?.placed) d.finishS = Math.max(100, num('ev-finish', d.finishS)); // (placed: it finishes at its finish line)
   if (d.type === 'arena') {
     d.mode = $('ev-mode').value;
     d.timeLimit = Math.max(30, Math.round(num('ev-time', d.timeLimit)));
@@ -1881,7 +1889,7 @@ function bindEvents() {
   panel.querySelectorAll('input.num[data-for]').forEach(numberBox);
   panel.querySelectorAll('[data-drop]').forEach((el) =>
     el.addEventListener('click', () => {
-      evDraft.route.path.splice(Number(el.dataset.drop), 1);
+      tryRoute(() => evDraft.route.path.splice(Number(el.dataset.drop), 1));
       renderEvents();
       previewEvent();
     }));
@@ -2889,7 +2897,7 @@ function hint() {
       : tool === 'sky'
       ? 'Sky: pick a starting point on the left, then set the haze, fog, darkness and rain on the right · 1 back to Select · Ctrl+Z undo'
       : tool === 'events'
-      ? 'Events: pick one on the left or make a new one; its settings are on the right · Place start, then click its route on the map · Save event · Shift+P races it · 1 back to Select'
+      ? 'Events: pick one on the left or make a new one; its settings are on the right · Place start, then click its route on the map · drag a point to move it, Shift+click the route to add one, Ctrl+click one to take it out · Save event · Shift+P races it · 1 back to Select'
       : tool === 'road'
       ? roadStage === 'shaping'
         ? 'Road: drag a blue handle to curve that stretch (double-click it: straight), an amber one to move a point · Build street (or Enter) · Esc cancels'
@@ -3275,11 +3283,11 @@ canvas.addEventListener('mousedown', (e) => {
     if (evStage === 'cut' && r?.path) return cutClick(g);
     if (evStage === 'sig' && r?.path) return sigClick(g);
     if ((r?.path || r?.kind === 'drag') && evStage !== 'start') {
-      const at = routePointAt(g);
+      const at = routePointAt();
       // (Ctrl+click a point: taken out.)
       if (at !== null && (e.ctrlKey || e.metaKey) && r.path) {
-        r.path.splice(at, 1);
-        evSel = null;
+        tryRoute(() => r.path.splice(at, 1));
+        evSel = evHover = null;
         renderEvents();
         return previewEvent();
       }
@@ -3290,14 +3298,20 @@ canvas.addEventListener('mousedown', (e) => {
         drawEventMarks();
         return;
       }
-      const seg = evStage === 'editing' && r.path ? routeSegmentAt(g) : null;
-      if (seg !== null) {
-        const p = routeAdd();
-        if (p.why) return toast(p.why);
-        r.path.splice(seg + 1, 0, p.point);
-        evSel = seg + 1;
+      // (Shift+click the route: a point there, where it's clicked.)
+      if (e.shiftKey && evStage === 'editing' && r.path) {
+        const add = routeInsertAt(g);
+        if (!add) return toast('Shift+click on the route itself (its arrows) to add a point there.');
+        if (add.why) return toast(add.why);
+        if (tryRoute(() => r.path.splice(add.k, 0, add.point))) evSel = add.k;
         renderEvents();
         return previewEvent();
+      }
+      // (A click off its points: none selected.)
+      if (evStage === 'editing' && evSel !== null) {
+        evSel = null;
+        renderEvents();
+        drawEventMarks();
       }
     }
     routeClick(g);
@@ -3436,6 +3450,7 @@ window.addEventListener('mousemove', (e) => {
   if (tool === 'arena') return arenaMove(g, e);
   if (tool !== 'select' && !drag?.road && drag?.routePoint === undefined) {
     brushAt = g ? { ...g, snapped: tool === 'road' ? roadSnap([g.x, g.z], e) : null } : null;
+    if (tool === 'events') hoverRoute();
     if (tool === 'bridge' && bridgePts.length) drawBridges(g);
     showBrush();
     showRoad();
@@ -3575,7 +3590,7 @@ window.addEventListener('mouseup', (e) => {
           setRay(e);
           const p = d.routePoint === 0 || (r.kind === 'sprint' && d.routePoint === r.path.length - 1) ? raceSpot() : routeAdd();
           if (p.why) toast(p.why);
-          else r.path[d.routePoint] = p.at || p.point;
+          else tryRoute(() => (r.path[d.routePoint] = p.at || p.point));
         }
         renderEvents();
         previewEvent();
@@ -3772,8 +3787,9 @@ window.addEventListener('keydown', (e) => {
     }
     if (act === 'delete' && evSel !== null) {
       e.preventDefault();
-      evDraft.route.path.splice(evSel, 1);
-      evSel = null;
+      const k = evSel;
+      tryRoute(() => evDraft.route.path.splice(k, 1));
+      evSel = evHover = null;
       renderEvents();
       return previewEvent();
     }
@@ -4895,7 +4911,7 @@ const MOUSE = [
   ['Look around, and fly with the keys', 'Hold right'], ['Pan', 'Middle drag'], ['Zoom', 'Wheel'], ['Turn while moving or placing (Shift: 1°)', 'Wheel'],
   ['Raise / lower: a grid step up or down', 'Wheel'], ['Raise / lower: a 25 cm step up or down', '{fine} + wheel'], ['Raise / lower: zoom', 'Hold right + wheel'], ['Placing or dragging: zoom instead of turning', 'Hold right + wheel'],
   ['Road: curve a stretch, or move a point', 'Drag a handle'], ['Road: stop placing points, or straighten a curve', 'Double-click'],
-  ['Race: move a point (the start and finish too)', 'Drag it'], ['Race: add a point', 'Click the route'], ['Race: select a point', 'Click it'], ['Race: take out a point', 'Ctrl+click it'], ['Race: draw a shortcut', '✂ Draw shortcut, then click on the route, round, and back on it'], ['Race: mark a signature spot', '★ Mark signature spot, then click the route where it starts and where it ends'], ['Bridge: draw one (Roads tab: Bridge)', 'Click along its path, double-click to build'], ['Bridge: select one', 'Click it'],
+  ['Race: move a point (the start and finish too)', 'Drag it'], ['Race: add a point where you click', 'Shift + click the route'], ['Race: select a point', 'Click it'], ['Race: take out a point', 'Ctrl+click it'], ['Race: draw a shortcut', '✂ Draw shortcut, then click on the route, round, and back on it'], ['Race: mark a signature spot', '★ Mark signature spot, then click the route where it starts and where it ends'], ['Bridge: draw one (Roads tab: Bridge)', 'Click along its path, double-click to build'], ['Bridge: select one', 'Click it'],
   ['Arena: move a corner, or add one at a midpoint', 'Drag a handle'], ['Arena: select a corner', 'Click it'],
   ['Arena: close the outline', 'Click its first point'], ['Arena: close the outline', 'Double-click'],
   ['Trigger pad: link a gadget to it (after Link a gadget)', 'Click the gadget'],
@@ -5200,6 +5216,10 @@ function stopCut() {
   drawEventMarks();
 }
 let evSel = null; // the selected route point
+let evHover = null; // the route point under the cursor (a click picks it up)
+let routeNodes = []; // the route's points as drawn: { k, at } (what a click on one hits)
+const NODE = 5; // metres: a route point's marker, the same size however far the camera is
+const DRAG_MIN = 100; // metres: the shortest drag race
 const eventMarks = new THREE.Group();
 scene.add(eventMarks);
 
@@ -5214,13 +5234,16 @@ function routeStageText(r) {
   if (evStage === 'cut') return `Drawing a shortcut: click on the route where it leaves, then where it goes (anywhere), then back on the route further on: that's it added. ${keyName(binding.backPoint?.[0] || 'Backspace')}: take back a point; Esc: stop.`;
   if (evStage === 'start') return 'Click the start anywhere: on a street, off the streets, or up on top of something (not inside it).';
   if (evStage === 'placing') return `Click where the race goes: a junction, a way through a site or lot, or anywhere (off the streets it goes straight there, and up onto things). Space (or Finish here): ${r.kind === 'circuit' ? 'it comes back round to the start' : 'the last point is the finish'}.`;
-  if (r.path.length) return 'Drag a point to move it (the start and finish too); click the route to add one; Ctrl+click one (or select it and press Delete) to take it out.';
+  if (r.path.length) return 'Drag a point to move it (the start and finish too); Shift+click the route to add one where you click; Ctrl+click one (or select it and press Delete) to take it out.';
   return 'Press Place start, then click the start on the map.';
 }
 
 function finishRoute() {
   const r = evDraft?.route;
   if ((r?.path?.length || 0) < 2) return toast('Place at least one point after the start.');
+  // (A circuit comes back round to its start: not too sharply, or across itself.)
+  const why = r.kind === 'circuit' ? routeWhy(r) : null;
+  if (why) return toast(`Coming back round to the start: ${why.text.replace(' (the red ring)', '')} Place another point first, or Ctrl+click one to take it out.`);
   // (A sprint finishes exactly where it stops: on a junction, a spot there.)
   const last = r.path[r.path.length - 1];
   if (r.kind === 'sprint' && isJunction(last)) r.path[r.path.length - 1] = routePos(last).map((v) => Math.round(v * 10) / 10);
@@ -5366,7 +5389,120 @@ function routeAdd() {
   const s = raceSpot();
   if (s.why) return s;
   const p = s.at.length === 2 ? routePoint(session, s.at[0], s.at[1]) : null;
+  // (A grid district's way through: the spot on it nearest the click, not the
+  // whole way. Two of them, one after the other, and the race follows the way
+  // between them: sim/city.js pathNodes.)
+  if (p?.kind === 'way' && !session.map.plan) {
+    const q = G.nearestOnLine(session.map.corridors.find((c) => c.id === p.name).points, s.at[0], s.at[1]).p;
+    return { point: [Math.round(q[0] * 10) / 10, Math.round(q[1] * 10) / 10] };
+  }
   return { point: p ? p.name : s.at };
+}
+
+// What routeProblem needs to know of the map: where the race's points are,
+// where a bridge carries one stretch of it over another, and where the
+// streets' junctions are (a race may turn as sharply as streets meet).
+function routeRules(r) {
+  const map = session.map;
+  const nodes = map.plan ? map.nodes.filter((n) => n.name && !n.boundary) : map.nodes.filter((n) => n.i >= 0 && !n.stub);
+  const decks = session.layout.items.filter((it) => it.t === 'bridgeDeck' && it.obb).map((it) => G.obbCorners(it.obb));
+  return {
+    points: r.path.map(routePos),
+    over: (x, z) => decks.some((c) => G.pointInPoly(x, z, c)),
+    junction: (x, z) => nodes.some((n) => Math.hypot(n.x - x, n.z - z) < 30),
+  };
+}
+
+// Why a race's route can't go the way it does (as a new road can't: too sharp
+// a turn, across itself, over itself), or null. open: a circuit still being
+// placed, not yet back round to its start.
+let whyMemo = null; // (the last one worked out)
+function routeWhy(r, open = false) {
+  if (!r?.path || r.path.length < 2) return null;
+  const route = open && r.kind === 'circuit' ? { ...r, kind: 'sprint' } : r;
+  const key = JSON.stringify(route);
+  if (whyMemo?.key === key && whyMemo.map === session.map) return whyMemo.why;
+  const pv = routePreview({ ...session.withEvents(), events: [] }, route);
+  const why = pv.error || !pv.pts ? null : routeProblem(pv.pts, pv.closed, { ...routeRules(route), heights: pv.ys }); // (can't be built: the preview says why)
+  whyMemo = { key, map: session.map, why };
+  return why;
+}
+
+// A change to the draft's route (edit makes it), unless it would make the
+// race turn too sharply, or cross or run over itself: then it's put back,
+// and said why. (A route that already does keeps its changes: one of them
+// may be what puts it right.)
+function tryRoute(edit) {
+  const r = evDraft.route;
+  if (!r.path) return edit(), true;
+  const [was, stage] = [JSON.stringify(r), evStage];
+  const before = routeWhy(r, evStage === 'placing' || evStage === 'start');
+  edit();
+  const after = before ? null : routeWhy(r, evStage === 'placing');
+  if (!after) return true;
+  for (const k of Object.keys(r)) delete r[k];
+  Object.assign(r, JSON.parse(was));
+  evStage = stage;
+  toast(after.text.replace(' (the red ring)', ''));
+  return false;
+}
+
+// Shift+click on the route: the point it adds there (on the route as the
+// game builds it, where it's clicked) and where in the path it goes:
+// { k, point }, { why }, or null (the click isn't on the route).
+function routeInsertAt(g) {
+  const r = evDraft.route;
+  const n = r.path.length;
+  const line = !evPreview?.error && evPreview?.pts?.length > 1 ? evPreview.pts : null;
+  if (!line) {
+    // (No route built: between the two points it's nearest.)
+    const seg = routeSegmentAt(g);
+    if (seg === null) return null;
+    const s = raceSpot();
+    return s.why ? s : { k: seg + 1, point: s.at };
+  }
+  const q = G.nearestOnLine(line, g.x, g.z);
+  if (q.d > 14) return null;
+  // Between which two of its points: by how far along the route each is.
+  const ss = r.path.map((p) => {
+    const at = routePos(p);
+    return at ? G.nearestOnLine(line, at[0], at[1]).s : null;
+  });
+  let k = null;
+  for (let i = 0; i < (r.kind === 'circuit' ? n : n - 1) && k === null; i++) {
+    const [a, b] = [ss[i], ss[(i + 1) % n]];
+    if (a === null || b === null) continue;
+    if (a <= b ? q.s >= a && q.s <= b : r.kind === 'circuit' && (q.s >= a || q.s <= b)) k = i + 1;
+  }
+  if (k === null) return { why: 'Shift+click the route between its start and its finish.' };
+  // (Up on top of something: where the click landed on it.)
+  const s = raceSpot();
+  if (!s.why && s.at.length === 3) return { k, point: s.at };
+  const [x, z] = streetMiddle(q.p[0], q.p[1]) || q.p;
+  const near = routePoint(session, x, z);
+  if (near?.kind === 'junction') {
+    if (r.path[k - 1] === near.name || r.path[k % n] === near.name) return { why: `The race has a point at that junction (${near.name}) already.` };
+    return { k, point: near.name };
+  }
+  return { k, point: [Math.round(x * 10) / 10, Math.round(z * 10) / 10] };
+}
+
+// The route point under the cursor, if a click would pick it up: drawn lit.
+function hoverRoute() {
+  const r = evDraft?.route;
+  const can = !!r && (r.path || r.kind === 'drag') && evStage !== 'start' && evStage !== 'cut' && evStage !== 'sig';
+  const k = can ? routePointAt() : null;
+  canvas.style.cursor = k === null ? '' : 'pointer';
+  if (k === evHover) return;
+  evHover = k;
+  drawEventMarks();
+}
+
+// A drag's start or finish placed here: its cars line up at the start and
+// finish at the finish (sim: route.placed), not a fixed length along.
+function placedDrag() {
+  evDraft.route.placed = true;
+  delete evDraft.finishS;
 }
 
 // A junction's name (not a way's, or a spot)?
@@ -5411,13 +5547,15 @@ function routePos(name) {
   return c?.points?.length ? c.points[Math.floor(c.points.length / 2)] : null;
 }
 
-function routePointAt(g) {
-  const near = Math.max(6, altitude() * 0.02);
+// The route point under the cursor (the ray): its marker as it's drawn, no
+// more and no less; the nearest the camera, if one's behind another.
+function routePointAt() {
   let best = null;
-  routeMarks().forEach((p, k) => {
-    const d = p ? Math.hypot(p[0] - g.x, p[1] - g.z) : Infinity;
-    if (d < near && (!best || d < best.d)) best = { d, k };
-  });
+  for (const { k, at } of routeNodes) {
+    if (ray.ray.distanceToPoint(at) > NODE) continue;
+    const d = ray.ray.origin.distanceTo(at);
+    if (!best || d < best.d) best = { d, k };
+  }
   return best ? best.k : null;
 }
 
@@ -5438,7 +5576,12 @@ function routeSegmentAt(g) {
 function drawEventMarks() {
   clearGroup(eventMarks);
   const r = evDraft?.route;
-  if (tool !== 'events' || !r || !session) return;
+  routeNodes = [];
+  if (tool !== 'events' || !r || !session) {
+    if (evHover !== null) canvas.style.cursor = '';
+    evHover = null;
+    return;
+  }
   const basic = (color) => new THREE.MeshBasicMaterial({ color, depthTest: false, fog: false });
   const size = Math.max(2, altitude() * 0.015);
   // The shortcuts (purple): where the game puts them; the one being drawn, and its points.
@@ -5478,24 +5621,29 @@ function drawEventMarks() {
     arrows.renderOrder = 13;
     eventMarks.add(arrows);
   }
-  // The route's points, numbered by colour: the start green, the finish white, the rest amber, selected cyan.
+  // The route's points, by colour: the start green, the finish white, the
+  // rest amber, selected cyan, under the cursor pink. One size (NODE) at any
+  // zoom, and what a click hits is the marker itself (routePointAt).
   const marks = routeMarks();
   marks.forEach((mp, k) => {
     let p = mp;
     if (drag?.routePoint === k && drag.at) p = drag.at;
     if (!p) return;
     const last = k === marks.length - 1 && evStage !== 'placing' && (r.kind === 'drag' || r.kind === 'sprint');
-    const color = evSel === k ? 0x05d9e8 : k === 0 ? 0x39ff14 : last ? 0xffffff : 0xffb000;
-    const m = new THREE.Mesh(new THREE.OctahedronGeometry(size), basic(color));
-    m.position.set(p[0], (p[2] ?? H(p[0], p[1])) + size * 2, p[1]);
+    const color = evHover === k && drag?.routePoint === undefined ? 0xff71ce : evSel === k ? 0x05d9e8 : k === 0 ? 0x39ff14 : last ? 0xffffff : 0xffb000;
+    const m = new THREE.Mesh(new THREE.OctahedronGeometry(NODE), basic(color));
+    m.position.set(p[0], (p[2] ?? H(p[0], p[1])) + NODE * 1.5, p[1]);
     m.renderOrder = 15;
     eventMarks.add(m);
+    routeNodes.push({ k, at: m.position });
   });
-  // Where the race runs into something (wayProblem): a red ring.
-  if (evWay && evStage !== 'placing') {
+  // Where the race runs into something (wayProblem), or turns too sharply or
+  // crosses itself (routeProblem): a red ring.
+  for (const w of evStage === 'placing' ? [] : [evWay, evBad]) {
+    if (!w) continue;
     const ring = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([...Array(32).keys()].map((k) => {
       const a = (k / 32) * Math.PI * 2;
-      return new THREE.Vector3(evWay.x + Math.cos(a) * 8, H(evWay.x, evWay.z) + 1, evWay.z + Math.sin(a) * 8);
+      return new THREE.Vector3(w.x + Math.cos(a) * 8, H(w.x, w.z) + 1, w.z + Math.sin(a) * 8);
     })), new THREE.LineBasicMaterial({ color: 0xff2a6d, depthTest: false, transparent: true, fog: false }));
     ring.renderOrder = 15;
     eventMarks.add(ring);
@@ -5527,7 +5675,7 @@ function drawEventMarks() {
   };
   const end = [pts[pts.length - 1], [2 * pts[pts.length - 1][0] - pts[pts.length - 2][0], 2 * pts[pts.length - 1][1] - pts[pts.length - 2][1]]];
   if (evPreview.closed) gate(...at(0), 'both', evPreview.startY);
-  else if (r.kind === 'drag') {
+  else if (r.kind === 'drag' && !r.placed) {
     gate(pts[0], pts[1], 'start');
     gate(...end, 'finish');
   } else {
@@ -5557,5 +5705,29 @@ function dropDragEnd(k, at) {
   const f = featureAt(session, at[0], at[1]);
   const street = f?.type === 'street' || f?.type === 'gridStreet' ? f.name : null;
   if (street !== r.along) return toast(`Keep it on ${r.along}.`);
-  r[k === 0 ? 'from' : 'to'] = [Math.round(at[0]), Math.round(at[1])];
+  const to = [Math.round(at[0]), Math.round(at[1])];
+  const other = r[k === 0 ? 'to' : 'from'];
+  if (Array.isArray(other) && Math.hypot(to[0] - other[0], to[1] - other[1]) < DRAG_MIN) return toast(`A drag race needs at least ${DRAG_MIN} m between its start and its finish.`);
+  r[k === 0 ? 'from' : 'to'] = to;
+  placedDrag();
+}
+
+// Dev server only: the editor's state, for checking it from the browser
+// console (window.ttSdk): the camera, the event being edited, and where a
+// point on the map is on the screen.
+if (import.meta.env?.DEV) {
+  window.ttSdk = {
+    cam,
+    camera,
+    get session() { return session; },
+    get draft() { return evDraft; },
+    get stage() { return evStage; },
+    get preview() { return evPreview; },
+    get nodes() { return routeNodes; },
+    project(x, z, y = H(x, z)) {
+      const v = new THREE.Vector3(x, y, z).project(camera);
+      const r = canvas.getBoundingClientRect();
+      return [r.left + ((v.x + 1) / 2) * r.width, r.top + ((1 - v.y) / 2) * r.height];
+    },
+  };
 }

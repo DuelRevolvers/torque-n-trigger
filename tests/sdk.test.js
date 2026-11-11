@@ -1108,6 +1108,12 @@ test('sdk: a bridge drawn along a path: a deck to drive on and under, piers, ram
   assert.ok(decks.length > 2 && decks.every((it) => it.deck && it.under && near(it.h, H(0, 100) + 6, 2)), 'a deck about 6 m up');
   assert.equal(items.filter((it) => it.t === 'bridgeRamp').length, 2, 'a ramp at each end');
   assert.ok(items.some((it) => it.t === 'bridgePier' && it.solid), 'piers');
+  // Its railings: solid, along both edges of every piece of deck, standing on it.
+  const rails = items.filter((it) => it.t === 'bridgeRail');
+  assert.equal(rails.length, decks.length * 2, 'a railing each side');
+  assert.ok(rails.every((it) => it.solid && near(it.y, H(0, 100) + 6, 2) && near(it.h, 1.1, 0.01)), 'on the deck, a metre high');
+  const d0 = decks[0].obb;
+  assert.ok(rails.slice(0, 2).every((it) => near(Math.hypot(it.obb.x - d0.x, it.obb.z - d0.z), 5 - 0.15, 0.01)), 'at its edges');
   // In free roam: its deck a platform cars drive under.
   const roam = cityVenue(districtFromDoc(s.doc).city, { kind: 'roam' }).def;
   assert.ok(roam.platforms.some((p) => p.under && near(p.h, H(0, 100) + 6, 2)), 'driven under');
@@ -1120,4 +1126,111 @@ test('sdk: a bridge drawn along a path: a deck to drive on and under, piers, ram
   const { catalogue, models } = await import('../src/sdk/catalogue.js');
   const all = DISTRICTS.flatMap((d) => catalogue(baseLayout(districtMap(d.city)).items).map((e) => ({ ...e, district: d.id })));
   assert.ok(!models(all).some((m) => m.styles.some((e) => e.t === 'bridge')), 'bridges: the Bridge tool now');
+});
+
+test('sdk: a race follows the road tool\'s rules: no sharp turns, never across or over itself', async () => {
+  const { routeProblem } = await import('../src/sdk/checks.js');
+  const { routePreview } = await import('../src/sdk/events.js');
+  // A line through points, a point every 5 m.
+  const line = (...pts) => pts.flatMap((p, k) => {
+    if (!k) return [p];
+    const q = pts[k - 1];
+    const n = Math.max(1, Math.round(Math.hypot(p[0] - q[0], p[1] - q[1]) / 5));
+    return [...Array(n).keys()].map((i) => [q[0] + ((p[0] - q[0]) * (i + 1)) / n, q[1] + ((p[1] - q[1]) * (i + 1)) / n]);
+  });
+  assert.equal(routeProblem(line([0, 0], [300, 0], [300, 300])), null, 'a right angle is fine');
+  assert.equal(routeProblem(line([0, 0], [300, 0], [450, 200])), null, 'and a gentle bend');
+  assert.match(routeProblem(line([0, 0], [300, 0], [100, 120])).text, /too sharply/, 'a corner under 50 degrees');
+  const spike = line([0, 0], [300, 0], [60, 120]); // (about 27 degrees)
+  assert.match(routeProblem(spike).text, /too sharply/);
+  assert.equal(routeProblem(spike, false, { junction: (x, z) => Math.hypot(x - 300, z) < 30 }), null, 'as sharp as streets meet, at a junction');
+  assert.match(routeProblem(line([0, 0], [300, 0], [20, 30]), false, { junction: () => true }).text, /too sharply/, 'but no sharper');
+  const eight = line([0, 0], [300, 0], [300, 200], [150, 200], [150, -200]);
+  assert.match(routeProblem(eight).text, /cross itself/);
+  assert.equal(routeProblem(eight, false, { over: (x, z) => Math.hypot(x - 150, z) < 12 }), null, 'over itself on a bridge is fine');
+  assert.match(routeProblem(line([0, 0], [400, 0], [400, 100], [385, 100], [385, 15], [0, 15])).text, /too sharply|runs over itself/, 'back alongside itself');
+  assert.match(routeProblem(line([0, 0], [400, 0], [470, 60], [400, 120], [300, 70], [200, 18], [0, 18])).text, /runs over itself/);
+  assert.match(routeProblem(line([0, 0], [300, 0]), false, { points: [[0, 0], [3, 0], [300, 0]] }).text, /too close together/);
+  const up = eight.map((p, k) => (k > 70 ? 8 : 0)); // (its last stretch on a deck 8 m up)
+  assert.equal(routeProblem(eight, false, { heights: up }), null, 'or on another level');
+  // A loop: its last corner, back at the start, counts too.
+  assert.equal(routeProblem(line([0, 0], [300, 0], [300, 300], [0, 300], [0, 0]), true), null);
+  assert.match(routeProblem(line([0, 0], [300, 0], [150, 60], [0, 0]), true).text, /too sharply/);
+  // The districts' own races keep the rules (the Undercity's sprint turns 30 degrees, at a junction).
+  for (const d of DISTRICTS) {
+    for (const e of [...d.events, d.boss].filter((q) => q?.route?.path)) {
+      const pv = routePreview({ city: d.city, events: [] }, e.route);
+      const bad = routeProblem(pv.pts, pv.closed, { junction: () => true, heights: pv.ys });
+      assert.equal(bad, null, `${d.id} ${e.key}: ${bad?.text}`);
+    }
+  }
+});
+
+test('sdk: Rustline: points clicked along the container terminal\'s haul road follow it, with no doubling back', () => {
+  const d = byId('rustline');
+  const haul = districtMap(d.city).corridors.find((c) => c.id === 'terminal').points;
+  const build = (path) => cityVenue(d.city, { kind: 'sprint', path }).def.points.map(([x, , z]) => [x, z]);
+  // The start on Gate Road, then a point at each of the haul road's corners, then on along Dock Road.
+  const pts = build([[100, -420], ...haul, [700, -80]]);
+  for (const p of haul) assert.ok(G.nearestOnLine(pts, p[0], p[1]).d < 16, `through ${p}`);
+  for (const p of pts) assert.ok(p[0] < 100 || p[0] > 600 || G.nearestOnLine(haul, p[0], p[1]).d < 16 || Math.abs(p[1] + 420) < 2 || Math.abs(p[1] + 80) < 2, `on the haul road at ${p.map(Math.round)}`);
+  const L = G.lineLength(pts);
+  assert.ok(L < G.lineLength(haul) + 230 + 140 + 80, `no stretch driven twice (${Math.round(L)} m)`);
+  // Two of them part of the way along: just that stretch of it.
+  const part = build([[100, -420], [330, -350], [450, -250], [700, -250]]);
+  assert.ok(G.nearestOnLine(part, 330, -250).d < 16, 'round its corner');
+  assert.ok(G.nearestOnLine(part, 560, -150).d > 60, 'and off it where the points leave it');
+  // The district's own race through it (the whole way, by name) is as it was.
+  const dash = d.events.find((e) => e.key === 'sprint');
+  assert.ok(dash.route.path.includes('terminal'));
+  cityVenue(d.city, dash.route);
+});
+
+test('sdk: a drag race placed in the SDK starts at its start line and finishes at its finish line', async () => {
+  const { buildTrack } = await import('../src/sim/track.js');
+  const { gridPoses } = await import('../src/sim/event.js');
+  const { newEvent } = await import('../src/sdk/events.js');
+  assert.ok(newEvent('drag').route.placed && newEvent('drag').finishS === undefined, 'a new drag: placed, no fixed length');
+  const at = (track, s) => [track.x[track.indexAtDistance(s)], track.z[track.indexAtDistance(s)]];
+  const check = (id, route, from, to) => {
+    const track = buildTrack(cityVenue(byId(id).city, route).def);
+    const [a, b] = [at(track, track.startS), at(track, track.finishS)];
+    assert.ok(Math.hypot(a[0] - from[0], a[1] - from[1]) < 3, `${id}: the start line where it's placed`);
+    assert.ok(Math.hypot(b[0] - to[0], b[1] - to[1]) < 3, `${id}: the finish line where it's placed`);
+    assert.ok(near(track.finishS - track.startS, Math.hypot(to[0] - from[0], to[1] - from[1]), 3), `${id}: as long as that`);
+    assert.ok(track.length - track.finishS > 25, `${id}: room to stop past the finish`);
+    const grid = gridPoses(track, { type: 'drag' }, 4);
+    assert.ok(grid.every((p) => Math.abs((p.pos.x - a[0]) * (b[0] - a[0]) + (p.pos.z - a[1]) * (b[1] - a[1])) / Math.hypot(b[0] - a[0], b[1] - a[1]) < 1), `${id}: the cars abreast on the start line`);
+  };
+  // A plan district: 700 m of the Strip, either way.
+  check('strip', { kind: 'drag', along: 'The Strip', from: [-484, 60], to: [216, 60], placed: true }, [-484, 60], [216, 60]);
+  check('strip', { kind: 'drag', along: 'The Strip', from: [216, 60], to: [-484, 60], placed: true }, [216, 60], [-484, 60]);
+  // A grid district: along the street it's placed on (clicks a little off its middle).
+  check('rustline', { kind: 'drag', along: 'Dock Road', from: [-600, -78], to: [300, -83], placed: true }, [-600, -80], [300, -80]);
+  check('rustline', { kind: 'drag', along: 'Tar St', from: [42, 250], to: [38, -380], placed: true }, [40, 250], [40, -380]);
+  // The districts' own drags (not placed) are as they were: a quarter mile from 12 m in.
+  for (const d of DISTRICTS) {
+    const e = d.events.find((q) => q.type === 'drag');
+    if (!e) continue;
+    const track = buildTrack(cityVenue(d.city, e.route).def);
+    assert.equal(track.startS, null, d.id);
+    assert.equal(e.finishS, 414, d.id);
+  }
+});
+
+test('sdk: a road drawn across rooftops keeps its own bridge (Chrome Heights)', async () => {
+  const { Session } = await import('../src/sdk/session.js');
+  const { roadEdit } = await import('../src/sdk/roads.js');
+  const s = new Session(docFromDistrict(byId('chrome')));
+  const before = s.layout.items.filter((it) => it.t === 'bridge').length;
+  // From the Gardens across to Tower Plaza, at an angle.
+  const plan = roadEdit(s, [[-300, -200], [-200, -200], [-60, -140], [40, -140]], { width: 'street', surface: 'asphalt', name: 'Angle Street', bends: [] });
+  assert.ok(s.change((e) => Object.assign(e, { plan })));
+  const c = s.map.crossings.find((q) => q.st.name === 'Angle Street');
+  assert.equal(c?.kind, 'bridge', 'it crosses the gap between the decks');
+  const bridge = s.layout.items.find((it) => it.t === 'bridge' && it.street === 'Angle Street');
+  assert.ok(bridge, 'its bridge is drawn');
+  assert.equal(s.layout.items.filter((it) => it.t === 'bridge').length, before + 1, 'the others are still there');
+  const rails = s.layout.items.filter((it) => it.t === 'balustrade' && it.obb && G.nearestOnLine(bridge.pts, it.obb.x, it.obb.z).d < bridge.half + 1);
+  assert.ok(rails.length >= 2, 'with balustrades along its sides');
 });

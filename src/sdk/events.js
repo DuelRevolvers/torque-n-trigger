@@ -27,7 +27,8 @@ export function newEvent(type) {
   const base = { type, name: `New ${TYPES[type]}`, desc: '', cars: type === 'drag' ? 4 : 6, purse: 1000 };
   if (type === 'sprint') return { ...base, route: { kind: 'sprint', path: [] } };
   if (type === 'circuit') return { ...base, laps: 3, route: { kind: 'circuit', path: [], start: 30 } };
-  if (type === 'drag') return { ...base, finishS: 414, route: { kind: 'drag', along: '', from: [0, 0], to: [0, 0] } };
+  // (A drag finishes where its finish is placed: route.placed.)
+  if (type === 'drag') return { ...base, route: { kind: 'drag', along: '', from: [0, 0], to: [0, 0], placed: true } };
   if (type === 'lastLapOut') return { ...base, type: 'circuit', mode: 'lastLapOut', laps: base.cars - 1, route: { kind: 'circuit', path: [], start: 30 } };
   if (type === 'duel') return { ...base, type: 'sprint', mode: 'duel', cars: 2, route: { kind: 'sprint', path: [] } };
   if (type === 'duelCircuit') return { ...base, type: 'circuit', mode: 'duel', cars: 2, laps: 2, route: { kind: 'circuit', path: [], start: 30 } };
@@ -94,10 +95,17 @@ export function routePreview(district, route) {
     }
     const track = buildTrack(v.def);
     const pts = [];
-    for (let i = 0; i < track.count; i += 3) pts.push([track.x[i], track.z[i]]);
-    if (track.closed) pts.push(pts[0]);
+    const ys = []; // (how high it is at each: sdk/checks.js routeProblem)
+    for (let i = 0; i < track.count; i += 3) {
+      pts.push([track.x[i], track.z[i]]);
+      ys.push(track.y[i]);
+    }
+    if (track.closed) {
+      pts.push(pts[0]);
+      ys.push(ys[0]);
+    }
     return {
-      pts, length: track.length, closed: track.closed, shortcuts: (v.def.branches || []).length,
+      pts, ys, length: track.length, closed: track.closed, shortcuts: (v.def.branches || []).length,
       cuts: (v.def.branches || []).map((b) => b.points.map((p) => [p[0], p[2]])),
       startS: track.closed ? 0 : track.startS ?? 40, finishS: track.closed ? 0 : track.finishS ?? track.length - 25, startY: track.startY, finishY: track.finishY,
     };

@@ -813,7 +813,12 @@ converted to node/site ids on import. Names stay visible in the UI.
     Never inside something: that click is refused, naming what it's in.
   - Then click where the race goes:
     - a click near a junction, or a way through a site or lot, adds it;
-    - a click anywhere else adds a point there (on a street, in its middle).
+    - a click anywhere else adds a point there (on a street, in its middle);
+    - in a grid district (Rustline Docks), a click on a way through adds a
+      point on it where you click, not the whole way. Two of them, one after
+      the other, and the race follows the way between them (`pathNodes` in
+      `src/sim/city.js`). That's how you route a race through the container
+      terminal: click along its haul road.
 
     Along the streets, the route runs junction to junction, as the game's
     do. Off the streets, it goes straight from point to point.
@@ -823,8 +828,18 @@ converted to node/site ids on import. Names stay visible in the UI.
     it at the nearest stretch (a circuit's loop is turned to start there).
   - On the map: numbered points, a green start gate and a chequered finish
     gate, drawn at the height they're at.
-  - You can drag any point (the start and finish too), click the route to add
-    a point, or select one and press Delete.
+  - You can drag any point (the start and finish too), Shift+click the route
+    to add a point where you click, or select one and press Delete (or
+    Ctrl+click it).
+  - The points are one size at any zoom (5 m). A click picks up a point only
+    on the marker itself, and the point under the cursor turns pink.
+  - A race follows the road tool's rules (`routeProblem` in
+    `src/sdk/checks.js`): no corner sharper than 50° (25° where streets
+    meet at a junction), never across itself (over itself on a bridge is
+    fine), its stretches at least 22 m apart, its points at least 8 m
+    apart. A change that breaks a rule is refused and says why. A route that
+    already breaks one (an older map's) shows a warning and a red ring, and
+    keeps its changes.
   - **Continue placing** adds more; **Clear route** starts again.
 - **In the game** (`src/sim/routePoints.js`):
   - A point that isn't a junction or a way is a spot: `[x, z]`, or
@@ -844,8 +859,12 @@ converted to node/site ids on import. Names stay visible in the UI.
     them (the Neon Strip's and Rustline's races only have their walls).
   - Official races have no spots and are built exactly as before.
 - **Drag races:** Place start on a street, then click the finish further
-  along the same street; both can be dragged along it. Clear route works here
-  too.
+  along the same street (at least 100 m); both can be dragged along it. Clear
+  route works here too. The cars line up on the start line and the race ends
+  at the finish line, however far apart they are (`route.placed`: the
+  street is used 16 m behind the start and 30 m past the finish). A drag saved
+  before this keeps its fixed **length (m)** until you move its start or
+  finish.
 - **Arenas** (the Arenas list at the top of the Events tab; `src/sim/arenaEdits.js`):
   - **+ Draw an arena:** click round its edge like a path. Each click snaps to
     the nearest corner, then edge, of a block, site, lot, the district's
@@ -1033,6 +1052,7 @@ The owner's follow-up requests, done in this order:
 | **Reset camera** and **Orbit** (round the selection, or round the ground under the cursor) | `main.js` (`orbitPivot`, `lookPivot`, `lookBy`) |
 | **Rotation ring** and turn buttons for the selection | `main.js` (`ringOf`, `drawRing`) |
 | **NPC cars look like cars:** the game's bare car bodies, in many colours, light enough for traffic | `src/render/npcCars.js` |
+| **Races: Shift+click adds a point, one-size points, road rules; drags finish where placed; bridge railings solid; rooftop roads keep their bridges** (§8.3): see the bullets there. A grid district's way through takes points where clicked. A bridge's railings are solid (`bridgeRail` items). A road drawn across rooftops (Chrome Heights) keeps its own bridge, which `clearDrawnStreets` used to remove. `window.ttSdk` (dev server only) exposes the camera and the event being edited for checks from the console | `main.js`, `checks.js`, `events.js`, `src/sim/city.js`, `planRoute.js`, `routePoints.js`, `event.js`, `bridges.js`, `cityLayout.js` |
 | **Road tool:** 15° steps, curves (handles), Space stops placing, Build street | `src/sdk/roads.js`, `main.js` |
 | **Rustline Docks: streets off the grid** | `src/sim/gridEdits.js` (`extra`), `src/render/extraStreets.js` |
 | **Junctions like real ones** (see the next row) | `src/render/planView.js` |

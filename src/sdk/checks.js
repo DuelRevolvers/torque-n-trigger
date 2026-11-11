@@ -99,3 +99,85 @@ function at(track, s, lateral) {
   const i = track.indexAtDistance(s);
   return [track.x[i] + track.rx[i] * lateral, track.z[i] + track.rz[i] * lateral];
 }
+
+// What a race's route may do, as a new road may (sdk/roads.js roadProblem):
+const TURN = 130; // degrees: the most it may turn within TURN_RUN metres (a corner no sharper than 50°)
+const TURN_JOIN = 155; // (at a junction: as sharply as streets may meet, 25°)
+const TURN_RUN = 40;
+const APART = 22; // metres between two stretches of it side by side
+const APART_RUN = 90; // (stretches this far apart along it)
+const MIN_STRETCH = 8; // metres between two of its points
+const LEVEL = 3; // metres up or down: two stretches further apart than that are on different levels
+
+// A race's route as the game builds it (pts: its line, [x, z]; closed: a
+// circuit, its first point again at the end): does it turn too sharply,
+// cross itself or run over itself? points: where its points are (too close
+// together?); over(x, z): one stretch goes over another there (a bridge),
+// so they may cross; junction(x, z): streets meet there, so it may turn as
+// sharply as they do; heights: how high the route is at each of pts (a
+// stretch well above or below another, a deck over a street, isn't across
+// it or beside it). Returns { x, z, text } or null.
+export function routeProblem(pts, closed = false, { points = [], over = () => false, junction = () => false, heights = null } = {}) {
+  if (!pts || pts.length < 3) return null;
+  for (let k = 0; k < (closed ? points.length : points.length - 1); k++) {
+    const [a, b] = [points[k], points[(k + 1) % points.length]];
+    if (points.length > 1 && a && b && a !== b && Math.hypot(a[0] - b[0], a[1] - b[1]) < MIN_STRETCH) return { x: a[0], z: a[1], text: 'Two of its points are too close together: space them out.' };
+  }
+  // Its stretches: heading, length, and how far along each starts.
+  const segs = [];
+  let run = 0;
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const [a, b] = [pts[k], pts[k + 1]];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (L < 1e-6) continue;
+    segs.push({ a, b, L, s: run, h: Math.atan2(b[0] - a[0], b[1] - a[1]), y: heights ? heights[k] : 0 });
+    run += L;
+  }
+  const n = segs.length;
+  if (n < 2) return null;
+  const level = (p, q) => Math.abs(p.y - q.y) < LEVEL;
+  const turn = (i, j) => {
+    let d = segs[j].h - segs[i].h;
+    while (d > Math.PI) d -= 2 * Math.PI;
+    while (d < -Math.PI) d += 2 * Math.PI;
+    return d;
+  };
+  // No turn sharper than a road's corner: what it turns, one way, within TURN_RUN.
+  for (let i = 0; i < n; i++) {
+    let sum = 0;
+    let far = 0;
+    let apex = null; // (where it turns most: the corner itself)
+    for (let k = 1; k < n; k++) {
+      const j = i + k;
+      if (j >= n && !closed) break;
+      const [p, q] = [segs[(j - 1) % n], segs[j % n]];
+      const d = turn((j - 1) % n, j % n);
+      sum += d;
+      far += p.L;
+      if (far > TURN_RUN) break;
+      if (!apex || Math.abs(d) > apex.d) apex = { d: Math.abs(d), at: q.a };
+      const deg = Math.abs(sum) * (180 / Math.PI);
+      if (deg > TURN && !(deg <= TURN_JOIN && junction(apex.at[0], apex.at[1]))) return { x: apex.at[0], z: apex.at[1], text: `It turns too sharply (the red ring): open that corner out to at least ${180 - TURN}°.` };
+    }
+  }
+  // Never across itself (but over itself, on a bridge).
+  const bridged = []; // (where it goes over itself: its stretches are close there, too)
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 2; j < n; j++) {
+      if (closed && i === 0 && j === n - 1) continue;
+      const h = G.segHit(segs[i].a, segs[i].b, segs[j].a, segs[j].b);
+      if (h && (over(h[0], h[1]) || !level(segs[i], segs[j]))) bridged.push(h);
+      else if (h) return { x: h[0], z: h[1], text: "The race can't cross itself (the red ring): take it round another way, or over a bridge." };
+    }
+  }
+  // Its stretches clear of each other.
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const along = segs[j].s - segs[i].s;
+      if (along < APART_RUN || (closed && run - along < APART_RUN)) continue;
+      const [a, b] = [segs[i].a, segs[j].a];
+      if (Math.hypot(a[0] - b[0], a[1] - b[1]) < APART && level(segs[i], segs[j]) && !bridged.some((h) => Math.hypot(a[0] - h[0], a[1] - h[1]) < 2 * APART)) return { x: a[0], z: a[1], text: 'The race runs over itself (the red ring): keep its stretches apart.' };
+    }
+  }
+  return null;
+}

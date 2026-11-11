@@ -12,7 +12,7 @@ import { buildTrack, SURFACE } from './track.js';
 import { yawFromDirection } from './math.js';
 import { districtLayout } from './cityLayout.js';
 import { roundedPoints, authoredShortcuts, layoutObstacle, deckLegs, CORNER_R, STREET } from './city.js';
-import { isSpot, endRun, spotEnds, RUN_UP, RUN_OFF, OPEN } from './routePoints.js';
+import { isSpot, endRun, spotEnds, RUN_UP, RUN_OFF, OPEN, DRAG_GRID } from './routePoints.js';
 
 const DEDUPE = 0.5;
 
@@ -191,12 +191,22 @@ export function planTrack(map, style, route) {
   let line;
   let pieces;
   let baseLine = null; // (a drag moved across its street: its line before the move)
+  let placedDrag = null; // (a drag placed in the T&T SDK: where its start and finish lines are along it)
   if (route.kind === 'drag') {
     // Along a street between two points on it (or two x positions: the Strip Quarter Mile).
     const st = map.streets.find((q) => q.name === route.along);
     const pt = (v) => (Array.isArray(v) ? v : [v, st.pts[0][1]]);
-    const a = G.nearestOnLine(st.pts, ...pt(route.from)).s;
-    const b = G.nearestOnLine(st.pts, ...pt(route.to)).s;
+    let a = G.nearestOnLine(st.pts, ...pt(route.from)).s;
+    let b = G.nearestOnLine(st.pts, ...pt(route.to)).s;
+    if (route.placed && !st.loop) {
+      // Placed in the T&T SDK: the cars line up at its start and finish at its
+      // finish, with street behind the grid and past the finish to stop on.
+      const L = G.lineLength(st.pts);
+      const dir = b >= a ? 1 : -1;
+      const [a0, b0] = [Math.max(0, Math.min(L, a - dir * DRAG_GRID)), Math.max(0, Math.min(L, b + dir * RUN_OFF))];
+      placedDrag = { startS: Math.max(6, Math.abs(a - a0)), finishS: Math.abs(a - a0) + Math.abs(b - a) };
+      [a, b] = [a0, b0];
+    }
     line = streetRun(st, a, b);
     // (Moved across the street: the drain's drag runs beside the low-flow trench.)
     if (route.shift) line = line.map(([x, z]) => [x + route.shift[0], z + route.shift[1]]);
@@ -245,6 +255,7 @@ export function planTrack(map, style, route) {
   const HL = map.lineHeightAt || (map.under ? underLineHeights(map, line, pieces) : H);
   const def = { name: `${style.name} ${route.kind}`, closed: circuit, ...STREET, points: roundedPoints(list, circuit, CORNER_R, HL) };
   if (map.roof) def.points = densifyPoints(def.points, circuit, 4, HL);
+  if (placedDrag) Object.assign(def, { startS: placedDrag.startS, finishS: Math.min(placedDrag.finishS, G.lineLength(line) - 4) });
   const probe = buildTrack(def);
   const sOf = (u) => (u / total) * probe.length;
   // (Stretches off the streets: what's there is solid, and can be driven on.)

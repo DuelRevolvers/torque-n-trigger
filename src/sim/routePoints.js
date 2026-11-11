@@ -13,6 +13,7 @@ import { districtLayout } from './cityLayout.js';
 
 export const RUN_UP = 40; // behind a start (the grid's rows are up to 24 m back)
 export const RUN_OFF = 30; // past a finish
+export const DRAG_GRID = 16; // behind a placed drag's start line (its cars line up abreast, on the line)
 export const OPEN = { half: 12, wall: 14 }; // a race off the streets: road and walls
 
 export const isSpot = (p) => Array.isArray(p);

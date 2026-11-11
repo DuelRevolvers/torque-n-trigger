@@ -9,6 +9,7 @@ import * as G from './geom2d.js';
 export const BRIDGE_STYLES = { concrete: 'Concrete', skybridge: 'Skybridge (lit underneath)' };
 export const BRIDGE_DEFAULTS = { width: 10, height: 6, style: 'concrete', ramps: true };
 const THICK = 0.9; // the deck, top to underside
+const RAIL = { in: 0.15, half: 0.15, h: 1.1 }; // its side railings (render/bridgeView.js): in from the edge, half as thick, how high
 
 // A polyline with each corner turned along an arc of radius r (as far as
 // its legs allow), so a deck that wide doesn't pinch or cross itself there.
@@ -51,7 +52,8 @@ export function bridgeLine(b, heightAt) {
 }
 
 // What's solid (hidden items, the layout's; render/bridgeView.js draws them):
-// the deck in short flat pieces (drivable on top, and under), its piers,
+// the deck in short flat pieces (drivable on top, and under), the railings
+// along both its sides (cars on it run into them, not off it), its piers,
 // and a ramp down from each end.
 export function bridgeItems(bridges, heightAt) {
   const out = [];
@@ -69,6 +71,11 @@ export function bridgeItems(bridges, heightAt) {
       s += len;
       const obb = { x: (p[0] + q[0]) / 2, z: (p[1] + q[1]) / 2, hw, hd: len / 2 + 0.25, yaw: Math.atan2(p[0] - q[0], p[1] - q[1]) };
       out.push({ t: 'bridgeDeck', key: `bridgeDeck@${b.id}:${k}`, obb, r: G.aabbOf(G.obbCorners(obb)), y: top - THICK, h: top, deck: true, under: true, thick: THICK, solid: false, hidden: true, bridge: b.id });
+      const [nx, nz] = [(p[1] - q[1]) / len, -(p[0] - q[0]) / len]; // (across it)
+      for (const sg of [-1, 1]) {
+        const rail = { x: obb.x + nx * sg * (hw - RAIL.in), z: obb.z + nz * sg * (hw - RAIL.in), hw: RAIL.half, hd: obb.hd, yaw: obb.yaw };
+        out.push({ t: 'bridgeRail', key: `bridgeRail@${b.id}:${k}:${sg}`, obb: rail, r: G.aabbOf(G.obbCorners(rail)), y: top, h: RAIL.h, solid: true, hidden: true, bridge: b.id });
+      }
     });
     for (let t = 10; t < L - 5; t += 20) {
       const p = G.pointAlong(pts, t);

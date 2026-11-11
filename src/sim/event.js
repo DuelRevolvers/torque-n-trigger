@@ -108,7 +108,8 @@ export function gridPoses(track, def, count) {
     // Two abreast either side of a median, if the drag strip has one.
     const m = track.medianAt?.(12) || 0;
     const lanes = m ? (count <= 2 ? [-(m + 4), m + 4] : [-(m + 8), -(m + 3.4), m + 3.4, m + 8]) : count <= 2 ? [-3, 3] : [-6, -2, 2, 6];
-    return Array.from({ length: count }, (_, i) => pose(12, lanes[i % lanes.length]));
+    // (One placed in the T&T SDK: on its start line.)
+    return Array.from({ length: count }, (_, i) => pose(track.startS ?? 12, lanes[i % lanes.length]));
   }
   // (A sprint can start further along its route: where the T&T SDK put its start.)
   const back = track.closed ? track.length - 10 : track.startS ?? Math.max(40, def.startS ?? 40);
