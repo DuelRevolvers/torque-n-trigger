@@ -150,3 +150,22 @@ test('chrome heights: fourth in the campaign, Redline the rival, Static the boss
   assert.equal(districtEvents(chrome).length, 9); // (with its Rampage, Last Lap Out and Cup, phase 7)
   assert.deepEqual(event('Sprint').modifiers, ['weaponsLate']);
 });
+
+test('chrome heights: the roof roads meet at junctions as the other districts have them (rounded corners, roads cut back)', async () => {
+  const { makeJunctions } = await import('../src/render/junctions.js');
+  const map = districtMap(CHROME_CITY);
+  const { junctions, junctionOutline } = makeJunctions(map);
+  const at = (name) => map.nodes.find((n) => n.name === name);
+  const edgesAt = (n) => map.edgeList.filter((e) => e.a === n.id || e.b === n.id);
+  // A crossroads: its own surface, a curve round each of its four corners, every road stopped short of it.
+  const b2 = junctionOutline(at('b2'));
+  assert.ok(b2 && !b2.fallback && b2.poly.length > 8, 'an outline');
+  assert.equal(b2.edges.length, 4, 'four corners');
+  assert.ok(b2.edges.every((run) => run.length > 3), 'each one a curve');
+  for (const e of edgesAt(at('b2'))) assert.ok(junctions.clear(e, e.a === at('b2').id ? 'a' : 'b') > e.street.half, 'the road stops where its corners start');
+  // A right-angle bend: its centre line follows it round.
+  const bend = junctionOutline(at('a3e'));
+  assert.ok(bend?.bend?.pts.length > 3, 'a curve for the centre line');
+  // No junction's outline crosses itself.
+  for (const n of map.nodes.filter((q) => q.name)) assert.ok(!junctionOutline(n)?.fallback, n.name);
+});

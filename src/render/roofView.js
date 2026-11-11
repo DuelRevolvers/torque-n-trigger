@@ -7,6 +7,7 @@ import { districtLayout } from '../sim/cityLayout.js';
 import { buildAuthoredStructures } from './arenaView.js';
 import { gustAt } from '../sim/gusts.js';
 import * as G from '../sim/geom2d.js';
+import { makeJunctions } from './junctions.js';
 import { itemDrawer } from './itemCapture.js';
 import { objectLights } from './objectLights.js';
 import * as Parts from './parts.js';
@@ -319,32 +320,68 @@ export function buildRoofDistrictView(map, tex, { only = null } = {}) {
     return mergeGeometries(parts);
   }
 
-  // The roof roads across the decks: asphalt, edge lines, a dashed centre line.
+  // The roof roads across the decks: asphalt, edge lines, a dashed centre
+  // line. Their junctions are the other districts' (render/junctions.js):
+  // each road stops square across where its corners start, the junction's
+  // own surface covers the rest, the edge lines curve round every corner,
+  // and the centre line follows a road round a bend. (The spiral towers and
+  // the crossings between decks draw their own roads.)
   function roofRoads() {
-    for (const st of map.streets) {
-      if (st.helix) {
-        // Only the parts on decks here; the tower draws its own.
-      }
-      // Runs on decks.
+    const { junctions, junctionOutline } = makeJunctions(map, { bumpy: !!sculpt });
+    const h = (s, p) => {
+      const d = map.deckAt(p[0], p[1]);
+      return d ? deckTop(d)(p[0], p[1]) : H(p[0], p[1]);
+    };
+    // The runs of a line that are on decks.
+    const onDecks = (pts, each) => {
       let run = [];
       const flush = () => {
-        if (run.length > 1) {
-          const h = (s, p) => {
-            const d = map.deckAt(p[0], p[1]);
-            return d ? deckTop(d)(p[0], p[1]) : H(p[0], p[1]);
-          };
-          strip(B.road, run, -st.half, st.half, h, 0.03);
-          for (const sg of [-1, 1]) strip(B.lines, run, sg * (st.half - 0.45), sg * (st.half - 0.25), h, 0.05);
-          const L = G.lineLength(run);
-          for (let s = 3; s + 4 < L; s += 12) strip(B.lines, G.subLine(run, s, s + 4), -0.12, 0.12, h, 0.05);
-        }
+        if (run.length > 1) each(run);
         run = [];
       };
-      for (const p of st.pts) {
+      for (const p of pts) {
         if (map.deckAt(p[0], p[1])) run.push(p);
         else flush();
       }
       flush();
+    };
+    const dashes = (pts) => {
+      const L = G.lineLength(pts);
+      for (let s = 3; s + 4 < L; s += 12) strip(B.lines, G.subLine(pts, s, s + 4), -0.12, 0.12, h, 0.05);
+    };
+    for (const e of map.edgeList) {
+      const st = e.street;
+      const [c0, c1] = [junctions.clear(e, 'a'), junctions.clear(e, 'b')];
+      if (e.len - c0 - c1 < 0.05) continue;
+      onDecks(c0 || c1 ? G.subLine(e.pts, c0, e.len - c1) : e.pts, (run) => {
+        strip(B.road, run, -st.half, st.half, h, 0.03);
+        for (const sg of [-1, 1]) strip(B.lines, run, sg * (st.half - 0.45), sg * (st.half - 0.25), h, 0.05);
+        dashes(run);
+      });
+    }
+    for (const n of map.nodes) {
+      if (!n.name || !map.deckAt(n.x, n.z)) continue;
+      const o = junctionOutline(n);
+      if (!o) continue;
+      // Its surface: the outline, flat on its deck.
+      const pos = o.poly.flatMap(([x, z]) => [x, h(0, [x, z]) + 0.03, z]);
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(o.poly.flatMap(([x, z]) => [x / 8, z / 8]), 2));
+      g.setIndex(THREE.ShapeUtils.triangulateShape(o.poly.map(([x, z]) => new THREE.Vector2(x, z)), []).flat());
+      g.computeVertexNormals();
+      B.road.push(g);
+      // The edge line round each corner, just inside it.
+      for (const run of o.edges) {
+        if (run.length < 2 || G.lineLength(run) < 0.3) continue;
+        const k = Math.floor((run.length - 1) / 2);
+        const [a, b] = [run[k], run[k + 1]];
+        const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+        const m = [(a[0] + b[0]) / 2 - ((b[1] - a[1]) / L) * 0.35, (a[1] + b[1]) / 2 + ((b[0] - a[0]) / L) * 0.35];
+        const sg = G.pointInPoly(m[0], m[1], o.poly) ? 1 : -1;
+        strip(B.lines, run, sg * 0.25, sg * 0.45, h, 0.05);
+      }
+      if (o.bend) dashes(o.bend.pts);
     }
   }
 
